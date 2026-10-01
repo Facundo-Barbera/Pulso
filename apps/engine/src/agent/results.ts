@@ -1,4 +1,4 @@
-import type { AgentToolResult, BodyGoal, DietPlan, MealEntry, Medication, NutritionTargets, Program, SessionSaved } from "@pulso/contract";
+import type { AgentToolResult, BodyGoal, DayAdjustment, DietPlan, MealEntry, Medication, NutritionTargets, Program, SessionSaved, WaterEntry } from "@pulso/contract";
 
 type Summary = (value: any) => AgentToolResult | null;
 
@@ -22,8 +22,21 @@ const SUMMARIES: Record<string, Summary> = {
   create_diet_plan: (p: DietPlan) => ({ title: "Plan de comidas creado", detail: `${p.name} · ${days(p.days.length)}`, tab: "dieta" }),
   set_targets: (t: NutritionTargets) => ({ title: "Objetivos de comida actualizados", detail: `${n(t.kcal)} kcal · ${n(t.protein)} g proteína`, tab: "dieta" }),
   log_meal: (entries: MealEntry[]) => ({
-    title: "Comida registrada",
-    detail: `${entries.length === 1 ? entries[0]!.name : `${entries.length} alimentos`} · ${n(entries.reduce((sum, e) => sum + e.kcal, 0))} kcal`,
+    title: entries[0]?.offPlan ? "Comida fuera del plan registrada" : "Comida registrada",
+    detail: [
+      entries[0]?.note ?? (entries.length === 1 ? entries[0]!.name : `${entries.length} alimentos`),
+      `${n(entries.reduce((sum, e) => sum + e.kcal, 0))} kcal`,
+      typeof entries[0]?.eatenAt === "number" ? new Date(entries[0].eatenAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    tab: "dieta",
+  }),
+  // The summary already says what changed and where the day ends.
+  adjust_day_plan: (a: DayAdjustment & { stored: boolean }) => ({ title: a.stored ? "Plan de hoy ajustado" : "Sin comidas por ajustar", detail: a.summary, tab: "dieta" }),
+  log_water: (r: { entry: WaterEntry; totalMl: number; goalMl: number }) => ({
+    title: "Agua registrada",
+    detail: `+${n(r.entry.amountMl)} ml · ${(r.totalMl / 1000).toLocaleString("es-ES", { maximumFractionDigits: 2 })} de ${(r.goalMl / 1000).toLocaleString("es-ES", { maximumFractionDigits: 2 })} L hoy`,
     tab: "dieta",
   }),
   add_medication: (m: Medication) => ({ title: m.kind === "suplemento" ? "Suplemento añadido" : "Medicamento añadido", detail: `${m.name} · ${m.dose} ${m.unit}`, tab: "hoy" }),
