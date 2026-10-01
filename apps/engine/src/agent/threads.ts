@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentMessage, AgentMessageStatus, AgentThread, AgentToolUse } from "@pulso/contract";
+import type { AgentAttachment, AgentMessage, AgentMessageStatus, AgentThread, AgentToolUse } from "@pulso/contract";
 import { db } from "../db";
 
 export const DEFAULT_TITLE = "Nueva conversación";
@@ -24,11 +24,14 @@ const toThread = (row: ThreadRow): AgentThread => ({
   preview: row.preview ? row.preview.slice(0, 140) : null,
 });
 
-const toMessage = (row: MessageRow): AgentMessage => ({
+type AttachmentRow = { id: string; message_id: string; width: number; height: number };
+
+const toMessage = (row: MessageRow, attachments: AgentAttachment[] = []): AgentMessage => ({
   id: row.id,
   threadId: row.thread_id,
   role: row.role,
   text: row.text,
+  attachments,
   tools: JSON.parse(row.tools) as AgentToolUse[],
   status: row.status,
   error: row.error,
@@ -85,22 +88,51 @@ export function listMessages(threadId: string, limit?: number): AgentMessage[] {
       "SELECT * FROM (SELECT *, rowid AS r FROM agent_messages WHERE thread_id = ? ORDER BY created_at DESC, r DESC LIMIT ?) ORDER BY created_at, r",
     )
     .all(threadId, limit ?? -1);
-  return rows.map(toMessage);
+  const photos = attachmentsOf({ threadId });
+  return rows.map((row) => toMessage(row, photos.get(row.id)));
+}
+
+/** Photos by message id, in the order they were sent: those of one thread, or of one message. */
+function attachmentsOf(where: { threadId: string } | { messageId: string }): Map<string, AgentAttachment[]> {
+  const rows =
+    "threadId" in where
+      ? db()
+          .query<AttachmentRow, [string]>("SELECT a.* FROM agent_attachments a JOIN agent_messages m ON m.id = a.message_id WHERE m.thread_id = ? ORDER BY a.position")
+          .all(where.threadId)
+      : db().query<AttachmentRow, [string]>("SELECT * FROM agent_attachments WHERE message_id = ? ORDER BY position").all(where.messageId);
+  const byMessage = new Map<string, AgentAttachment[]>();
+  for (const row of rows) {
+    const list = byMessage.get(row.message_id) ?? [];
+    list.push({ id: row.id, mime: "image/jpeg", width: row.width, height: row.height });
+    byMessage.set(row.message_id, list);
+  }
+  return byMessage;
+}
+
+/** True when the photo belongs to a message of this thread. */
+export function hasAttachment(threadId: string, id: string): boolean {
+  return !!db()
+    .query("SELECT 1 FROM agent_attachments a JOIN agent_messages m ON m.id = a.message_id WHERE a.id = ? AND m.thread_id = ?")
+    .get(id, threadId);
 }
 
 export function getMessage(id: string): AgentMessage | undefined {
   const row = db().query<MessageRow, [string]>("SELECT * FROM agent_messages WHERE id = ?").get(id);
-  return row ? toMessage(row) : undefined;
+  return row ? toMessage(row, attachmentsOf({ messageId: id }).get(id)) : undefined;
 }
 
-export function addMessage(threadId: string, role: AgentMessage["role"], text: string, status: AgentMessageStatus): AgentMessage {
+export function addMessage(threadId: string, role: AgentMessage["role"], text: string, status: AgentMessageStatus, attachments: AgentAttachment[] = []): AgentMessage {
   const now = Date.now();
   const id = randomUUID();
   db().transaction(() => {
     db().query("INSERT INTO agent_messages (id, thread_id, role, text, status, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, threadId, role, text, status, now);
+    attachments.forEach((a, position) => {
+      db().query("INSERT INTO agent_attachments (id, message_id, position, width, height) VALUES (?, ?, ?, ?, ?)").run(a.id, id, position, a.width, a.height);
+    });
     db().query("UPDATE agent_threads SET updated_at = ? WHERE id = ?").run(now, threadId);
     if (role === "user") {
-      db().query("UPDATE agent_threads SET title = ? WHERE id = ? AND title = ?").run(titleFrom(text), threadId, DEFAULT_TITLE);
+      const title = text.trim() ? titleFrom(text) : attachments.length > 1 ? "Fotos" : attachments.length ? "Foto" : DEFAULT_TITLE;
+      db().query("UPDATE agent_threads SET title = ? WHERE id = ? AND title = ?").run(title, threadId, DEFAULT_TITLE);
     }
   })();
   return getMessage(id)!;

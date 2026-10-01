@@ -31,12 +31,24 @@ export type AgentToolUse = {
 /** `streaming` while the turn runs; the text grows until `done` or `error`. */
 export type AgentMessageStatus = "streaming" | "done" | "error";
 
+/**
+ * A photo the person sent with a message. Kept on the Mac as a JPEG, at most
+ * 1600 px on its long edge; clients fetch it at
+ * `…/threads/:threadId/attachments/:id` (mobile and web APIs).
+ */
+export type AgentAttachment = { id: string; mime: "image/jpeg"; width: number; height: number };
+
+/** At most this many photos per message. */
+export const MAX_AGENT_ATTACHMENTS = 4;
+
 export type AgentMessage = {
   id: string;
   threadId: string;
   role: "user" | "assistant";
-  /** Markdown for assistant messages. */
+  /** Markdown for assistant messages. May be empty on a user message that only carries photos. */
   text: string;
+  /** Photos on a user message, in the order they were sent. */
+  attachments: AgentAttachment[];
   tools: AgentToolUse[];
   status: AgentMessageStatus;
   error: string | null;
@@ -57,6 +69,10 @@ export type AgentStreamEvent =
   | { type: "done"; messageId: string }
   | { type: "error"; message: string };
 
+/**
+ * JSON `{ text }`, or multipart/form-data with a `text` field and up to
+ * `MAX_AGENT_ATTACHMENTS` `image` files (JPEG, PNG or HEIC). With photos the text may be empty.
+ */
 export type SendAgentMessage = { text: string };
 
 /** What the Coach knows about the person. Every field is optional; the agent fills it in over time. */
