@@ -11,8 +11,12 @@ import {
   listSessions,
   nextDay,
   saveSession,
+  setExerciseUnit,
+  setTrainingSettings,
   TrainingError,
+  unitOf,
 } from "./store";
+import { fromUnit, snap } from "./units";
 
 const program = (overrides: Partial<ProgramInput> = {}): ProgramInput => ({
   name: "Torso / Pierna",
@@ -181,4 +185,27 @@ test("activeProgramView suggests loads from the last session by double progressi
   expect(view.program?.id).toBe(p.id);
   expect(view.nextDayId).toBe(p.days[0]!.id);
   expect(view.suggestions[exerciseId]).toMatchObject({ weightKg: 10, reps: 10, lastSessionAt: 40_000_000 });
+});
+
+test("a pound machine: its own unit sticks, suggestions land on 5 lb, the default leaves it alone", () => {
+  const p = createProgram(program({ days: [{ name: "Espalda", exercises: [{ exerciseId: "remo-maquina", sets: 3, repMin: 8, repMax: 10, restSeconds: 90 }] }] }));
+  const pe = p.days[0]!.exercises[0]!.id;
+  const lb70 = fromUnit(70, "lb");
+  saveSession(session({ id: "lb-1", programId: p.id, startedAt: 50_000_000, sets: sets("remo-maquina", 50_000_000, [[lb70, 10], [lb70, 10], [lb70, 10]]) }));
+
+  expect(unitOf("remo-maquina")).toBe("kg");
+  expect(setExerciseUnit("remo-maquina", "lb").exerciseUnits).toEqual({ "remo-maquina": "lb" });
+  expect(unitOf("remo-maquina")).toBe("lb");
+  // 70 lb + the machine's 5 kg = 81 lb, on the plates: 80 lb.
+  expect(activeProgramView().suggestions[pe]).toMatchObject({ weightKg: fromUnit(80, "lb"), reason: "Hiciste 3 series de 10 con 70 lb: sube a 80 lb." });
+  // What was lifted reads back exactly in pounds.
+  expect(snap(listSessions(1, "remo-maquina")[0]!.sets[0]!.weightKg, "lb")).toBe(70);
+
+  expect(setTrainingSettings({ defaultUnit: "lb" })).toMatchObject({ defaultUnit: "lb", exerciseUnits: { "remo-maquina": "lb" } });
+  expect(unitOf("press-banca")).toBe("lb");
+  setTrainingSettings({ defaultUnit: "kg" });
+  expect(unitOf("remo-maquina")).toBe("lb");
+  expect(setExerciseUnit("remo-maquina", null).exerciseUnits).toEqual({});
+  expect(unitOf("remo-maquina")).toBe("kg");
+  expect(() => setExerciseUnit("nope", "lb")).toThrow(TrainingError);
 });

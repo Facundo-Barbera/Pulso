@@ -25,6 +25,7 @@ import type {
   SetLog,
   TrainingSession,
   TrainingSettings,
+  WeightUnit,
 } from "@pulso/contract";
 import { getProfile } from "../agent/profile";
 import { addDays, localDate } from "../daily/dates";
@@ -537,7 +538,7 @@ export function suggestLoad(exerciseId: string, rx: Prescription): LoadSuggestio
   if (!exercise) throw new TrainingError(`Unknown exercise id: ${exerciseId}.`);
   const [last] = listSessions(1, exerciseId);
   const lastWork = last ? { at: last.startedAt, sets: last.sets.filter((s) => s.exerciseId === exerciseId) } : null;
-  return nextLoad(exerciseId, rx, lastWork, INCREMENT_KG[exercise.equipment]);
+  return nextLoad(exerciseId, rx, lastWork, INCREMENT_KG[exercise.equipment], unitOf(exerciseId));
 }
 
 /** A load the person set by hand wins over progression until the exercise is logged again. */
@@ -573,18 +574,39 @@ export function activeProgramView(now = Date.now()): ActiveProgramResponse {
 
 // ── Preferences and heart-rate zones ─────────────────────────────────────────
 
+const setting = (key: string) => db().query<{ value: string }, [string]>("SELECT value FROM training_settings WHERE key = ?").get(key)?.value;
+const putSetting = (key: string, value: string) =>
+  db().query("INSERT INTO training_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
+
 export function trainingSettings(): TrainingSettings {
-  const row = db().query<{ value: string }, [string]>("SELECT value FROM training_settings WHERE key = ?").get("preferredEquipment");
-  return { preferredEquipment: row ? (JSON.parse(row.value) as Equipment[]) : [] };
+  const preferred = setting("preferredEquipment");
+  const units = db().query<{ exercise_id: string; unit: WeightUnit }, []>("SELECT exercise_id, unit FROM exercise_units ORDER BY exercise_id").all();
+  return {
+    preferredEquipment: preferred ? (JSON.parse(preferred) as Equipment[]) : [],
+    defaultUnit: setting("defaultUnit") === "lb" ? "lb" : "kg",
+    exerciseUnits: Object.fromEntries(units.map((u) => [u.exercise_id, u.unit])),
+  };
 }
 
-/** Replaces the preferred equipment (most preferred first; duplicates dropped). */
-export function setTrainingSettings(settings: TrainingSettings): TrainingSettings {
-  const preferred = [...new Set(settings.preferredEquipment)];
-  db()
-    .query("INSERT INTO training_settings (key, value) VALUES ('preferredEquipment', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-    .run(JSON.stringify(preferred));
-  return { preferredEquipment: preferred };
+/** Changes the settings given (preferred equipment: most preferred first, duplicates dropped); the rest stay. */
+export function setTrainingSettings(settings: Partial<Pick<TrainingSettings, "preferredEquipment" | "defaultUnit">>): TrainingSettings {
+  if (settings.preferredEquipment) putSetting("preferredEquipment", JSON.stringify([...new Set(settings.preferredEquipment)]));
+  if (settings.defaultUnit) putSetting("defaultUnit", settings.defaultUnit);
+  return trainingSettings();
+}
+
+/** The unit an exercise is shown, typed and suggested in. */
+export function unitOf(exerciseId: string): WeightUnit {
+  const own = db().query<{ unit: WeightUnit }, [string]>("SELECT unit FROM exercise_units WHERE exercise_id = ?").get(exerciseId)?.unit;
+  return own ?? (setting("defaultUnit") === "lb" ? "lb" : "kg");
+}
+
+/** Pins an exercise to a unit (its machine's), or with null lets it follow the default again. */
+export function setExerciseUnit(exerciseId: string, unit: WeightUnit | null): TrainingSettings {
+  if (!getExercise(exerciseId)) throw new TrainingError(`Unknown exercise id: ${exerciseId}. Use ids from list_exercises.`);
+  if (unit) db().query("INSERT INTO exercise_units (exercise_id, unit) VALUES (?, ?) ON CONFLICT (exercise_id) DO UPDATE SET unit = excluded.unit").run(exerciseId, unit);
+  else db().query("DELETE FROM exercise_units WHERE exercise_id = ?").run(exerciseId);
+  return trainingSettings();
 }
 
 /** Zone bands as fractions of heart-rate reserve (or of max without a resting HR). */

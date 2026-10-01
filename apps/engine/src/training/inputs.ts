@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const equipmentEnum = z.enum(["barbell", "dumbbell", "machine", "cable", "bodyweight", "kettlebell", "band"]);
+export const weightUnitEnum = z.enum(["kg", "lb"]);
 
 export const cardioTargetShape = z.object({
   durationMinutes: z.number().min(1).max(240).nullish().describe("Minutes, the usual target."),

@@ -204,13 +204,32 @@ export type SimilarExercise = Exercise & {
   preferred: boolean;
 };
 
-/** `GET`/`PUT /api/mobile/training/settings`. */
+/**
+ * How a weight is shown and typed. Storage is always kg; a pound entry is kept
+ * as its exact kg (45 lb → 20.41165665 kg), so it reads 45 lb again.
+ */
+export type WeightUnit = "kg" | "lb";
+
+/**
+ * `GET`/`PUT /api/mobile/training/settings`. `PUT` takes any of
+ * `preferredEquipment` and `defaultUnit` and leaves the rest alone.
+ * One exercise's unit: `PUT /api/mobile/training/exercises/:id/unit` `{ unit }`
+ * (null = follow `defaultUnit`) → `TrainingSettings`.
+ */
 export type TrainingSettings = {
   /** Most preferred first, e.g. ["machine", "cable"]. Alternatives and programs favour these. Empty = no preference. */
   preferredEquipment: Equipment[];
+  /** Unit for exercises without their own, and for totals such as a session's volume. */
+  defaultUnit: WeightUnit;
+  /** Exercises (library id) whose machine or plates use their own unit. Missing = `defaultUnit`. */
+  exerciseUnits: Record<string, WeightUnit>;
 };
 
-/** Next-load suggestion from double progression. `weightKg` is null without history. */
+/**
+ * Next-load suggestion from double progression. `weightKg` is null without
+ * history; otherwise it sits on the exercise's unit steps (a 5 lb step for a
+ * pound machine), and `reason` speaks in that unit.
+ */
 export type LoadSuggestion = {
   exerciseId: string;
   weightKg: number | null;

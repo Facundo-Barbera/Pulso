@@ -97,6 +97,11 @@ export const TRAINING_SCHEMA = `
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+  -- The unit an exercise's machine or plates use ('kg' | 'lb'); missing = the default unit. Weights stay kg.
+  CREATE TABLE IF NOT EXISTS exercise_units (
+    exercise_id TEXT PRIMARY KEY REFERENCES exercises (id),
+    unit TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS cardio_logs (
     session_id TEXT NOT NULL REFERENCES training_sessions (id) ON DELETE CASCADE,
     position INTEGER NOT NULL,

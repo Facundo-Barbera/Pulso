@@ -11,6 +11,7 @@ import { DELETE as liveDELETE, GET as liveGET, PUT as livePUT } from "@/app/api/
 import { DELETE as dayDELETE, PUT as dayPUT } from "@/app/api/mobile/training/program/days/[dayId]/route";
 import { GET as programGET } from "@/app/api/mobile/training/program/route";
 import { GET as settingsGET, PUT as settingsPUT } from "@/app/api/mobile/training/settings/route";
+import { PUT as unitPUT } from "@/app/api/mobile/training/exercises/[id]/unit/route";
 import { createPairingCode, redeemPairing } from "../devices";
 import { EDB_ATTRIBUTION } from "./exercisedb";
 import { editLive } from "./live";
@@ -46,6 +47,7 @@ test("every route wants a paired phone", async () => {
   expect((await dayPUT(req({ method: "PUT", body: "{}" }, false), day("d"))).status).toBe(401);
   expect((await dayDELETE(req({ method: "DELETE" }, false), day("d"))).status).toBe(401);
   expect(settingsGET(req({}, false)).status).toBe(401);
+  expect((await unitPUT(req({ method: "PUT", body: "{}" }, false), id("press-banca"))).status).toBe(401);
   expect((await settingsPUT(req({ method: "PUT", body: "{}" }, false))).status).toBe(401);
   expect(liveGET(req({}, false)).status).toBe(401);
   expect((await livePUT(req({ method: "PUT", body: "{}" }, false))).status).toBe(401);
@@ -55,7 +57,7 @@ test("every route wants a paired phone", async () => {
 
 test("settings, alternatives and day edits over HTTP", async () => {
   const saved = await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: ["machine", "cable"] }) }));
-  expect(await saved.json()).toEqual({ preferredEquipment: ["machine", "cable"] });
+  expect(await saved.json()).toEqual({ preferredEquipment: ["machine", "cable"], defaultUnit: "kg", exerciseUnits: {} });
   expect((await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: ["spaceship"] }) }))).status).toBe(400);
 
   const similar = (await (await similarGET(at("/api/mobile/training/exercises/press-banca/similar?equipment=machine,cable&limit=3"), id("press-banca"))).json()) as { exercises: SimilarExercise[] };
@@ -70,13 +72,27 @@ test("settings, alternatives and day edits over HTTP", async () => {
   const today = await dayPUT(req({ method: "PUT", body: JSON.stringify({ scope: "today", exercises: [{ ...bench, exerciseId: "press-pecho-maquina" }] }) }), day(dayId));
   const view = (await today.json()) as ActiveProgramResponse;
   expect(view.program!.days[0]).toMatchObject({ overridden: true, exercises: [{ id: bench.id, exerciseId: "press-pecho-maquina" }] });
-  expect(view.settings).toEqual({ preferredEquipment: ["machine", "cable"] });
+  expect(view.settings).toEqual({ preferredEquipment: ["machine", "cable"], defaultUnit: "kg", exerciseUnits: {} });
   const reset = (await (await dayDELETE(req({ method: "DELETE" }), day(dayId))).json()) as ActiveProgramResponse;
   expect(reset.program!.days[0]!.exercises[0]!.exerciseId).toBe("press-banca");
   expect((await dayPUT(req({ method: "PUT", body: JSON.stringify({ scope: "always", exercises: [{ exerciseId: "press-banca" }] }) }), day(dayId))).status).toBe(400);
   expect((await dayPUT(req({ method: "PUT", body: JSON.stringify({ scope: "forever", exercises: [] }) }), day(dayId))).status).toBe(400);
   expect((await dayDELETE(req({ method: "DELETE" }), day("nope"))).status).toBe(404);
   await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: [] }) }));
+});
+
+test("units: the default and one exercise's own, over HTTP", async () => {
+  const put = (unit: unknown, exercise = "remo-maquina") => unitPUT(req({ method: "PUT", body: JSON.stringify({ unit }) }), id(exercise));
+  expect(await (await put("lb")).json()).toMatchObject({ defaultUnit: "kg", exerciseUnits: { "remo-maquina": "lb" } });
+  // Setting the default leaves the equipment and the exercise's own unit alone.
+  await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: ["machine"] }) }));
+  const both = await settingsPUT(req({ method: "PUT", body: JSON.stringify({ defaultUnit: "lb" }) }));
+  expect(await both.json()).toEqual({ preferredEquipment: ["machine"], defaultUnit: "lb", exerciseUnits: { "remo-maquina": "lb" } });
+  expect(await (await put(null)).json()).toMatchObject({ exerciseUnits: {} });
+  expect((await put("stone")).status).toBe(400);
+  expect((await put("kg", "nope")).status).toBe(404);
+  expect((await settingsPUT(req({ method: "PUT", body: JSON.stringify({ defaultUnit: "st" }) }))).status).toBe(400);
+  await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: [], defaultUnit: "kg" }) }));
 });
 
 test("day edits over HTTP carry superset ids, normalized", async () => {
