@@ -167,13 +167,30 @@ struct ActivityCard: View {
 
 // MARK: - Sleep
 
-struct SleepCard: View {
+/// Compact summary of last night. Pass a destination (the sleep deep-dive) to make the whole card a link.
+struct SleepCard<Destination: View>: View {
     let day: DailyMetrics?
     let onSync: () -> Void
+    @ViewBuilder var destination: () -> Destination
 
     var body: some View {
+        if Destination.self == EmptyView.self {
+            summary(linked: false)
+        } else {
+            NavigationLink(destination: destination) { summary(linked: true) }
+                .buttonStyle(.plain)
+        }
+    }
+
+    private func summary(linked: Bool) -> some View {
         Card {
-            CardTitle(text: "Sueño anoche", systemImage: "moon.stars.fill")
+            HStack {
+                CardTitle(text: "Sueño anoche", systemImage: "moon.stars.fill")
+                Spacer()
+                if linked {
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+            }
             if let minutes = day?.sleepMinutes {
                 HStack(alignment: .firstTextBaseline) {
                     Text(Format.duration(minutes: minutes))
@@ -204,6 +221,12 @@ struct SleepCard: View {
             Stage(label: "REM", minutes: day.sleepRem ?? 0, color: Theme.body),
             Stage(label: "Despierto", minutes: day.sleepAwake ?? 0, color: Theme.energy),
         ]
+    }
+}
+
+extension SleepCard where Destination == EmptyView {
+    init(day: DailyMetrics?, onSync: @escaping () -> Void) {
+        self.init(day: day, onSync: onSync) { EmptyView() }
     }
 }
 

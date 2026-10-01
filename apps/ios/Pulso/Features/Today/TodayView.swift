@@ -10,7 +10,10 @@ struct TodayView: View {
             VStack(spacing: 16) {
                 header
                 ReadinessHero(readiness: store.readiness)
+                // Integration slot: the Medication feature's today card goes here.
                 ActivityCard(day: store.today)
+                // Integration slot: pass the Sleep feature's screen as the destination,
+                // `SleepCard(day:onSync:) { SleepView() }`, to make this card a link.
                 SleepCard(day: store.today, onSync: sync)
                 TrendsCard(store: store)
                 RecentWorkoutsCard(workouts: store.workouts, onSync: sync)
