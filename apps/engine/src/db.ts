@@ -21,18 +21,26 @@ export function dataDir(): string {
 
 // One connection per process; Next's dev reloads re-evaluate modules, so it lives on globalThis.
 const KEY = "__pulso_db__";
+// A reload that brings new schemas must apply them to the connection it inherits,
+// or new code queries tables that don't exist yet. All of it is idempotent.
+const APPLIED = "__pulso_db_schemas__";
 
 export function db(): Database {
   const g = globalThis as Record<string, unknown>;
-  if (g[KEY]) return g[KEY] as Database;
-  const dir = dataDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const database = new Database(path.join(dir, "pulso.sqlite"), { create: true, strict: true });
-  database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-  for (const schema of SCHEMAS) database.exec(schema);
-  migrateDevices(database);
-  migrateWorkouts(database);
-  migrateDaily(database);
-  g[KEY] = database;
+  let database = g[KEY] as Database | undefined;
+  if (!database) {
+    const dir = dataDir();
+    fs.mkdirSync(dir, { recursive: true });
+    database = new Database(path.join(dir, "pulso.sqlite"), { create: true, strict: true });
+    database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    g[KEY] = database;
+  }
+  if (g[APPLIED] !== SCHEMAS) {
+    for (const schema of SCHEMAS) database.exec(schema);
+    migrateDevices(database);
+    migrateWorkouts(database);
+    migrateDaily(database);
+    g[APPLIED] = SCHEMAS;
+  }
   return database;
 }
