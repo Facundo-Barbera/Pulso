@@ -98,8 +98,8 @@ struct MedicationView: View {
             .frame(width: 190, height: 190)
             .animation(.snappy, value: taken)
 
-            if let next = store.day?.next {
-                Label("Próxima: \(next.name) · \(LocalClock.display(next.time))", systemImage: "bell.badge")
+            if let next = store.day?.next, let time = next.time {
+                Label("Próxima: \(next.name) · \(LocalClock.display(time))", systemImage: "bell.badge")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -126,10 +126,7 @@ struct MedicationView: View {
     private func todayCard(_ day: MedicationDay) -> some View {
         Card {
             CardTitle(text: "Hoy", systemImage: "calendar")
-            ForEach(day.slots) { slot in
-                DoseRow(slot: slot, store: store)
-                if slot.id != day.slots.last?.id { Divider().padding(.leading, 46) }
-            }
+            DoseGroupsView(slots: day.slots, store: store)
             Text("Mantén pulsado una toma para omitirla o deshacerla.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -237,7 +234,7 @@ private struct MedicationRow: View {
         } else if medication.schedule.asNeeded {
             parts.append("Cuando haga falta")
         } else {
-            parts.append(medication.schedule.times.map(LocalClock.display).formatted(.list(type: .and)))
+            parts.append(medication.schedule.summary)
             if !medication.schedule.days.isEmpty { parts.append(WeekdayNames.short(medication.schedule.days)) }
         }
         if let instructions = medication.instructions { parts.append(instructions) }
@@ -259,14 +256,16 @@ enum WeekdayNames {
 
 #Preview("Medicación · 375 pt · XXL") {
     let slot = DoseSlot(medicationId: "1", name: "Vitamina D3 + K2 2000 UI con aceite de oliva", kind: .suplemento, dose: 2, unit: "comprimidos",
-                        instructions: "Con la comida principal", date: LocalClock.date(.now), time: "21:30", status: .pendiente)
+                        instructions: "Con la comida principal", date: LocalClock.date(.now), slot: "21:30", time: "21:30", status: .pendiente)
+    let creatine = DoseSlot(medicationId: "2", name: "Creatina", kind: .suplemento, dose: 5, unit: "g", date: LocalClock.date(.now), slot: "entreno",
+                            moment: .entreno, time: nil, training: TrainingSlot(state: .planned, plannedAt: "18:00", fallback: "20:00"), status: .pendiente)
     let med = Medication(id: "1", name: slot.name, kind: .suplemento, dose: 2, unit: "comprimidos", instructions: "Con la comida principal",
                          schedule: MedicationSchedule(asNeeded: false, times: ["08:00", "14:00", "21:30"], days: [1, 3, 5]),
                          startDate: "2026-09-01", stock: 4, lowStockThreshold: 7, lowStock: true, active: true)
     return NarrowPreview(dynamicType: .xxLarge) {
         Card {
-            DoseRow(slot: slot, store: .shared)
-            DoseRow(slot: slot, store: .shared, compact: true)
+            DoseGroupsView(slots: [slot, creatine], store: .shared)
+            DoseGroupsView(slots: [slot, creatine], store: .shared, compact: true)
         }
         Card { MedicationRow(medication: med) }
     }

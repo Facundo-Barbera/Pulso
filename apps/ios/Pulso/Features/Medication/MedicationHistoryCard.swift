@@ -124,8 +124,13 @@ private struct HistoryRow: View {
         case .pospuesta: "Pospuesta"
         case .pendiente: "Pendiente"
         }
-        let parts = [status, medication?.doseText, dose.scheduledTime.map { "programada \(LocalClock.display($0))" } ?? "sin horario"]
+        let parts = [status, medication?.doseText, dose.scheduledTime.map(Self.scheduled) ?? "sin horario"]
         return parts.compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// "programada 8:00", or the moment for a slot tied to one ("después de entrenar").
+    static func scheduled(_ key: String) -> String {
+        DoseMoment(slotKey: key) == .hora ? "programada \(LocalClock.display(key))" : DoseMoment.label(slotKey: key)
     }
 
     private var takenTime: String? {

@@ -58,14 +58,10 @@ struct MedicationTodayCard: View {
                 }
             }
         } else if let day = store.day, !day.slots.isEmpty {
-            VStack(spacing: 8) {
-                ForEach(visibleSlots(day)) { slot in
-                    DoseRow(slot: slot, store: store, compact: true)
-                }
-            }
-            if let next = day.next {
+            DoseGroupsView(slots: visibleSlots(day), store: store, compact: true)
+            if let next = day.next, let time = next.time {
                 Label {
-                    Text("Próxima: \(next.name) a las \(LocalClock.display(next.time))")
+                    Text("Próxima: \(next.name) a las \(LocalClock.display(time))")
                 } icon: {
                     Image(systemName: "bell.badge")
                 }
@@ -89,11 +85,80 @@ struct MedicationTodayCard: View {
         }
     }
 
-    /// Pending ones first (up to four), so the card stays compact on busy days.
+    /// Pending ones first (up to four), so the card stays compact on busy days; shown in the day's order.
     private func visibleSlots(_ day: MedicationDay) -> [DoseSlot] {
-        let pending = day.slots.filter { $0.status != .tomada && $0.status != .omitida }
-        let done = day.slots.filter { $0.status == .tomada || $0.status == .omitida }
-        return Array((pending + done).prefix(4))
+        let pending = day.slots.filter(\.isPending)
+        let done = day.slots.filter { !$0.isPending }
+        let shown = Set((pending + done).prefix(4).map(\.id))
+        return day.slots.filter { shown.contains($0.id) }
+    }
+}
+
+/// A day's slots grouped by what they hang on (a time, training, a meal, bedtime), in the day's order.
+struct DoseGroup: Identifiable, Equatable {
+    var moment: DoseMoment
+    var slots: [DoseSlot]
+    var id: DoseMoment { moment }
+
+    /// The training line ("Entrenando…", "Hoy descansas · 09:00"), from the first slot still to take.
+    var trainingStatus: TrainingSlot? {
+        moment == .entreno ? slots.first(where: \.isPending)?.training : nil
+    }
+
+    /// `slots` come sorted by time with the ones waiting for a workout last; groups keep that order.
+    static func of(_ slots: [DoseSlot]) -> [DoseGroup] {
+        var groups: [DoseGroup] = []
+        for slot in slots {
+            if let index = groups.firstIndex(where: { $0.moment == slot.moment }) {
+                groups[index].slots.append(slot)
+            } else {
+                groups.append(DoseGroup(moment: slot.moment, slots: [slot]))
+            }
+        }
+        return groups
+    }
+}
+
+/// Dose rows under a small heading per moment. A day of only fixed times shows no headings.
+struct DoseGroupsView: View {
+    let slots: [DoseSlot]
+    let store: MedicationStore
+    var compact = false
+
+    var body: some View {
+        let groups = DoseGroup.of(slots)
+        let headed = groups.count > 1 || groups.first?.moment != .hora
+        VStack(alignment: .leading, spacing: compact ? 12 : 16) {
+            ForEach(groups) { group in
+                VStack(alignment: .leading, spacing: 8) {
+                    if headed { MomentHeader(group: group) }
+                    ForEach(group.slots) { slot in
+                        DoseRow(slot: slot, store: store, compact: compact)
+                        if !compact && slot.id != group.slots.last?.id { Divider().padding(.leading, 46) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MomentHeader: View {
+    let group: DoseGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label(group.moment.title, systemImage: group.moment.symbol)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(group.moment == .entreno ? AnyShapeStyle(Theme.training) : AnyShapeStyle(.secondary))
+            if let training = group.trainingStatus {
+                Text(training.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .contentTransition(.opacity)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -129,19 +194,32 @@ struct DoseRow: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 8)
-            Text(LocalClock.display(slot.time))
-                .font(.subheadline.weight(.semibold))
-                .fontDesign(.rounded)
-                .monospacedDigit()
-                .foregroundStyle(isLate ? Theme.energy : .secondary)
-                .lineLimit(1)
-                .layoutPriority(1)
+            trailing
         }
         .contentShape(.rect)
         .contextMenu {
             if !done { Button("Tomada", systemImage: "checkmark.circle") { Task { await store.take(slot) } } }
             if slot.status != .omitida { Button("Omitir", systemImage: "xmark.circle") { Task { await store.skip(slot) } } }
             if slot.eventId != nil { Button("Volver a pendiente", systemImage: "arrow.uturn.backward") { Task { await store.undo(slot) } } }
+        }
+    }
+
+    /// The time it's due, or a training glyph while it waits for the workout.
+    @ViewBuilder private var trailing: some View {
+        if let time = slot.time {
+            Text(LocalClock.display(time))
+                .font(.subheadline.weight(.semibold))
+                .fontDesign(.rounded)
+                .monospacedDigit()
+                .foregroundStyle(isLate ? Theme.energy : .secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+        } else {
+            Image(systemName: slot.training?.state == .training ? "figure.strengthtraining.traditional" : "hourglass")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.training)
+                .symbolEffect(.pulse, isActive: slot.training?.state == .training && slot.isPending)
+                .accessibilityLabel(slot.training?.status ?? "Después de entrenar")
         }
     }
 
@@ -163,9 +241,13 @@ struct DoseRow: View {
         }
     }
 
+    /// Past the training window, or half an hour past its time.
     private var isLate: Bool {
-        guard slot.status == .pendiente || slot.status == .pospuesta,
-              let at = LocalClock.instant(date: slot.date, time: slot.time) else { return false }
+        guard slot.isPending else { return false }
+        if slot.training?.state == .trained, let until = slot.training?.until {
+            return LocalClock.instant(date: slot.date, time: until).map { $0 < .now } ?? false
+        }
+        guard let time = slot.time, let at = LocalClock.instant(date: slot.date, time: time) else { return false }
         return at.addingTimeInterval(30 * 60) < .now
     }
 

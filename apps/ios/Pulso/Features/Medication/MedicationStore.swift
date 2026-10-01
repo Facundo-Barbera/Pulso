@@ -39,10 +39,11 @@ final class MedicationStore {
             async let report = api.medicationAdherence()
             let from = LocalClock.date(Calendar.current.date(byAdding: .day, value: -(Self.historyDays - 1), to: .now) ?? .now)
             async let doses = api.doses(from: from, to: LocalClock.date(.now))
+            async let upcoming = api.upcomingMedication()
             (medications, day, adherence) = try await (meds, today, report)
             history = (try? await doses)?.sorted { ($0.takenAt ?? 0, $0.date, $0.scheduledTime ?? "") > ($1.takenAt ?? 0, $1.date, $1.scheduledTime ?? "") } ?? history
             loaded = true
-            await replan()
+            await replan(upcoming: try? await upcoming)
             await WidgetSync.refresh()
         } catch {
             model.handle(error)
@@ -67,11 +68,11 @@ final class MedicationStore {
     }
 
     func take(_ slot: DoseSlot) async {
-        await log(DoseLog(medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status: .tomada, takenAt: (Date.now.timeIntervalSince1970 * 1000).rounded()))
+        await log(slot.log(.tomada, takenAt: (Date.now.timeIntervalSince1970 * 1000).rounded()))
     }
 
     func skip(_ slot: DoseSlot) async {
-        await log(DoseLog(medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status: .omitida))
+        await log(slot.log(.omitida))
     }
 
     /// Back to pending. Returns the dose to stock if it was taken.
@@ -108,8 +109,8 @@ final class MedicationStore {
     }
 
     private func apply(_ log: DoseLog) {
-        guard var day, day.date == log.date, let time = log.scheduledTime,
-              let index = day.slots.firstIndex(where: { $0.medicationId == log.medicationId && $0.time == time })
+        guard var day, day.date == log.date, let key = log.scheduledTime,
+              let index = day.slots.firstIndex(where: { $0.medicationId == log.medicationId && $0.slot == key })
         else { return }
         day.slots[index].status = log.status
         day.slots[index].takenAt = log.takenAt
@@ -143,10 +144,18 @@ final class MedicationStore {
 
     // MARK: Reminders and outbox
 
-    private func replan() async {
-        let handled = Set((day?.slots ?? []).filter { $0.status != .pendiente }.map(\.id))
-        let reminders = MedicationNotifications.plan(medications: medications, handled: handled, now: .now)
-        await MedicationNotifications.shared.schedule(reminders)
+    /// Reminders from the engine's resolved slots; an engine without `/upcoming`
+    /// (nil) gets the fixed times expanded here, as before.
+    private func replan(upcoming: MedicationUpcoming?) async {
+        let notifications = MedicationNotifications.shared
+        let reminders: [MedicationNotifications.Reminder]
+        if let upcoming {
+            reminders = MedicationNotifications.plan(slots: upcoming.slots, now: .now, nudged: notifications.nudged)
+        } else {
+            let handled = Set((day?.slots ?? []).filter { $0.status != .pendiente }.map(\.id))
+            reminders = MedicationNotifications.plan(medications: medications, handled: handled, now: .now)
+        }
+        await notifications.schedule(reminders)
     }
 
     private func enqueue(_ log: DoseLog) {

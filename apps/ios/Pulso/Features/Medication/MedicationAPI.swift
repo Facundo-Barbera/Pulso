@@ -42,6 +42,11 @@ extension PulsoAPI {
         try await get("api/mobile/medication/today", query: Self.asOf(now))
     }
 
+    /// The next 7 days of slots as the engine resolves them (workouts, meals, bedtime), for reminders.
+    func upcomingMedication(at now: Date = .now) async throws -> MedicationUpcoming {
+        try await get("api/mobile/medication/upcoming", query: Self.asOf(now))
+    }
+
     func medicationAdherence(at now: Date = .now) async throws -> AdherenceReport {
         try await get("api/mobile/medication/adherence", query: Self.asOf(now))
     }
