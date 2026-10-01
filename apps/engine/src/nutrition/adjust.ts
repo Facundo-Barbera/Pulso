@@ -5,13 +5,15 @@
  */
 import { randomUUID } from "node:crypto";
 import { MEAL_SLOTS, type AdjustedMeal, type DayAdjustment, type Macros, type MealEntry, type MealSlot, type PlanItem, type PlanMeal } from "@pulso/contract";
-import { add, getTargets, listMeals, MACRO_KEYS, planForDay, round, saveAdjustment, clearAdjustment, getAdjustment, zero } from "./store";
+import { add, MACRO_KEYS, round, zero } from "./macros";
+import { dayRow } from "./slots";
+import { clearAdjustment, getAdjustment, getTargets, listMeals, planForDay, saveAdjustment } from "./store";
 
 /** Remaining meals are never cut below half nor grown past half again: the rest is the week's job, not tonight's. */
 export const MIN_FACTOR = 0.5;
 export const MAX_FACTOR = 1.5;
 
-const SLOT_TITLES: Record<MealSlot, string> = {
+export const SLOT_TITLES: Record<MealSlot, string> = {
   desayuno: "desayuno",
   media_manana: "media mañana",
   comida: "comida",
@@ -54,17 +56,30 @@ export type Rebalance = { factor: number; meals: AdjustedMeal[]; projected: Macr
  * The meals ahead, rewritten so the day lands on target: swaps are taken as
  * given, every other planned meal is scaled by one factor (clamped to
  * MIN_FACTOR..MAX_FACTOR) so that eaten + swaps + scaled ≈ the kcal target.
+ * `maxChangeKcal` bounds how much the scaled meals may move in total, so a
+ * day is never pushed to an extreme; what is left over stays a deviation.
  */
-export function rebalance(targets: Macros, eaten: Macros, ahead: PlanMeal[], swaps: PlanMeal[] = []): Rebalance {
+export function rebalance(targets: Macros, eaten: Macros, ahead: PlanMeal[], swaps: PlanMeal[] = [], maxChangeKcal?: number): Rebalance {
   const swapped = new Set(swaps.map((m) => m.slot));
   const scalable = ahead.filter((m) => !swapped.has(m.slot));
   const planned = mealsTotal(scalable).kcal;
   const budget = targets.kcal - eaten.kcal - mealsTotal(swaps).kcal;
   const raw = planned > 0 ? budget / planned : 1;
-  const factor = Math.round(Math.min(MAX_FACTOR, Math.max(MIN_FACTOR, raw)) * 100) / 100;
+  let factor = Math.round(Math.min(MAX_FACTOR, Math.max(MIN_FACTOR, raw)) * 100) / 100;
+  if (maxChangeKcal !== undefined && planned > 0) {
+    // Rounded toward 1, so rounding never breaks the bound.
+    const bound = maxChangeKcal / planned;
+    if (factor > 1 + bound) factor = Math.floor((1 + bound) * 100) / 100;
+    if (factor < 1 - bound) factor = Math.ceil((1 - bound) * 100) / 100;
+  }
+  const scaled = (f: number) => scalable.map((m) => ({ ...m, items: m.items.map((i) => scaleItem(i, f)) }));
+  // Portions round (5 g, half servings), which can overshoot the bound: step back toward 1 until it holds.
+  while (maxChangeKcal !== undefined && factor !== 1 && Math.abs(mealsTotal(scaled(factor)).kcal - planned) > maxChangeKcal) {
+    factor = Math.round((factor + (factor > 1 ? -0.01 : 0.01)) * 100) / 100;
+  }
   const same = Math.abs(factor - 1) < 0.03;
   const meals: AdjustedMeal[] = [
-    ...scalable.map((m): AdjustedMeal => (same ? { ...m, change: "same" } : { ...m, items: m.items.map((i) => scaleItem(i, factor)), change: "scaled" })),
+    ...(same ? scalable.map((m): AdjustedMeal => ({ ...m, change: "same" })) : scaled(factor).map((m): AdjustedMeal => ({ ...m, change: "scaled" }))),
     ...swaps.map((m): AdjustedMeal => ({ ...m, change: "swapped" })),
   ].sort((a, b) => order(a.slot) - order(b.slot));
   return { factor: same ? 1 : factor, meals, projected: sum([eaten, mealsTotal(meals)]) };
@@ -104,6 +119,8 @@ export type AdjustOptions = {
   note?: string | null;
   /** Drop earlier swaps instead of keeping them. */
   resetSwaps?: boolean;
+  /** Most the remaining meals may move, as a % of the day's goal (e.g. 15). Unbounded (only 50–150 % per meal) when absent. */
+  maxChangePct?: number;
 };
 
 export type AdjustResult = DayAdjustment & { stored: boolean };
@@ -118,7 +135,9 @@ export function adjustDayPlan(date: string, options: AdjustOptions = {}): Adjust
   const forDay = planForDay(date, eatenEntries);
   if (!forDay) throw new Error("No active diet plan: use daily_summary's remaining macros instead.");
   const { plan, dayIndex, day } = forDay;
-  const targets = getTargets() ?? mealsTotal(day.meals);
+  // The day's goal: targets (or the plan day's own total) plus whatever a spread moved onto it.
+  const base = getTargets() ?? mealsTotal(day.meals);
+  const targets = { ...base, kcal: base.kcal + (dayRow(plan.id, date)?.shift_kcal ?? 0) };
   const eaten = sum(eatenEntries);
 
   const ahead = options.slots ? day.meals.filter((m) => options.slots!.includes(m.slot)) : mealsAhead(day.meals, eatenEntries);
@@ -130,7 +149,8 @@ export function adjustDayPlan(date: string, options: AdjustOptions = {}): Adjust
     : (getAdjustment(date, plan.id)?.meals ?? []).filter((m) => m.change === "swapped" && !givenSlots.has(m.slot) && aheadSlots.has(m.slot) && !eatenEntries.some((e) => e.slot === m.slot));
   const swaps = [...given, ...kept.map(({ change: _change, ...m }) => m)];
 
-  const result = rebalance(targets, eaten, ahead, swaps);
+  const maxChange = options.maxChangePct !== undefined ? (targets.kcal * options.maxChangePct) / 100 : undefined;
+  const result = rebalance(targets, eaten, ahead, swaps, maxChange);
   const adjustment: DayAdjustment = {
     date,
     planId: plan.id,
