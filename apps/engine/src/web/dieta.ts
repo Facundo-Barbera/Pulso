@@ -9,6 +9,8 @@ import type { DailySummary, FrequentFood, MealEntry, MealInput, MealSlot, Nutrit
 import { MEAL_SLOTS } from "@pulso/contract";
 import { db } from "../db";
 import { addDays, localDate } from "../nutrition/dates";
+import { slotViews } from "../nutrition/horizon";
+import { findSlotRow } from "../nutrition/slots";
 import {
   activePlan,
   deleteMeal,
@@ -259,6 +261,21 @@ export function replaceMeal(id: string, input: MealInput): MealEntry | undefined
       note: input.note === undefined ? old.note : input.note,
     }, old.source);
   })();
+}
+
+/**
+ * «Me lo comí» for one dated slot: logs what it holds now (the Coach's adjusted
+ * portions when there are) tied to that slot. Batch portions can share an item
+ * id across slots, so eating by slot is the only unambiguous way. Nothing when
+ * the slot is unknown or no longer planned.
+ */
+export function eatSlot(slotId: string): MealEntry[] {
+  const row = findSlotRow(slotId);
+  const slot = row && slotViews([row])[0];
+  if (!slot || slot.status !== "planned") return [];
+  return db().transaction(() =>
+    (slot.adjusted ?? slot.items).map(({ id, ...food }) => logMeal({ ...food, slot: slot.slot, date: slot.date, planItemId: id, slotId }, "plan")),
+  )();
 }
 
 /** "Comí lo del plan": logs each item of the active plan not yet eaten on `date`. Unknown ids are skipped. */

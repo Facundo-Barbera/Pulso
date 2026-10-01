@@ -10,7 +10,7 @@ import { localDate } from "../nutrition/dates";
 import { dietDay, dietHorizon, prepViews } from "../nutrition/horizon";
 import { findRecipe } from "../nutrition/recipes";
 import { listRevisions } from "../nutrition/revisions";
-import { dayRow } from "../nutrition/slots";
+import { dayRow, horizonDays } from "../nutrition/slots";
 import { activePlan } from "../nutrition/store";
 import { SLOT_LABELS } from "./dieta";
 
@@ -27,6 +27,8 @@ export type SlotView = PlanSlot & {
   kcal: number;
   /** Planned and needs cooking that day: «Hoy no cocino» applies. */
   cooks: boolean;
+  /** A day still to come: it can be skipped or changed, not eaten yet. */
+  later: boolean;
 };
 
 export type DayView = Omit<DietDay, "slots"> & {
@@ -62,12 +64,12 @@ function portionNumbers(preps: PrepBatch[]): Map<string, [number, number]> {
   return out;
 }
 
-export function slotView(slot: PlanSlot, preps: PrepBatch[], portions = portionNumbers(preps)): SlotView {
+export function slotView(slot: PlanSlot, preps: PrepBatch[], portions = portionNumbers(preps), today = localDate()): SlotView {
   const items = slot.adjusted ?? slot.items;
   const label = slot.name ?? items.map((i) => i.name).join(", ");
   let source: string | null = null;
+  const prep = slot.kind === "prep" ? preps.find((p) => p.id === slot.prepId) : undefined;
   if (slot.kind === "prep") {
-    const prep = preps.find((p) => p.id === slot.prepId);
     const n = portions.get(slot.id);
     source = ["Porción del prep", prep?.recipeName, n && `${n[0]} de ${n[1]}`].filter(Boolean).join(" · ");
   } else if (slot.kind === "recipe") {
@@ -76,21 +78,35 @@ export function slotView(slot: PlanSlot, preps: PrepBatch[], portions = portionN
   } else if (slot.kind === "eat_out") source = "Comer fuera";
   return {
     ...slot,
+    // A batch portion shows its batch's recipe.
+    recipeId: slot.recipeId ?? prep?.recipeId ?? null,
     title: SLOT_LABELS[slot.slot],
     label: label || SLOT_LABELS[slot.slot],
     source,
     kcal: Math.round(slot.macros.kcal),
     cooks: slot.status === "planned" && slot.kind === "recipe" && (slot.cookMinutes ?? QUICK_MINUTES + 1) > QUICK_MINUTES,
+    later: slot.date > today,
   };
 }
 
-function dayView(day: DietDay, preps: PrepBatch[], portions: Map<string, [number, number]>): DayView {
+function dayView(day: DietDay, preps: PrepBatch[], portions: Map<string, [number, number]>, today: string): DayView {
   return {
     ...day,
-    slots: day.slots.map((s) => slotView(s, preps, portions)),
+    slots: day.slots.map((s) => slotView(s, preps, portions, today)),
     preps: preps.filter((p) => p.cookDate === day.date && p.status !== "discarded"),
     kcal: Math.round(day.planned.kcal),
   };
+}
+
+/** The recipes some days and batches use, by id. */
+function recipesOf(days: DayView[], preps: PrepBatch[]): Record<string, Recipe> {
+  const out: Record<string, Recipe> = {};
+  for (const id of [...days.flatMap((d) => d.slots.map((s) => s.recipeId)), ...preps.map((p) => p.recipeId)]) {
+    if (!id || out[id]) continue;
+    const recipe = findRecipe(id);
+    if (recipe) out[id] = recipe;
+  }
+  return out;
 }
 
 /** The horizon from today, ready to draw; null without an active plan. */
@@ -98,13 +114,7 @@ export function dietaLivingPlan(today = localDate(), days?: number): DietaLiving
   const horizon = dietHorizon(today, days);
   if (!horizon) return null;
   const portions = portionNumbers(horizon.preps);
-  const out = horizon.days.map((d) => dayView(d, horizon.preps, portions));
-  const recipes: Record<string, Recipe> = {};
-  const ids = [...out.flatMap((d) => d.slots.map((s) => s.recipeId)), ...horizon.preps.map((p) => p.recipeId)];
-  for (const id of ids) if (id && !recipes[id]) {
-    const recipe = findRecipe(id);
-    if (recipe) recipes[id] = recipe;
-  }
+  const out = horizon.days.map((d) => dayView(d, horizon.preps, portions, today));
   return {
     today,
     planName: horizon.planName,
@@ -113,7 +123,7 @@ export function dietaLivingPlan(today = localDate(), days?: number): DietaLiving
     to: horizon.to,
     days: out,
     preps: horizon.preps,
-    recipes,
+    recipes: recipesOf(out, horizon.preps),
     revisions: listRevisions(horizon.planId, 30),
   };
 }
@@ -122,10 +132,17 @@ export function dietaLivingPlan(today = localDate(), days?: number): DietaLiving
  * One date's slots for the Hoy view. Today and later are laid out on first read;
  * a past date only shows when it was laid out (otherwise it never had slots).
  */
-export function dietaDaySlots(date: string, today = localDate()): DayView | null {
+export function dietaDaySlots(date: string, today = localDate()): (DayView & { recipes: Record<string, Recipe> }) | null {
   const plan = activePlan();
   if (!plan || (date < today && !dayRow(plan.id, date))) return null;
   const day = dietDay(plan, date);
   const preps = prepViews(plan.id).filter((p) => day.slots.some((s) => s.prepId === p.id) || p.cookDate === date);
-  return dayView(day, preps, portionNumbers(preps));
+  const view = dayView(day, preps, portionNumbers(preps), today);
+  return { ...view, recipes: recipesOf([view], view.preps) };
+}
+
+/** How many days the active plan looks ahead (what the shopping list covers); null without a plan. */
+export function planHorizonDays(): number | null {
+  const plan = activePlan();
+  return plan ? horizonDays(plan.id) : null;
 }

@@ -3,6 +3,7 @@ import type { Macros } from "@pulso/contract";
 import { fillSlot, schedulePrep, skipSlot } from "../nutrition/ops";
 import { createRecipe } from "../nutrition/recipes";
 import { createPlan } from "../nutrition/store";
+import { eatSlot } from "./dieta";
 import { dietaDaySlots, dietaLivingPlan } from "./dieta-plan";
 import { ownDatabase } from "./test-db";
 
@@ -57,4 +58,20 @@ test("the living plan names where each meal comes from, numbers batch portions a
 test("a past date shows slots only when it was laid out", () => {
   expect(dietaDaySlots("2033-12-01", MON)).toBeNull();
   expect(dietaDaySlots(MON, MON)?.slots.length).toBe(3);
+});
+
+test("eating a slot ties the log to that slot, even when another slot holds the same batch item", () => {
+  const WED = "2034-01-04";
+  const pot = createRecipe({ name: "Chili", servings: 2, prepMinutes: 40, batch: true, ingredients: [food("Carne picada", 400, m(800, 80))] });
+  schedulePrep({ recipeId: pot.id, cookDate: TUE, portions: 2, assign: [{ date: WED, slot: "comida" }, { date: WED, slot: "cena" }] });
+  const before = dietaDaySlots(WED, MON)!;
+  const lunch = before.slots.find((s) => s.slot === "comida")!;
+  const dinner = before.slots.find((s) => s.slot === "cena")!;
+
+  const meals = eatSlot(dinner.id);
+  expect(meals.map((e) => [e.name, e.slot, e.slotId])).toEqual([["Chili", "cena", dinner.id]]);
+  const after = dietaDaySlots(WED, MON)!;
+  expect(after.slots.find((s) => s.id === dinner.id)!.status).toBe("eaten");
+  expect(after.slots.find((s) => s.id === lunch.id)!.status).toBe("planned");
+  expect(eatSlot(dinner.id)).toEqual([]);
 });
