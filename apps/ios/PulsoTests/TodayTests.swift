@@ -51,4 +51,25 @@ final class TodayTests: XCTestCase {
         XCTAssertEqual(response.days.first?.steps, 3200)
         XCTAssertNil(response.readiness.score)
     }
+
+    private func workout(_ id: String, _ activity: String, start: Double, minutes: Double, energy: Double? = nil) -> Workout {
+        Workout(id: id, externalId: id, source: "healthkit", activity: activity, startedAt: start, endedAt: start + minutes * 60_000, energy: energy, distance: nil)
+    }
+
+    func testOverlappingSameActivityWorkoutsMergeIntoTheRicherOne() {
+        let t = 1_790_000_000_000.0
+        let watch = workout("watch", "strength", start: t + 60_000, minutes: 30, energy: 210)
+        let gymApp = workout("gym", "strength", start: t, minutes: 31)
+        let walk = workout("walk", "walking", start: t + 120_000, minutes: 20)
+        let later = workout("later", "strength", start: t + 3 * 3_600_000, minutes: 30)
+        let merged = WorkoutMerge.merged([gymApp, watch, walk, later])
+        XCTAssertEqual(merged.map(\.id), ["later", "walk", "watch"])
+    }
+
+    func testOverlapIsMeasuredAgainstTheShorterWorkout() {
+        let a = workout("a", "strength", start: 0, minutes: 60)
+        let b = workout("b", "strength", start: 50 * 60_000, minutes: 20)
+        XCTAssertEqual(WorkoutMerge.overlap(a, b), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(WorkoutMerge.overlap(a, workout("c", "strength", start: 60 * 60_000, minutes: 5)), 0)
+    }
 }
