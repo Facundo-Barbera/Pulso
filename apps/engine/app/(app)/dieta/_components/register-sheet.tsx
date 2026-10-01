@@ -1,11 +1,13 @@
 "use client";
 
-import { HOUSEHOLD_SIZES, type FoodProduct, type FrequentFood, type Macros, type MealSlot, type MeasureUnit } from "@pulso/contract";
+import { HOUSEHOLD_SIZES, type FoodProduct, type FrequentFood, type Macros, type MealEntry, type MealSlot, type MeasureUnit } from "@pulso/contract";
 import { Plus, ScanBarcode, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
+import type { SlotView } from "@/src/web/dieta-plan";
 import { cn } from "../../../_ui/cn";
 import { send, useAction, useDieta } from "./client";
+import { usePlanActions } from "./plan-actions";
 import { buttonPrimary, buttonQuiet, buttonSoft, field, Sheet } from "./sheet";
 import { fmt, fmtAmount, isHousehold, perHundred, SLOT_OPTIONS, slotForHour, unitLabel, UNITS } from "./units";
 
@@ -55,11 +57,17 @@ function fromLogged(f: Logged) {
  * the frequent foods (pick one to fill everything, or + to log it as it was);
  * the amount takes any measure a person says — g, ml, taza, lata, puño…; macros
  * are entered per 100 g/ml or per one unit and scaled. A barcode can be typed.
- * With `entry`, the same form corrects a logged entry.
+ * With `entry`, the same form corrects a logged entry. With `replacing`, it logs
+ * what was eaten instead of a planned meal and ties it to that slot (a plan
+ * change with «Deshacer»).
  */
-export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose: () => void }) {
-  const { date, hasPlan, frequent } = useDieta();
-  const { run, pending, error, setError } = useAction();
+export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntry; replacing?: SlotView; onClose: () => void }) {
+  const { date: shownDate, hasPlan, frequent } = useDieta();
+  const date = replacing?.date ?? shownDate;
+  const { run, pending: running, error, setError } = useAction();
+  const plan = usePlanActions();
+  const [replacingBusy, setReplacingBusy] = useState(false);
+  const pending = running || replacingBusy;
   const initial = entry ? fromLogged(entry) : null;
 
   const [open, setOpen] = useState(true);
@@ -68,7 +76,7 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
   const [amount, setAmount] = useState(initial?.amount ?? "100");
   const [size, setSize] = useState(initial?.size ?? "");
   const [per, setPer] = useState<Per>(initial?.per ?? EMPTY_PER);
-  const [slot, setSlot] = useState<MealSlot>(entry?.slot ?? slotForHour(new Date().getHours()));
+  const [slot, setSlot] = useState<MealSlot>(entry?.slot ?? replacing?.slot ?? slotForHour(new Date().getHours()));
   const [time, setTime] = useState(entry?.time ?? nowTime());
   const [offPlan, setOffPlan] = useState(false);
   const [barcode, setBarcode] = useState<string | null>(entry?.barcode ?? null);
@@ -114,8 +122,27 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
 
   const amountBody = (u: MeasureUnit, a: number, s: number | null) => (isHousehold(u) ? { measure: { amount: a, unit: u, size: s } } : { quantity: a, unit: u });
 
+  /** Logs a new entry; when replacing a planned meal, also ties it to the slot. */
+  async function log(body: Record<string, unknown>): Promise<boolean> {
+    if (!replacing) return run("meals", "POST", body);
+    setError(null);
+    setReplacingBusy(true);
+    const result = await send("meals", "POST", { ...body, offPlan: true });
+    if (!result.ok) {
+      setReplacingBusy(false);
+      setError(result.message);
+      return false;
+    }
+    const meal = (result.data as { meal: MealEntry }).meal;
+    const ok = await plan.replace(replacing, meal);
+    // The plan refused the change: don't leave an untied entry behind.
+    if (!ok) await send(`meals/${meal.id}`, "DELETE");
+    setReplacingBusy(false);
+    return ok;
+  }
+
   async function quickAdd(f: FrequentFood) {
-    const ok = await run("meals", "POST", {
+    const ok = await log({
       name: f.name,
       slot: f.slot === "snack" ? "snack" : slot,
       date,
@@ -169,7 +196,7 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
     };
     const ok = entry
       ? await run(`meals/${entry.id}`, "PUT", body)
-      : await run("meals", "POST", { ...body, source: barcode ? "barcode" : "manual", ...(offPlan ? { offPlan } : {}) });
+      : await log({ ...body, source: barcode ? "barcode" : "manual", ...(offPlan ? { offPlan } : {}) });
     if (ok) close();
   }
 
@@ -181,7 +208,7 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
     <Sheet
       open={open}
       onClose={close}
-      title={entry ? "Corregir" : "Registrar"}
+      title={entry ? "Corregir" : replacing ? "Lo cambié por…" : "Registrar"}
       footer={
         <>
           <p className="text-muted-foreground mr-auto truncate text-[13px] tabular" aria-live="polite">
@@ -191,7 +218,7 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
             Cancelar
           </button>
           <button onClick={save} disabled={pending} className={buttonPrimary}>
-            {entry ? "Guardar" : "Registrar"}
+            {entry ? "Guardar" : replacing ? "Cambiar" : "Registrar"}
           </button>
         </>
       }
@@ -208,6 +235,11 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
           }
         }}
       >
+        {replacing && (
+          <p className="bg-muted/60 text-muted-foreground -mt-1 rounded-xl px-3 py-2.5 text-[13px] leading-snug">
+            En vez de <span className="text-foreground font-medium">{replacing.label}</span> ({replacing.title.toLowerCase()}, {fmt(replacing.kcal)} kcal). Lo que registres queda fuera del plan y ocupa su lugar.
+          </p>
+        )}
         <div>
           <div className="mb-1.5 flex items-center justify-between">
             <label htmlFor="dieta-name" className="text-[13px] font-medium">
@@ -375,7 +407,7 @@ export function RegisterSheet({ entry, onClose }: { entry?: DietaEntry; onClose:
           </details>
         </fieldset>
 
-        {hasPlan && !entry && (
+        {hasPlan && !entry && !replacing && (
           <label className="flex min-h-11 items-center gap-3 text-[14px]">
             <input type="checkbox" checked={offPlan} onChange={(e) => setOffPlan(e.target.checked)} className="accent-primary size-4" />
             Fuera del plan
