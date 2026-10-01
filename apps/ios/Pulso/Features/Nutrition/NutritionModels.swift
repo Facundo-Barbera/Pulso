@@ -201,6 +201,8 @@ struct MealEntry: Codable, Identifiable, Equatable {
     var source: String
     var barcode: String?
     var planItemId: String?
+    /// The dated plan slot it eats or replaces. Absent from older engines.
+    var slotId: String? = nil
     /// Eaten instead of, or on top of, the plan. Absent from older engines.
     var offPlan: Bool?
     /// The person's own words for the meal, when the Coach logged it.
