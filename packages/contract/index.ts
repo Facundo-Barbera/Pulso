@@ -51,3 +51,4 @@ export * from "./sleep";
 export * from "./medication";
 export * from "./coach";
 export * from "./mcp";
+export * from "./calendar";
