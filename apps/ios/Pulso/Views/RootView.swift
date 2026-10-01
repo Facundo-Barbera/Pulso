@@ -48,7 +48,11 @@ struct RootView: View {
         .sensoryFeedback(.success, trigger: model.credentials != nil) { _, paired in paired }
         .task { await model.refresh() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model.refresh() } }
+            if phase == .active {
+                Task { await model.refresh() }
+                // Replies the Mac kept writing while Pulso was away pick up where they were.
+                ChatStore.resumeAll()
+            }
         }
     }
 }

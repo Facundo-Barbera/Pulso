@@ -15,13 +15,14 @@ struct CoachChatView: View {
     /// The person is reading the latest lines: streaming text keeps them in view.
     @State private var atBottom = true
     @FocusState private var composing: Bool
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Comfortable reading width; only matters on wide screens.
     private static let readableWidth: CGFloat = 680
 
     /// `starter` is sent at once; `draft` waits in the composer. Either, or `focus`, opens the keyboard.
     init(threadId: String?, title: String?, starter: String? = nil, draft: String? = nil, focus: Bool = false) {
-        _store = State(initialValue: ChatStore(threadId: threadId))
+        _store = State(initialValue: ChatStore.store(for: threadId))
         _draft = State(initialValue: draft ?? "")
         initialTitle = title
         self.starter = starter
@@ -91,6 +92,7 @@ struct CoachChatView: View {
         .onChange(of: store.messages.last?.text) {
             if atBottom { position.scrollTo(edge: .bottom) }
         }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { store.resume() } }
         .task {
             guard !started else { return }
             started = true

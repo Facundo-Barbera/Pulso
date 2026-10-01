@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import UIKit
+import UserNotifications
 
 /// The thread list.
 @MainActor
@@ -21,6 +23,7 @@ final class CoachStore {
     func delete(_ thread: AgentThread) async {
         guard let api = PulsoModel.shared.api else { return }
         threads.removeAll { $0.id == thread.id }
+        ChatStore.forget(thread.id)
         do {
             try await api.deleteAgentThread(thread.id)
         } catch {
@@ -31,6 +34,11 @@ final class CoachStore {
 }
 
 /// One conversation: its messages and the turn being streamed, if any.
+///
+/// The turn runs on the Mac to the end whatever the phone does, so the phone only
+/// has to keep up: stores are kept per thread (leaving and reopening a chat shows
+/// the same live reply), streams run in tasks no view owns, a lost stream
+/// re-attaches by itself, and coming back to the app picks up where it left off.
 @MainActor
 @Observable
 final class ChatStore {
@@ -43,24 +51,54 @@ final class ChatStore {
     /// Bumped on send and on finish; the views hang haptics off them.
     private(set) var sentCount = 0
     private(set) var finishedCount = 0
+    @ObservationIgnored private var followTask: Task<Void, Never>?
 
-    init(threadId: String?) {
+    /// Live stores by thread id, so a reply streaming in one keeps streaming
+    /// while the person is elsewhere and is there when they come back.
+    private static var live: [String: ChatStore] = [:]
+
+    /// The store for `threadId`, the same one each time; a new chat gets a fresh one.
+    static func store(for threadId: String?) -> ChatStore {
+        if let threadId, let existing = live[threadId] { return existing }
+        let store = ChatStore(threadId: threadId)
+        if let threadId { live[threadId] = store }
+        return store
+    }
+
+    static func forget(_ threadId: String) {
+        live[threadId]?.followTask?.cancel()
+        live[threadId] = nil
+    }
+
+    /// Every chat with a reply in flight re-attaches; called when the app returns to the foreground.
+    static func resumeAll() {
+        for store in live.values { store.resume() }
+    }
+
+    private init(threadId: String?) {
         self.threadId = threadId
     }
 
+    /// Re-read the thread unless a stream is already live; attaches to a running turn.
+    func resume() {
+        guard followTask == nil, threadId != nil else { return }
+        Task { await load() }
+    }
+
     func load() async {
-        guard let api = PulsoModel.shared.api, let threadId, !streaming else { return }
+        guard let api = PulsoModel.shared.api, let threadId, followTask == nil else { return }
         loading = messages.isEmpty
         defer { loading = false }
         do {
             let detail = try await api.agentThread(threadId)
             title = detail.thread.title
+            guard followTask == nil else { return }
             messages = detail.messages
             if detail.running, let last = messages.indices.last, messages[last].status == .streaming {
                 // The re-attached stream replays the turn from its start.
                 messages[last].text = ""
                 messages[last].tools = []
-                await follow(api.attachAgentTurn(threadId: threadId))
+                start { api.attachAgentTurn(threadId: threadId) }
             }
         } catch {
             PulsoModel.shared.handle(error)
@@ -81,45 +119,88 @@ final class ChatStore {
             if threadId == nil {
                 let thread = try await api.createAgentThread()
                 threadId = thread.id
+                Self.live[thread.id] = self
             }
-            await follow(api.sendAgentMessage(threadId: threadId!, text: text))
+            let threadId = threadId!
+            start { api.sendAgentMessage(threadId: threadId, text: text) }
         } catch {
             streaming = false
             fail(error.localizedDescription)
         }
     }
 
-    /// Applies a turn's events to the last assistant message. If the connection
-    /// drops mid-turn the turn keeps running on the Mac, so re-read the thread.
-    private func follow(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>) async {
+    /// Follows a stream in a task no view owns. iOS gets a little background time
+    /// to finish it; if it is cut anyway, `resume()` re-attaches on return.
+    private func start(_ open: @escaping () -> AsyncThrowingStream<AgentStreamEvent, Error>) {
+        followTask?.cancel()
         streaming = true
+        followTask = Task { [weak self] in
+            let background = await UIApplication.shared.beginBackgroundTask(withName: "coach-turn")
+            await self?.follow(open())
+            await UIApplication.shared.endBackgroundTask(background)
+            self?.followTask = nil
+        }
+    }
+
+    /// Applies a turn's events to the last assistant message. A lost stream
+    /// re-attaches while the Mac is still answering; otherwise the saved thread wins.
+    private func follow(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>) async {
         if messages.last?.role != .assistant || messages.last?.status != .streaming {
             messages.append(AgentMessage(id: "local-\(UUID().uuidString)", threadId: threadId ?? "", role: .assistant, text: "", tools: [], status: .streaming, error: nil, createdAt: Date().timeIntervalSince1970 * 1000))
         }
         var finished = false
-        do {
-            for try await event in stream {
-                apply(event)
-                if case .done = event { finished = true }
-                if case .error = event { finished = true }
+        var stream = stream
+        var attempts = 0
+        while !finished, !Task.isCancelled {
+            do {
+                for try await event in stream {
+                    apply(event)
+                    if case .done = event { finished = true }
+                    if case .error = event { finished = true }
+                }
+            } catch {
+                // Dropped (background, network): not an error the person must act on.
             }
-        } catch {
-            PulsoModel.shared.handle(error)
+            guard !finished, !Task.isCancelled, let api = PulsoModel.shared.api, let threadId else { break }
+            // Lost the stream: what the Mac saved is the truth; if it's still answering, follow again.
+            guard let detail = try? await api.agentThread(threadId) else {
+                attempts += 1
+                if attempts > 5 { break }
+                try? await Task.sleep(for: .seconds(2))
+                continue
+            }
+            title = detail.thread.title
+            messages = detail.messages
+            guard detail.running, let last = messages.indices.last, messages[last].status == .streaming else {
+                finished = true
+                break
+            }
+            messages[last].text = ""
+            messages[last].tools = []
+            attempts = 0
+            stream = api.attachAgentTurn(threadId: threadId)
         }
         streaming = false
-        if !finished {
-            // Lost the stream: what the Mac saved is the truth.
-            if let api = PulsoModel.shared.api, let threadId, let detail = try? await api.agentThread(threadId) {
-                messages = detail.messages
-                title = detail.thread.title
-                if detail.running { error = "La respuesta sigue en curso en tu Mac. Desliza hacia abajo para actualizar." }
-            } else {
-                fail("Se cortó la conexión. La respuesta se guardará en tu Mac.")
-            }
-        } else if let api = PulsoModel.shared.api, let threadId, let detail = try? await api.agentThread(threadId) {
+        if !finished, !Task.isCancelled, let index = messages.indices.last, messages[index].status == .streaming {
+            // Couldn't reach the Mac: the reply is safe there and loads on return.
+            error = "Sin conexión con la Mac. La respuesta sigue guardándose allá y aparecerá al volver."
+        }
+        if finished, let api = PulsoModel.shared.api, let threadId, let detail = try? await api.agentThread(threadId) {
             title = detail.thread.title
         }
+        if finished, UIApplication.shared.applicationState != .active, let reply = messages.last, reply.role == .assistant, reply.status == .done {
+            notifyReply(reply.text)
+        }
         finishedCount += 1
+    }
+
+    /// A local notice when the reply lands while the person is in another app.
+    private func notifyReply(_ text: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title ?? "Coach"
+        content.body = String(text.replacingOccurrences(of: #"[*_`#>|]+"#, with: "", options: .regularExpression).prefix(180))
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "coach-\(threadId ?? "")", content: content, trigger: nil))
     }
 
     private func apply(_ event: AgentStreamEvent) {
