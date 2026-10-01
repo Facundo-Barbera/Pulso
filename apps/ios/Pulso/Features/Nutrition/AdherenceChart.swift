@@ -23,8 +23,10 @@ struct AdherenceChart: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 CardTitle(text: "Últimos 7 días", systemImage: "chart.bar.fill")
-                Spacer()
+                Spacer(minLength: 8)
                 readout
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             Chart {
                 ForEach(days) { day in

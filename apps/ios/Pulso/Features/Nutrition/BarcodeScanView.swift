@@ -168,16 +168,20 @@ struct PortionPicker: View {
                     Text("g").foregroundStyle(.secondary)
                     Stepper("", value: $grams, in: 0...2000, step: 5).labelsHidden()
                 }
-                HStack {
-                    if let serving = product.servingGrams {
-                        preset("1 porción", serving)
-                        preset("½", serving / 2)
+                // Four presets outgrow the row at large text; they scroll rather than squeeze.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        if let serving = product.servingGrams {
+                            preset("1 porción", serving)
+                            preset("½", serving / 2)
+                        }
+                        preset("100 g", 100)
+                        preset("30 g", 30)
                     }
-                    preset("100 g", 100)
-                    preset("30 g", 30)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .lineLimit(1)
                 }
-                .buttonStyle(.glass)
-                .controlSize(.small)
             }
             Section("Comida") {
                 Picker("Momento", selection: $slot) {
@@ -186,8 +190,8 @@ struct PortionPicker: View {
             }
             Section {
                 HStack {
-                    Text("\(Int(macros.kcal)) kcal").font(.headline).foregroundStyle(Theme.energy)
-                    Spacer()
+                    Text("\(Int(macros.kcal)) kcal").font(.headline).foregroundStyle(Theme.energy).lineLimit(1)
+                    Spacer(minLength: 8)
                     MacroLine(macros: macros)
                 }
                 Button {
