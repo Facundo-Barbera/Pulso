@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Paired: five tabs, one per feature folder under `Features/`. Not paired:
-/// the pairing screen and nothing else.
+/// Paired: five tabs, one per feature folder under `Features/`, each with the
+/// Ajustes button, and an offline accessory above the tab bar when the Mac is
+/// unreachable. Not paired: onboarding and nothing else.
 struct RootView: View {
     let model: PulsoModel
     @Environment(\.scenePhase) private var scenePhase
@@ -9,30 +10,97 @@ struct RootView: View {
     var body: some View {
         Group {
             if model.credentials == nil {
-                NavigationStack { PairView(model: model) }
+                OnboardingView(model: model)
+                    .transition(.opacity)
             } else {
                 TabView {
                     Tab("Hoy", systemImage: "sun.max") {
-                        NavigationStack { TodayView(model: model) }
+                        NavigationStack { TodayView(model: model).settingsToolbar(model) }
                     }
                     Tab("Coach", systemImage: "sparkles") {
-                        NavigationStack { CoachView(model: model) }
+                        NavigationStack { CoachView(model: model).settingsToolbar(model) }
                     }
                     Tab("Entreno", systemImage: "dumbbell") {
-                        NavigationStack { TrainingView(model: model) }
+                        NavigationStack { TrainingView(model: model).settingsToolbar(model) }
                     }
                     Tab("Dieta", systemImage: "fork.knife") {
-                        NavigationStack { NutritionView(model: model) }
+                        NavigationStack { NutritionView(model: model).settingsToolbar(model) }
                     }
                     Tab("Cuerpo", systemImage: "figure") {
-                        NavigationStack { BodyView(model: model) }
+                        NavigationStack { BodyView(model: model).settingsToolbar(model) }
                     }
                 }
+                .modifier(OfflineAccessory(model: model))
+                .transition(.opacity)
             }
         }
+        .animation(.snappy, value: model.credentials == nil)
+        .sensoryFeedback(.success, trigger: model.credentials != nil) { _, paired in paired }
         .task { await model.refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model.refresh() } }
+        }
+    }
+}
+
+/// The banner as the tab bar's bottom accessory (iOS 26.1+, which the phone runs);
+/// on 26.0 a glass capsule floating above the tab bar instead.
+private struct OfflineAccessory: ViewModifier {
+    let model: PulsoModel
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.1, *) {
+            content.tabViewBottomAccessory(isEnabled: model.offline) { OfflineBanner(model: model) }
+        } else {
+            content.overlay(alignment: .bottom) {
+                if model.offline {
+                    OfflineBanner(model: model)
+                        .padding(.vertical, 10)
+                        .glassEffect(.regular, in: .capsule)
+                        .padding(.horizontal)
+                        .padding(.bottom, 64)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy, value: model.offline)
+        }
+    }
+}
+
+/// "Sin conexión con la Mac" with a retry, in the tab bar's glass accessory. While it
+/// shows, the Mac is pinged every 20 s so it disappears on its own when it's back.
+struct OfflineBanner: View {
+    let model: PulsoModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .foregroundStyle(.orange)
+                .symbolEffect(.pulse, isActive: model.checking)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Sin conexión con la Mac").font(.subheadline.weight(.semibold))
+                Text("Revisa que esté despierta y con Tailscale").font(.caption).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            Spacer(minLength: 8)
+            Button {
+                Task { await model.checkConnection() }
+            } label: {
+                if model.checking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Reintentar").font(.subheadline.weight(.semibold))
+                }
+            }
+            .disabled(model.checking)
+        }
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .combine)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                if model.offline { await model.checkConnection() }
+            }
         }
     }
 }
