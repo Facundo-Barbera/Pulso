@@ -15,12 +15,25 @@ final class PulsoModel {
     var error: String?
     var lastSync: String?
 
+    /// Whether the Mac answered the last request. `unknown` until the first one.
+    enum Reachability { case unknown, online, offline }
+    private(set) var reachability: Reachability = .unknown
+    private(set) var lastContact: Date?
+    private(set) var latency: Duration?
+    private(set) var checking = false
+
+    var offline: Bool { credentials != nil && reachability == .offline }
+
     var api: PulsoAPI? { credentials.map { PulsoAPI(base: $0.baseURL, token: $0.token) } }
 
     func pair(address: String, code: String) async {
-        let trimmed = address.trimmingCharacters(in: .whitespaces)
-        guard let base = URL(string: trimmed), base.scheme == "http" || base.scheme == "https" else {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let base = Pairing.baseURL(from: trimmed) else {
             pairingError = "La dirección debe ser como http://100.x.x.x:8090"
+            return
+        }
+        guard Pairing.normalizeCode(code).count == Pairing.codeLength else {
+            pairingError = "El código tiene ocho dígitos."
             return
         }
         pairing = true
@@ -28,13 +41,13 @@ final class PulsoModel {
         defer { pairing = false }
         do {
             let name = UIDevice.current.name
-            let paired = try await PulsoAPI.pair(base: base, code: code, name: name)
+            let paired = try await PulsoAPI.pair(base: base, code: Pairing.normalizeCode(code), name: name)
             let saved = Credentials(baseURL: base, deviceId: paired.deviceId, name: paired.name, token: paired.token)
             CredentialStore.save(saved)
             credentials = saved
             await refresh()
         } catch {
-            CredentialStore.address = trimmed
+            CredentialStore.address = base.absoluteString
             pairingError = error.localizedDescription
         }
     }
@@ -43,6 +56,34 @@ final class PulsoModel {
         CredentialStore.clear()
         credentials = nil
         workouts = []
+        reachability = .unknown
+        lastContact = nil
+        latency = nil
+    }
+
+    /// Every request through `PulsoAPI.perform` lands here: any HTTP answer is contact.
+    func recordContact(latency: Duration) {
+        reachability = .online
+        lastContact = .now
+        self.latency = latency
+    }
+
+    func recordUnreachable() {
+        reachability = .offline
+    }
+
+    /// Pings the Mac (the offline banner's "Reintentar", Ajustes) and, if it is back, reloads.
+    func checkConnection() async {
+        guard let api, !checking else { return }
+        checking = true
+        defer { checking = false }
+        do {
+            _ = try await api.status()
+            error = nil
+            await refresh()
+        } catch {
+            handle(error)
+        }
     }
 
     func refresh() async {

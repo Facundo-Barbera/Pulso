@@ -8,15 +8,30 @@ enum HealthSync {
 
     static var available: Bool { HKHealthStore.isHealthDataAvailable() }
 
+    /// Everything the tabs read, asked for once (onboarding, Ajustes) so the person
+    /// sees one Health sheet instead of one per tab. Medications are per-object and
+    /// stay with the Medicación import.
+    static let readTypes: Set<HKObjectType> = [
+        HKObjectType.workoutType(),
+        HKQuantityType(.activeEnergyBurned),
+        HKQuantityType(.distanceWalkingRunning),
+        HKQuantityType(.distanceCycling),
+        HKQuantityType(.distanceSwimming),
+        HKQuantityType(.stepCount),
+        HKQuantityType(.appleExerciseTime),
+        HKQuantityType(.heartRate),
+        HKQuantityType(.restingHeartRate),
+        HKQuantityType(.heartRateVariabilitySDNN),
+        HKQuantityType(.vo2Max),
+        HKQuantityType(.respiratoryRate),
+        HKCategoryType(.sleepAnalysis),
+        HKQuantityType(.bodyMass),
+        HKQuantityType(.bodyFatPercentage),
+        HKQuantityType(.leanBodyMass),
+    ]
+
     static func requestAccess() async throws {
-        let read: Set<HKObjectType> = [
-            HKObjectType.workoutType(),
-            HKQuantityType(.activeEnergyBurned),
-            HKQuantityType(.distanceWalkingRunning),
-            HKQuantityType(.distanceCycling),
-            HKQuantityType(.distanceSwimming),
-        ]
-        try await store.requestAuthorization(toShare: [], read: read)
+        try await store.requestAuthorization(toShare: [], read: readTypes)
     }
 
     /// Workouts started in the last `days` days, newest first.
