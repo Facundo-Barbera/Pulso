@@ -63,11 +63,12 @@ export const logSavedDishSchema = z.object({
     .array(z.object({ component: z.union([z.number().int().min(0), z.string().min(1)]), measure: z.string().trim().min(1).max(80).optional(), remove: z.boolean().optional() }))
     .max(30)
     .optional(),
+  add: componentsSchema.optional(),
   ...whenShape,
 });
 
 export function logSavedDishFrom(id: string, input: z.infer<typeof logSavedDishSchema>) {
-  return { meals: logSavedDish(id, { scale: input.scale, overrides: input.overrides }, when(input)) };
+  return { meals: logSavedDish(id, { scale: input.scale, overrides: input.overrides, add: input.add && toComponents(input.add) }, when(input)) };
 }
 
 export const logDishSchema = z.object({ name: name.optional(), components: componentsSchema, ...whenShape });

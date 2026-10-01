@@ -175,7 +175,7 @@ can propose cooking days; it never schedules them itself.
 | `GET prep-days?from&days` | ranked days, tight meals, batch recipes |
 | `GET/POST dishes` | `{ dishes }` (most used first); save `{ loggedDishId \| recipeId \| name+components }` → `{ dish }` |
 | `PUT/DELETE dishes/[id]` | update (components replace) → `{ dish }` |
-| `POST dishes/[id]/log` | `{ scale?, overrides?, slot?, eatenAt \| time, date?, slotId? }` → `{ meals }` |
+| `POST dishes/[id]/log` | `{ scale?, overrides?, add?, slot?, eatenAt \| time, date?, slotId? }` → `{ meals }` |
 | `POST meals/dish`, `PATCH meals/dish/[id]` | a new dish eaten from components; rename or `add` → `{ meals }` |
 
 Errors: 400 `invalid_request`, 404 `not_found`, 409 `no_plan` / `plan_conflict`
