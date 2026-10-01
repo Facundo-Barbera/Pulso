@@ -116,7 +116,8 @@ export function BriefCard({ brief, delay }: { brief: CoachBrief | null; delay: n
   const writing = brief?.status === "running" && !brief.text;
   return (
     <Card delay={delay} className="md:col-span-2">
-      <CardTitle icon={Sparkles} color="var(--pulso-violet)" title="Resumen del Coach" href="/coach" action="Hablar con el Coach" />
+      {/* With a brief to answer, the link opens a chat that replies to it. */}
+      <CardTitle icon={Sparkles} color="var(--pulso-violet)" title="Resumen del Coach" href={brief?.text ? `/coach/nuevo?responder=${brief.id}` : "/coach/nuevo"} action={brief?.text ? "Responder" : "Hablar con el Coach"} />
       {writing ? (
         <div className="space-y-2.5" aria-label="El Coach está escribiendo">
           <Skeleton className="h-4 w-11/12" />
