@@ -283,7 +283,7 @@ function HistoryCard({ page, delay }: { page: MedicationPage; delay: number }) {
       {page.history.length === 0 ? (
         <EmptyState compact icon={History} color={MED} title="Aún no registraste ninguna toma" line="Cada «Tomada» u «Omitir» queda aquí, agrupado por día." />
       ) : (
-        <div className="max-h-[560px] space-y-5 overflow-y-auto pr-1">
+        <div className="max-h-[560px] space-y-5 overflow-x-hidden overflow-y-auto px-2">
           {page.history.map((day) => (
             <section key={day.date}>
               <h3 className="text-muted-foreground bg-card sticky top-0 z-[1] py-1 text-[12px] font-semibold tracking-wide uppercase">{day.date === page.date ? "Hoy" : fmtLongDate(new Date(`${day.date}T12:00:00`))}</h3>

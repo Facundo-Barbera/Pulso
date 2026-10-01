@@ -36,7 +36,7 @@ export function TargetControl({ targetMin }: { targetMin: number }) {
   return (
     <div>
       <p className="text-muted-foreground text-[12px] font-medium">Objetivo por noche</p>
-      <div className="mt-2 flex items-center gap-3">
+      <div className="mt-2 flex flex-wrap items-center gap-3">
         <button className={stepper} onClick={() => setValue((v) => Math.max(MIN, v - STEP))} disabled={value <= MIN} aria-label="15 minutos menos">
           <Minus className="size-4" />
         </button>

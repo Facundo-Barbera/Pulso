@@ -241,7 +241,7 @@ function MedicationForm({ medication, today, onDone }: { medication: Medication 
 
       {error && <p className="text-destructive text-[13px]">{error}</p>}
 
-      <div className="flex flex-wrap items-center gap-2 pt-1">
+      <div className="bg-popover sticky -bottom-5 flex flex-wrap items-center gap-2 py-3">
         {medication &&
           (confirmDelete ? (
             <span className="flex flex-wrap items-center gap-2">
