@@ -39,10 +39,11 @@ final class MedicationStore {
             async let report = api.medicationAdherence()
             let from = LocalClock.date(Calendar.current.date(byAdding: .day, value: -(Self.historyDays - 1), to: .now) ?? .now)
             async let doses = api.doses(from: from, to: LocalClock.date(.now))
+            async let upcoming = api.upcomingMedication()
             (medications, day, adherence) = try await (meds, today, report)
             history = (try? await doses)?.sorted { ($0.takenAt ?? 0, $0.date, $0.scheduledTime ?? "") > ($1.takenAt ?? 0, $1.date, $1.scheduledTime ?? "") } ?? history
             loaded = true
-            await replan()
+            await replan(upcoming: try? await upcoming)
             await WidgetSync.refresh()
         } catch {
             model.handle(error)
@@ -67,11 +68,11 @@ final class MedicationStore {
     }
 
     func take(_ slot: DoseSlot) async {
-        await log(DoseLog(medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status: .tomada, takenAt: (Date.now.timeIntervalSince1970 * 1000).rounded()))
+        await log(slot.log(.tomada, takenAt: (Date.now.timeIntervalSince1970 * 1000).rounded()))
     }
 
     func skip(_ slot: DoseSlot) async {
-        await log(DoseLog(medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status: .omitida))
+        await log(slot.log(.omitida))
     }
 
     /// Back to pending. Returns the dose to stock if it was taken.
@@ -83,6 +84,33 @@ final class MedicationStore {
             model.handle(error)
         }
         await refresh()
+    }
+
+    /// A workout just ended, was saved or synced from Salud: the training slots
+    /// resolve differently now, so reload them and their reminders.
+    func refreshAfterWorkout() async {
+        if loaded && medications.isEmpty { return }
+        await refresh()
+    }
+
+    /// The latest workout end seen from Salud, so a sync with nothing new costs nothing.
+    private var lastHealthWorkoutEnd: Double?
+
+    /// After a Salud sync: replans only when a workout ended today that wasn't seen yet
+    /// and something is tied to training.
+    func healthWorkoutsSynced(_ workouts: [WorkoutInput]) async {
+        let today = LocalClock.date(.now)
+        let ends = workouts.map(\.endedAt).filter { LocalClock.date(Date(timeIntervalSince1970: $0 / 1000)) == today }
+        guard let latest = ends.max(), latest > (lastHealthWorkoutEnd ?? 0) else { return }
+        lastHealthWorkoutEnd = latest
+        if loaded && !medications.contains(where: { $0.active && $0.schedule.training != nil }) { return }
+        await refresh()
+    }
+
+    /// Today's doses tied to training that are still to take, for the post-workout card.
+    var pendingAfterWorkout: [DoseSlot] {
+        guard let day, day.date == LocalClock.date(.now) else { return [] }
+        return day.slots.filter { $0.moment == .entreno && $0.isPending }
     }
 
     /// Doses actually taken today, scheduled or not.
@@ -108,8 +136,8 @@ final class MedicationStore {
     }
 
     private func apply(_ log: DoseLog) {
-        guard var day, day.date == log.date, let time = log.scheduledTime,
-              let index = day.slots.firstIndex(where: { $0.medicationId == log.medicationId && $0.time == time })
+        guard var day, day.date == log.date, let key = log.scheduledTime,
+              let index = day.slots.firstIndex(where: { $0.medicationId == log.medicationId && $0.slot == key })
         else { return }
         day.slots[index].status = log.status
         day.slots[index].takenAt = log.takenAt
@@ -143,10 +171,18 @@ final class MedicationStore {
 
     // MARK: Reminders and outbox
 
-    private func replan() async {
-        let handled = Set((day?.slots ?? []).filter { $0.status != .pendiente }.map(\.id))
-        let reminders = MedicationNotifications.plan(medications: medications, handled: handled, now: .now)
-        await MedicationNotifications.shared.schedule(reminders)
+    /// Reminders from the engine's resolved slots; an engine without `/upcoming`
+    /// (nil) gets the fixed times expanded here, as before.
+    private func replan(upcoming: MedicationUpcoming?) async {
+        let notifications = MedicationNotifications.shared
+        let reminders: [MedicationNotifications.Reminder]
+        if let upcoming {
+            reminders = MedicationNotifications.plan(slots: upcoming.slots, now: .now, nudged: notifications.nudged)
+        } else {
+            let handled = Set((day?.slots ?? []).filter { $0.status != .pendiente }.map(\.id))
+            reminders = MedicationNotifications.plan(medications: medications, handled: handled, now: .now)
+        }
+        await notifications.schedule(reminders)
     }
 
     private func enqueue(_ log: DoseLog) {

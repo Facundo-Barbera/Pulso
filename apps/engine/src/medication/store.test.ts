@@ -36,7 +36,7 @@ const metformina = () =>
 test("add normalizes and defaults; update patches only given fields", () => {
   const med = metformina();
   expect(med.kind).toBe("medicamento");
-  expect(med.schedule).toEqual({ asNeeded: false, times: ["08:00", "20:00"], days: [] });
+  expect(med.schedule).toEqual({ asNeeded: false, times: ["08:00", "20:00"], days: [], training: null, meals: [], bedtime: false });
   expect(med.active).toBe(true);
   expect(med.lowStock).toBe(false);
 
@@ -109,7 +109,7 @@ test("medicationDay lists slots with status and the next pending one", () => {
   addMedication({ name: "Ibuprofeno", dose: 400, unit: "mg" });
   logDose({ medicationId: med.id, date: "2026-10-01", scheduledTime: "08:00", status: "tomada" });
   const day = medicationDay("2026-10-01", "12:00");
-  expect(day.slots.map((s) => [s.time, s.status])).toEqual([
+  expect(day.slots.map((s) => [s.slot, s.status])).toEqual([
     ["08:00", "tomada"],
     ["20:00", "pendiente"],
   ]);

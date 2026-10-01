@@ -28,7 +28,7 @@ function useAction() {
   return { busy, error, run };
 }
 
-const log = (slot: Pick<DoseSlot, "medicationId" | "date" | "time">, status: DoseStatus) => send("/api/web/medicacion/tomas", "POST", { medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status });
+const log = (slot: Pick<DoseSlot, "medicationId" | "date" | "slot">, status: DoseStatus) => send("/api/web/medicacion/tomas", "POST", { medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.slot, status });
 const undo = (eventId: string) => send(`/api/web/medicacion/tomas/${eventId}`, "DELETE");
 
 const iconButton = "text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2 disabled:opacity-40";

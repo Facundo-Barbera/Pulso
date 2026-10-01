@@ -109,6 +109,7 @@ final class PulsoModel {
             let inputs = try await HealthSync.recentWorkouts()
             let written = try await api.sync(inputs)
             lastSync = "\(written) entrenamientos sincronizados"
+            Task { await MedicationStore.shared.healthWorkoutsSynced(inputs) }
             await refresh()
         } catch {
             handle(error)

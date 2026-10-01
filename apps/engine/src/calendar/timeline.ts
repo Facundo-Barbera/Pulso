@@ -12,7 +12,7 @@ import { expand } from "./recurrence";
 import { plannedView } from "./schedule";
 import { healthWorkouts, loggedSessions, scansBetween } from "./sources";
 import { CalendarError, listBusyBlocks, listHealthEvents, mealTimesBetween } from "./store";
-import { addDays, DATE, daysBetween, local, localDateTime } from "./time";
+import { addDays, DATE, daysBetween, local, localDateTime, TIME } from "./time";
 
 /** The longest range one request may ask for. */
 export const MAX_DAYS = 125;
@@ -106,7 +106,7 @@ export function timeline(from: string, to: string, now = new Date()): CalendarRa
   const meds = new Map(listMedications({ includeInactive: true }).map((m) => [m.id, m]));
   for (const d of dosesBetween(from, to)) {
     const med = meds.get(d.medicationId);
-    const start = d.status === "tomada" && d.takenAt ? localDateTime(d.takenAt) : d.scheduledTime ? at(d.date, d.scheduledTime) : null;
+    const start = d.status === "tomada" && d.takenAt ? localDateTime(d.takenAt) : d.scheduledTime && TIME.test(d.scheduledTime) ? at(d.date, d.scheduledTime) : null;
     const label = d.status === "tomada" ? "Tomada" : d.status === "omitida" ? "Omitida" : "Pospuesta";
     items.push({
       id: `dose:${d.id}`, kind: "dose", title: med?.name ?? "Medicamento", subtitle: med ? `${label} · ${med.dose} ${med.unit}` : label, date: d.date, start, end: null,

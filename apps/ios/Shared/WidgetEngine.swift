@@ -85,12 +85,15 @@ struct WidgetEngine {
         var dose: Double
         var unit: String
         var date: String
-        var time: String
+        /// Null while the dose waits for a workout.
+        var time: String?
+        /// The key a dose is logged under; older engines have none (the time is the key).
+        var slot: String?
         var status: String
 
         var widgetDose: WidgetSnapshot.Dose? {
-            guard let due = WidgetClock.instant(date: date, time: time) else { return nil }
-            return WidgetSnapshot.Dose(medicationId: medicationId, name: name, doseText: "\(dose.formatted()) \(unit)", date: date, time: time, due: due)
+            guard let time, let due = WidgetClock.instant(date: date, time: time) else { return nil }
+            return WidgetSnapshot.Dose(medicationId: medicationId, name: name, doseText: "\(dose.formatted()) \(unit)", date: date, time: time, due: due, slot: slot)
         }
     }
 
@@ -143,7 +146,7 @@ struct WidgetEngine {
     func takeDose(_ dose: WidgetSnapshot.Dose, at now: Date = .now) async throws {
         // The engine wants whole epoch ms.
         struct DoseLog: Encodable { var medicationId, date, scheduledTime: String; var status = "tomada"; var takenAt: Int64 }
-        let body = DoseLog(medicationId: dose.medicationId, date: dose.date, scheduledTime: dose.time, takenAt: Int64(now.timeIntervalSince1970 * 1000))
+        let body = DoseLog(medicationId: dose.medicationId, date: dose.date, scheduledTime: dose.slot ?? dose.time, takenAt: Int64(now.timeIntervalSince1970 * 1000))
         var request = request("api/mobile/medication/doses", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONEncoder().encode(body)

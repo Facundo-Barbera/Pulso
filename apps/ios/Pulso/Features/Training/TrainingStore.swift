@@ -285,6 +285,7 @@ final class TrainingStore {
         do {
             let saved = try await api.saveTrainingSession(session)
             queue.remove(session.id)
+            Task { await MedicationStore.shared.refreshAfterWorkout() }
             if summary?.id == session.id {
                 summary?.prs = saved.prs
                 summary?.uploaded = true

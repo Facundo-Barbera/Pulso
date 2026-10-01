@@ -1,7 +1,10 @@
 import type { CoachBrief, DailyMetrics, DoseSlot, MedicationDay, Readiness, SleepNight, SleepSummary } from "@pulso/contract";
 import { Activity, Check, Clock, Dumbbell, Flame, HeartPulse, Moon, Pill, Sparkles, Watch } from "lucide-react";
+import { localNow } from "@/src/medication/schedule";
+import { groupSlots, unitFor } from "@/src/web/medication";
 import type { RecentActivity, TodayOverview } from "@/src/web/today";
 import { Card, CardTitle } from "../../_ui/card";
+import { MOMENT_ICON } from "../medicacion/_components/moment-icons";
 import { cn } from "../../_ui/cn";
 import { EmptyState } from "../../_ui/empty-state";
 import { fmtAgo, fmtDayLabel, fmtMinutes, fmtNumber, fmtShortDate, fmtTime } from "../../_ui/format";
@@ -147,11 +150,12 @@ const DOSE: Record<DoseSlot["status"], { label: string; className: string }> = {
 
 export function MedicationCard({ day, delay }: { day: MedicationDay; delay: number }) {
   const taken = day.slots.filter((s) => s.status === "tomada").length;
+  const groups = groupSlots(day.slots, localNow().time);
   return (
     <Card delay={delay}>
-      <CardTitle icon={Pill} color="var(--domain-medication)" title="Medicación" href="/medicacion" />
+      <CardTitle icon={Pill} color="var(--domain-medication)" title="Tomas de hoy" href="/medicacion" />
       {day.slots.length === 0 && day.asNeeded.length === 0 ? (
-        <EmptyState compact icon={Pill} color="var(--domain-medication)" title="Nada programado hoy" line="Tus medicamentos y suplementos con horario aparecerán aquí." />
+        <EmptyState compact icon={Pill} color="var(--domain-medication)" title="Nada programado hoy" line="Tus medicamentos y suplementos aparecerán aquí: a su hora, con una comida o después de entrenar." />
       ) : (
         <>
           {day.slots.length > 0 && (
@@ -159,27 +163,41 @@ export function MedicationCard({ day, delay }: { day: MedicationDay; delay: numb
               <span className="tabular text-foreground font-semibold">{taken}</span> de <span className="tabular">{day.slots.length}</span> tomas hechas
             </p>
           )}
-          <ul className="-mx-2 space-y-0.5">
-            {day.slots.map((slot) => {
-              const isNext = day.next?.medicationId === slot.medicationId && day.next.time === slot.time;
+          <div className="space-y-3">
+            {groups.map((group) => {
+              const Icon = MOMENT_ICON[group.moment];
               return (
-                <li key={`${slot.medicationId}-${slot.time}`} className={cn("flex min-h-11 items-center gap-3 rounded-xl px-2", isNext && "bg-muted/70")}>
-                  <span className="tabular text-muted-foreground w-11 text-[13px]">{slot.time}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14px] font-medium">{slot.name}</span>
-                    <span className="text-muted-foreground block text-[12px]">
-                      {fmtNumber(slot.dose, 2)} {slot.unit}
-                      {isNext && " · siguiente"}
-                    </span>
-                  </span>
-                  <span className={cn("flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", DOSE[slot.status].className)}>
-                    {slot.status === "tomada" ? <Check className="size-3" strokeWidth={3} /> : slot.status === "pendiente" ? <Clock className="size-3" /> : null}
-                    {DOSE[slot.status].label}
-                  </span>
-                </li>
+                <section key={group.key}>
+                  <h3 className="text-muted-foreground mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
+                    <Icon className="size-3.5" style={{ color: "var(--domain-medication)" }} />
+                    <span className={cn(group.moment === "hora" && "tabular")}>{group.title}</span>
+                    {group.time && <span className="tabular font-medium normal-case">· {group.time}</span>}
+                  </h3>
+                  <ul className="-mx-2 space-y-0.5">
+                    {group.slots.map((slot) => {
+                      const isNext = day.next?.medicationId === slot.medicationId && day.next.slot === slot.slot;
+                      return (
+                        <li key={`${slot.medicationId}-${slot.slot}`} className={cn("flex min-h-11 items-center gap-3 rounded-xl px-2 py-1", isNext && "bg-muted/70")}>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[14px] font-medium">{slot.name}</span>
+                            <span className="text-muted-foreground block truncate text-[12px]">
+                              {fmtNumber(slot.dose, 2)} {unitFor(slot.dose, slot.unit)}
+                              {isNext && " · siguiente"}
+                            </span>
+                            {slot.line && <span className="text-foreground/80 block text-[12px] leading-snug">{slot.line}</span>}
+                          </span>
+                          <span className={cn("flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", DOSE[slot.status].className)}>
+                            {slot.status === "tomada" ? <Check className="size-3" strokeWidth={3} /> : slot.status === "pendiente" ? <Clock className="size-3" /> : null}
+                            {DOSE[slot.status].label}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
               );
             })}
-          </ul>
+          </div>
           {day.asNeeded.length > 0 && <p className="text-muted-foreground mt-3 text-[12px]">Además, {day.asNeeded.length} {day.asNeeded.length === 1 ? "toma" : "tomas"} a demanda.</p>}
         </>
       )}

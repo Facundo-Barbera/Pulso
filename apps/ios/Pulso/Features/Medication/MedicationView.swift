@@ -9,11 +9,13 @@ struct MedicationView: View {
     @State private var importing = false
 
     private enum EditTarget: Identifiable {
-        case new
+        case new(MedicationKind)
         case existing(Medication)
         var id: String {
-            if case let .existing(med) = self { return med.id }
-            return "new"
+            switch self {
+            case let .new(kind): "new-\(kind.rawValue)"
+            case let .existing(med): med.id
+            }
         }
     }
 
@@ -36,6 +38,7 @@ struct MedicationView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Medicación")
+        .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -45,8 +48,13 @@ struct MedicationView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Añadir", systemImage: "plus") { editing = .new }
-                    .buttonStyle(.glassProminent)
+                Menu {
+                    Button("Medicamento", systemImage: MedicationKind.medicamento.symbol) { editing = .new(.medicamento) }
+                    Button("Suplemento", systemImage: MedicationKind.suplemento.symbol) { editing = .new(.suplemento) }
+                } label: {
+                    Label("Añadir", systemImage: "plus")
+                }
+                .buttonStyle(.glassProminent)
             }
         }
         .refreshable { await store.refresh() }
@@ -58,7 +66,7 @@ struct MedicationView: View {
         .animation(.snappy, value: store.medications)
         .sheet(item: $editing) { target in
             switch target {
-            case .new: MedicationEditor(store: store, medication: nil)
+            case let .new(kind): MedicationEditor(store: store, medication: nil, kind: kind)
             case let .existing(med): MedicationEditor(store: store, medication: med)
             }
         }
@@ -98,8 +106,8 @@ struct MedicationView: View {
             .frame(width: 190, height: 190)
             .animation(.snappy, value: taken)
 
-            if let next = store.day?.next {
-                Label("Próxima: \(next.name) · \(LocalClock.display(next.time))", systemImage: "bell.badge")
+            if let next = store.day?.next, let time = next.time {
+                Label("Próxima: \(next.name) · \(LocalClock.display(time))", systemImage: "bell.badge")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -126,10 +134,7 @@ struct MedicationView: View {
     private func todayCard(_ day: MedicationDay) -> some View {
         Card {
             CardTitle(text: "Hoy", systemImage: "calendar")
-            ForEach(day.slots) { slot in
-                DoseRow(slot: slot, store: store)
-                if slot.id != day.slots.last?.id { Divider().padding(.leading, 46) }
-            }
+            DoseGroupsView(slots: day.slots, store: store)
             Text("Mantén pulsado una toma para omitirla o deshacerla.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -161,16 +166,33 @@ struct MedicationView: View {
         }
     }
 
-    private var medicationsCard: some View {
-        Card {
-            CardTitle(text: "Lo que tomas", systemImage: "list.bullet")
-            LowStockNote(medications: store.lowStock)
-            ForEach(store.medications) { med in
-                Button { editing = .existing(med) } label: { MedicationRow(medication: med) }
-                    .buttonStyle(.plain)
-                if med.id != store.medications.last?.id { Divider().padding(.leading, 46) }
+    /// "Medicamentos" and "Suplementos", each in its own card.
+    @ViewBuilder private var medicationsCard: some View {
+        ForEach(MedicationKind.allCases) { kind in
+            let meds = store.medications.filter { $0.kind == kind }
+            if !meds.isEmpty {
+                Card {
+                    CardTitle(text: kind == .medicamento ? "Medicamentos" : "Suplementos", systemImage: kind.symbol)
+                    LowStockNote(medications: store.lowStock.filter { $0.kind == kind })
+                    ForEach(meds) { med in
+                        Button { editing = .existing(med) } label: { MedicationRow(medication: med) }
+                            .buttonStyle(.plain)
+                        if med.id != meds.last?.id { Divider().padding(.leading, 46) }
+                    }
+                }
             }
         }
+    }
+
+    /// "2 medicamentos · 3 suplementos"
+    private var subtitle: String {
+        let meds = store.medications.count { $0.kind == .medicamento && $0.active }
+        let supplements = store.medications.count { $0.kind == .suplemento && $0.active }
+        let parts = [
+            meds > 0 ? "\(meds) \(meds == 1 ? "medicamento" : "medicamentos")" : nil,
+            supplements > 0 ? "\(supplements) \(supplements == 1 ? "suplemento" : "suplementos")" : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? "y suplementos" : parts.joined(separator: " · ")
     }
 
     private var emptyState: some View {
@@ -186,8 +208,11 @@ struct MedicationView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Añadir medicación", systemImage: "plus") { editing = .new }
+            Button("Añadir medicamento", systemImage: MedicationKind.medicamento.symbol) { editing = .new(.medicamento) }
                 .buttonStyle(.glassProminent)
+                .controlSize(.large)
+            Button("Añadir suplemento", systemImage: MedicationKind.suplemento.symbol) { editing = .new(.suplemento) }
+                .buttonStyle(.glass)
                 .controlSize(.large)
             Button("Importar desde Salud", systemImage: "heart.text.square") { importing = true }
                 .buttonStyle(.glass)
@@ -237,7 +262,7 @@ private struct MedicationRow: View {
         } else if medication.schedule.asNeeded {
             parts.append("Cuando haga falta")
         } else {
-            parts.append(medication.schedule.times.map(LocalClock.display).formatted(.list(type: .and)))
+            parts.append(medication.schedule.summary)
             if !medication.schedule.days.isEmpty { parts.append(WeekdayNames.short(medication.schedule.days)) }
         }
         if let instructions = medication.instructions { parts.append(instructions) }
@@ -259,14 +284,16 @@ enum WeekdayNames {
 
 #Preview("Medicación · 375 pt · XXL") {
     let slot = DoseSlot(medicationId: "1", name: "Vitamina D3 + K2 2000 UI con aceite de oliva", kind: .suplemento, dose: 2, unit: "comprimidos",
-                        instructions: "Con la comida principal", date: LocalClock.date(.now), time: "21:30", status: .pendiente)
+                        instructions: "Con la comida principal", date: LocalClock.date(.now), slot: "21:30", time: "21:30", status: .pendiente)
+    let creatine = DoseSlot(medicationId: "2", name: "Creatina", kind: .suplemento, dose: 5, unit: "g", date: LocalClock.date(.now), slot: "entreno",
+                            moment: .entreno, time: nil, training: TrainingSlot(state: .planned, plannedAt: "18:00", fallback: "20:00"), status: .pendiente)
     let med = Medication(id: "1", name: slot.name, kind: .suplemento, dose: 2, unit: "comprimidos", instructions: "Con la comida principal",
                          schedule: MedicationSchedule(asNeeded: false, times: ["08:00", "14:00", "21:30"], days: [1, 3, 5]),
                          startDate: "2026-09-01", stock: 4, lowStockThreshold: 7, lowStock: true, active: true)
     return NarrowPreview(dynamicType: .xxLarge) {
         Card {
-            DoseRow(slot: slot, store: .shared)
-            DoseRow(slot: slot, store: .shared, compact: true)
+            DoseGroupsView(slots: [slot, creatine], store: .shared)
+            DoseGroupsView(slots: [slot, creatine], store: .shared, compact: true)
         }
         Card { MedicationRow(medication: med) }
     }
