@@ -75,7 +75,7 @@ export const medicationTools = [
       date: dateSchema.optional().describe("Local date of the slot; default today."),
       scheduledTime: timeSchema.optional(),
       status: z.enum(["tomada", "omitida", "pospuesta"]),
-      takenAt: z.number().int().positive().optional(),
+      takenAt: z.number().positive().optional(),
     },
     async ({ date, ...rest }) => safely(() => logDose({ ...rest, date: date ?? localNow().date })),
   ),

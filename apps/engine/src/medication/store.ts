@@ -56,7 +56,7 @@ export const doseLogSchema = z.object({
   date: dateSchema,
   scheduledTime: timeSchema.nullish(),
   status: z.enum(["tomada", "omitida", "pospuesta"]),
-  takenAt: z.number().int().positive().nullish(),
+  takenAt: z.number().positive().nullish(),
 });
 
 export class MedicationError extends Error {
@@ -231,7 +231,7 @@ export function logDose(raw: DoseLogInput): DoseEvent {
   if (time === null && !med.schedule.asNeeded && input.status !== "tomada") {
     throw new MedicationError("invalid_request", "scheduledTime is required for a scheduled medication unless logging an extra intake");
   }
-  const takenAt = input.status === "tomada" ? (input.takenAt ?? Date.now()) : null;
+  const takenAt = input.status === "tomada" ? Math.round(input.takenAt ?? Date.now()) : null;
   const now = Date.now();
 
   return db().transaction(() => {

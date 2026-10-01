@@ -38,7 +38,7 @@ const segmental = z.object({
 /** Validates a scan from the phone or the agent. Needs two of weight / muscle / fat kg / fat %. */
 export const scanInputSchema = z
   .object({
-    measuredAt: z.number().int().positive().optional(),
+    measuredAt: z.number().positive().optional(),
     source: z.enum(["inbody", "manual"]).default("manual"),
     externalId: z.string().max(128).nullable().optional(),
     device: z.string().max(32).nullable().optional(),
@@ -52,7 +52,7 @@ export const scanInputSchema = z
     const input = s as Record<string, unknown>;
     return {
       ...(Object.fromEntries(VALUE_KEYS.map((k) => [k, (input[k] as number | null | undefined) ?? null])) as BodyScanValues),
-      measuredAt: s.measuredAt ?? Date.now(),
+      measuredAt: Math.round(s.measuredAt ?? Date.now()),
       source: s.source,
       externalId: s.externalId ?? null,
       device: s.device ?? null,
@@ -107,7 +107,7 @@ export const samplesSchema = z.object({
         externalId: z.string().min(1).max(128),
         metric: z.enum(["weight", "percentBodyFat"]),
         value: z.number().positive().max(400),
-        measuredAt: z.number().int().positive(),
+        measuredAt: z.number().positive(),
       }),
     )
     .max(5000),
@@ -120,7 +120,7 @@ export function upsertSamples(samples: BodySample[]): number {
      ON CONFLICT (external_id) DO UPDATE SET metric = excluded.metric, value = excluded.value, measured_at = excluded.measured_at`,
   );
   return db().transaction((items: BodySample[]) => {
-    for (const s of items) statement.run(s.externalId, s.metric, s.value, s.measuredAt);
+    for (const s of items) statement.run(s.externalId, s.metric, s.value, Math.round(s.measuredAt));
     return items.length;
   })(samples);
 }

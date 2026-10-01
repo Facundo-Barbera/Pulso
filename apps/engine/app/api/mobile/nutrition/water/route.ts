@@ -17,7 +17,7 @@ export function GET(request: Request): Response {
 
 const schema = z.object({
   amountMl: z.number().positive().max(5000),
-  loggedAt: z.number().int().positive().optional(),
+  loggedAt: z.number().positive().optional(),
   date: dateString.optional(),
 });
 

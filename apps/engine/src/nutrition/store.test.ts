@@ -120,3 +120,12 @@ test("addDays crosses months and years", () => {
   expect(addDays("2029-12-31", 1)).toBe("2030-01-01");
   expect(addDays("2029-03-01", -1)).toBe("2029-02-28");
 });
+
+test("a phone's fractional epoch ms is accepted and stored whole (Swift's timeIntervalSince1970 × 1000)", async () => {
+  const { mealSchema, toMealInput } = await import("./inputs");
+  const parsed = mealSchema.safeParse({ name: "Coca-Cola sin azúcar", slot: "snack", quantity: 600, unit: "ml", kcal: 0, protein: 0, carbs: 0, fat: 0, eatenAt: 1790876000123.456 });
+  expect(parsed.success).toBe(true);
+  const input = toMealInput(parsed.data!);
+  if (typeof input === "string") throw new Error(input);
+  expect(Number.isInteger(logMeal(input).eatenAt)).toBe(true);
+});

@@ -89,7 +89,7 @@ const ENTRY_SELECT = `SELECT m.*, c.off_plan, c.note, d.measure_amount, d.measur
   FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id LEFT JOIN meal_entry_detail d ON d.entry_id = m.id`;
 
 export function logMeal(input: MealInput, source: MealSource = input.source ?? "manual"): MealEntry {
-  const eatenAt = input.eatenAt ?? Date.now();
+  const eatenAt = Math.round(input.eatenAt ?? Date.now());
   const entry: MealEntry = {
     id: randomUUID(),
     date: input.date ?? localDate(eatenAt),

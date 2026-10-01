@@ -50,7 +50,7 @@ export function toMl(amount: number, unit: WaterUnit | "l", settings = getWaterS
 }
 
 export function logWater(input: { amountMl: number; loggedAt?: number; date?: string; source?: WaterEntry["source"] }): WaterEntry {
-  const loggedAt = input.loggedAt ?? Date.now();
+  const loggedAt = Math.round(input.loggedAt ?? Date.now());
   const entry: WaterEntry = {
     id: randomUUID(),
     date: input.date ?? localDate(loggedAt),

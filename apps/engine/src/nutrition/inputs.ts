@@ -42,7 +42,7 @@ export const mealShape = {
   ...macroShape,
   caffeineMg: z.number().min(0).max(2000).nullish().describe("Caffeine in mg, for coffee, tea, mate, cola or energy drinks (an espresso ≈ 63 mg, a 355 ml cola ≈ 34 mg)"),
   alcoholG: z.number().min(0).max(500).nullish().describe("Grams of pure alcohol, for alcoholic drinks: ml × ABV × 0.789 (a 330 ml beer at 5 % ≈ 13 g)"),
-  eatenAt: z.number().int().optional().describe("When it was eaten, epoch ms. Defaults to now"),
+  eatenAt: z.number().optional().describe("When it was eaten, epoch ms. Defaults to now"),
   date: dateString.optional().describe("Local day it counts toward (YYYY-MM-DD). Defaults to the day of eatenAt"),
   barcode: z.string().max(32).nullish(),
 };

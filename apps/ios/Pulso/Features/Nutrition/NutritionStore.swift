@@ -73,7 +73,7 @@ final class NutritionStore {
         guard let api else { return false }
         var input = input
         input.date = dateKey
-        input.eatenAt = eatenAtNow().timeIntervalSince1970 * 1000
+        input.eatenAt = (eatenAtNow().timeIntervalSince1970 * 1000).rounded()
         return await run { _ = try await api.logMeal(input) }
     }
 
@@ -119,7 +119,7 @@ final class NutritionStore {
             day?.water = water
         }
         do {
-            let (entry, updated) = try await api.logWater(ml: ml, date: key, loggedAt: eatenAtNow().timeIntervalSince1970 * 1000)
+            let (entry, updated) = try await api.logWater(ml: ml, date: key, loggedAt: (eatenAtNow().timeIntervalSince1970 * 1000).rounded())
             if dateKey == key { day?.water = updated }
             await WaterHealth.save(entry)
             return entry
