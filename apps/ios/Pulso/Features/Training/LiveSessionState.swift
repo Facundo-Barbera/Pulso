@@ -487,7 +487,7 @@ struct LiveSessionState: Hashable {
 
     mutating func logCardio(_ index: Int, _ log: CardioLog) {
         guard exercises.indices.contains(index), exercises[index].isCardio else { return }
-        exercises[index].cardioLog = log
+        exercises[index].cardioLog = log.sanitized
         exercises[index].skipped = false
     }
 
@@ -563,7 +563,7 @@ struct LiveSessionState: Hashable {
             startedAt: Self.ms(startedAt), endedAt: Self.ms(endedAt), notes: nil, sets: logs,
             // `cardioMinutes` is the engine's to compute (it is not in `SessionInput`).
             cardio: cardio
-        )
+        ).sanitized
     }
 
     /// The lock screen: the cardio block `cardio` names when given, else the next set.
@@ -613,10 +613,11 @@ extension LiveSet: Codable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        // Finite numbers only, or the whole copy (on disk and to the engine) fails to encode.
         try c.encode(id, forKey: .id)
-        try c.encode(weightKg, forKey: .weightKg)
+        try c.encode(weightKg.isFinite ? weightKg : 0, forKey: .weightKg)
         try c.encode(reps, forKey: .reps)
-        try c.encode(rpe, forKey: .rpe)
+        try c.encode(rpe.flatMap { $0.isFinite ? $0 : nil }, forKey: .rpe)
         try c.encode(doneAt.map(LiveSessionState.ms), forKey: .doneAt)
     }
 }
@@ -678,6 +679,7 @@ private struct CardioLogJSON: Encodable {
     private enum CodingKeys: String, CodingKey { case exerciseId, durationSeconds, distanceKm, level, inclinePercent, avgHr, kcal, doneAt }
 
     func encode(to encoder: Encoder) throws {
+        let log = log.sanitized
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(log.exerciseId, forKey: .exerciseId)
         try c.encode(log.durationSeconds, forKey: .durationSeconds)

@@ -104,18 +104,62 @@ struct SessionSummaryView: View {
     }
 
     @ViewBuilder private var status: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            if summary.uploadFailed {
+                UnsavedBanner()
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
             if summary.savedToHealth {
                 Label("Guardado en Salud", systemImage: "heart.fill").foregroundStyle(.pink)
             }
             if summary.uploaded {
                 Label("Guardado en tu Mac", systemImage: "desktopcomputer").foregroundStyle(.secondary)
-            } else if !session.sets.isEmpty || !cardio.isEmpty {
-                Label("Se enviará a tu Mac cuando vuelva la conexión", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+            } else if !summary.uploadFailed && (!session.sets.isEmpty || !cardio.isEmpty) {
+                Label {
+                    Text("Guardando en tu Mac…")
+                } icon: {
+                    ProgressView().controlSize(.mini)
+                }
+                .foregroundStyle(.secondary)
             }
         }
         .font(.footnote)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.snappy, value: summary.uploadFailed)
+        .animation(.snappy, value: summary.uploaded)
+    }
+}
+
+/// "No se pudo guardar en la Mac · Reintentar": the session waits on this phone and goes on its own later too.
+private struct UnsavedBanner: View {
+    @State private var retrying = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.icloud.fill")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("No se pudo guardar en la Mac").font(.subheadline.weight(.semibold))
+                Text("Sigue guardada en este iPhone y se enviará sola.").font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                retrying = true
+                Task {
+                    await TrainingStore.shared.retryUpload()
+                    retrying = false
+                }
+            } label: {
+                if retrying { ProgressView() } else { Text("Reintentar") }
+            }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.glassProminent)
+            .tint(.orange)
+            .disabled(retrying)
+        }
+        .padding(14)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
     }
 }
 

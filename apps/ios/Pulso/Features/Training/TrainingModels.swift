@@ -319,6 +319,53 @@ struct TrainingRecord: Codable, Hashable {
     }
 }
 
+// MARK: - Always encodable
+
+private extension Double {
+    /// Nil for NaN and ±∞, which `JSONEncoder` refuses (and would take the whole session with them).
+    var finite: Double? { isFinite ? self : nil }
+}
+
+extension SetLog {
+    /// Finite numbers only: a load or effort that came out NaN or ∞ becomes 0 or nothing.
+    var sanitized: SetLog {
+        var set = self
+        set.weightKg = max(0, weightKg.finite ?? 0)
+        set.reps = max(0, reps)
+        set.rpe = rpe?.finite
+        set.doneAt = doneAt.finite ?? 0
+        return set
+    }
+}
+
+extension CardioLog {
+    /// Finite numbers only: an empty or broken reading is left out, the time is 0 at worst.
+    var sanitized: CardioLog {
+        var log = self
+        log.durationSeconds = max(0, durationSeconds.finite ?? 0)
+        log.distanceKm = distanceKm?.finite
+        log.level = level?.finite
+        log.inclinePercent = inclinePercent?.finite
+        log.avgHr = avgHr?.finite
+        log.kcal = kcal?.finite
+        log.doneAt = doneAt.finite ?? 0
+        return log
+    }
+}
+
+extension TrainingSession {
+    /// What is queued and sent: encodable whatever went wrong upstream.
+    var sanitized: TrainingSession {
+        var session = self
+        session.sets = sets.map(\.sanitized)
+        session.cardio = cardio?.map(\.sanitized)
+        session.cardioMinutes = cardioMinutes?.finite
+        session.startedAt = startedAt.finite ?? 0
+        session.endedAt = endedAt.finite ?? session.startedAt
+        return session
+    }
+}
+
 struct TrainingSessionSaved: Codable {
     var session: TrainingSession
     var prs: [TrainingRecord]
@@ -338,7 +385,7 @@ extension PulsoAPI {
 
     /// Upserts by the session's client-made id, so retrying after a failure is safe.
     func saveTrainingSession(_ session: TrainingSession) async throws -> TrainingSessionSaved {
-        try await call("api/mobile/training/sessions", method: "POST", body: session)
+        try await call("api/mobile/training/sessions", method: "POST", body: session.sanitized)
     }
 
     // MARK: Editing and alternatives

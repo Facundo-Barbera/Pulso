@@ -1,11 +1,14 @@
 import Foundation
 import Observation
+import os
 
 /// The end of a session as the summary shows it. `prs` and `uploaded` fill in
 /// once the Mac answers; a session that couldn't reach it waits on disk.
 struct SessionSummary: Identifiable {
     var session: TrainingSession
     var prs: [TrainingRecord] = []
+    /// The Mac couldn't be reached or refused it; it stays queued and "Reintentar" shows.
+    var uploadFailed = false
     /// Exercises passed over, by name.
     var skipped: [String] = []
     var uploaded = false
@@ -42,7 +45,7 @@ final class TrainingStore {
 
     func load() async {
         guard let api = PulsoModel.shared.api else { return }
-        await uploadPending(api)
+        await uploadPending()
         do {
             async let view = api.trainingProgram()
             async let recent = api.trainingSessions()
@@ -145,14 +148,18 @@ final class TrainingStore {
         live = session
     }
 
-    /// Drops the session here and (best effort) on the engine.
+    /// Drops the session here and on the engine, saving nothing.
     func discard() async {
         await live?.close()
         live = nil
+        if let api = PulsoModel.shared.api { Task { try? await api.deleteLiveSession(discard: true) } }
     }
 
-    /// Ends the live session: Salud first (it needs no network), then the Mac.
-    /// The summary shows right away and fills in records when the Mac answers.
+    /// Ends the live session. The finished session is on disk (the upload queue)
+    /// before anything can fail, hang or be killed; then it goes to the Mac, and
+    /// only once the Mac has it is the engine's live copy dropped. Salud runs
+    /// beside it, so a permission sheet left open can't hold the session back.
+    /// The summary shows right away and fills in as the answers come.
     func finish() async {
         guard let live, !finishing else { return }
         finishing = true
@@ -160,53 +167,100 @@ final class TrainingStore {
         let state = live.state
         let session = state.session(endedAt: .now)
         let cardio = state.exercises.compactMap { ex in ex.cardioLog.map { (log: $0, modality: ex.modality) } }
+        if state.hasWork { queue.add(session) }
         await live.close()
         self.live = nil
         summary = SessionSummary(session: session, skipped: state.skippedNames)
-        guard state.hasWork else { return }
+        guard state.hasWork else {
+            if let api = PulsoModel.shared.api { Task { try? await api.deleteLiveSession(discard: true) } }
+            return
+        }
+        Task { await saveToHealth(session, cardio: cardio) }
+        guard await upload(session) else { return }
+        // A session started meanwhile is the engine's live copy now: leave that one.
+        if self.live == nil, let api = PulsoModel.shared.api { try? await api.deleteLiveSession() }
+        await load()
+    }
 
-        // Salud refusing or being unavailable doesn't stop the session going to the Mac.
-        var savedToHealth = false
+    /// "Reintentar" on the summary of a session the Mac didn't get.
+    func retryUpload() async {
+        guard let summary, !summary.uploaded else { return }
+        self.summary?.uploadFailed = false
+        if await upload(summary.session) { await load() }
+    }
+
+    /// Salud refusing, unavailable or waiting on its permission sheet doesn't touch the Mac's copy.
+    private func saveToHealth(_ session: TrainingSession, cardio: [(log: CardioLog, modality: String?)]) async {
+        var saved = false
         if !session.sets.isEmpty, (try? await StrengthWorkout.save(start: session.start, end: session.start.addingTimeInterval(session.duration), sessionId: session.id)) != nil {
-            savedToHealth = true
+            saved = true
         }
         for (index, block) in cardio.enumerated() {
-            if (try? await StrengthWorkout.saveCardio(block.log, modality: block.modality, sessionId: session.id, index: index)) != nil {
-                savedToHealth = true
-            }
+            if (try? await StrengthWorkout.saveCardio(block.log, modality: block.modality, sessionId: session.id, index: index)) != nil { saved = true }
         }
-        if savedToHealth, summary?.id == session.id { summary?.savedToHealth = true }
+        if saved, summary?.id == session.id { summary?.savedToHealth = true }
+    }
 
-        guard let api = PulsoModel.shared.api else { return queue(session) }
+    // MARK: Upload queue
+
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Pulso", category: "training")
+    private let queue = SessionQueue(url: TrainingFiles.pending)
+    private var uploading = false
+
+    /// Posts one finished session (the engine upserts by id). It leaves the queue
+    /// only once the Mac has it; a failure is logged and shown, never swallowed.
+    private func upload(_ session: TrainingSession) async -> Bool {
+        guard let api = PulsoModel.shared.api else { return false }
         do {
             let saved = try await api.saveTrainingSession(session)
+            queue.remove(session.id)
             if summary?.id == session.id {
                 summary?.prs = saved.prs
                 summary?.uploaded = true
+                summary?.uploadFailed = false
             }
-            await load()
+            return true
         } catch {
-            queue(session)
+            Self.log.error("Session \(session.id, privacy: .public) didn't reach the Mac: \(String(describing: error), privacy: .public)")
+            if summary?.id == session.id { summary?.uploadFailed = true }
             PulsoModel.shared.handle(error)
+            return false
         }
     }
 
-    // MARK: Offline queue
-
-    private var pending: [TrainingSession] {
-        get { TrainingFiles.load([TrainingSession].self, from: TrainingFiles.pending) ?? [] }
-        set { newValue.isEmpty ? TrainingFiles.remove(TrainingFiles.pending) : TrainingFiles.save(newValue, to: TrainingFiles.pending) }
-    }
-
-    private func queue(_ session: TrainingSession) {
-        pending = pending.filter { $0.id != session.id } + [session]
-    }
-
-    /// Retries sessions finished while the Mac was unreachable. The engine upserts by id.
-    private func uploadPending(_ api: PulsoAPI) async {
-        for session in pending {
-            guard (try? await api.saveTrainingSession(session)) != nil else { return }
-            pending = pending.filter { $0.id != session.id }
+    /// Sends the sessions still queued, oldest first: at launch, back in the
+    /// foreground and with every load. Stops at the first failure, which shows.
+    func uploadPending() async {
+        guard !uploading else { return }
+        uploading = true
+        defer { uploading = false }
+        for session in queue.items {
+            guard await upload(session) else { return }
         }
+    }
+}
+
+/// Finished sessions waiting for the Mac, as JSON on disk: the model, not bytes,
+/// so each upload encodes it afresh (and sanitized). A file that no longer reads
+/// is set aside rather than written over.
+struct SessionQueue {
+    let url: URL
+
+    var items: [TrainingSession] { (try? JSONDecoder().decode([TrainingSession].self, from: Data(contentsOf: url))) ?? [] }
+
+    func add(_ session: TrainingSession) {
+        write(items.filter { $0.id != session.id } + [session.sanitized])
+    }
+
+    func remove(_ id: String) {
+        write(items.filter { $0.id != id })
+    }
+
+    private func write(_ sessions: [TrainingSession]) {
+        let manager = FileManager.default
+        if manager.fileExists(atPath: url.path), (try? JSONDecoder().decode([TrainingSession].self, from: Data(contentsOf: url))) == nil {
+            try? manager.moveItem(at: url, to: url.deletingPathExtension().appendingPathExtension("unreadable-\(Int(Date.now.timeIntervalSince1970)).json"))
+        }
+        if sessions.isEmpty { TrainingFiles.remove(url) } else { TrainingFiles.save(sessions, to: url) }
     }
 }

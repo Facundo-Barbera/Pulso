@@ -21,9 +21,12 @@ extension PulsoAPI {
         return saved
     }
 
-    /// `DELETE api/mobile/training/live`: finished or discarded.
-    func deleteLiveSession() async throws {
-        let _: Ignored? = try await call("api/mobile/training/live", method: "DELETE")
+    /// `DELETE api/mobile/training/live`. Finished (after its POST), the engine also keeps any
+    /// done work it doesn't have yet; `discard` drops the session without saving anything.
+    func deleteLiveSession(discard: Bool = false) async throws {
+        var request = makeRequest("api/mobile/training/live", method: "DELETE")
+        if discard { request.url = request.url?.appending(queryItems: [URLQueryItem(name: "discard", value: "1")]) }
+        let _: Ignored? = try await perform(request)
     }
 }
 

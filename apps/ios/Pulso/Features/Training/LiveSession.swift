@@ -1,6 +1,7 @@
 import ActivityKit
 import Foundation
 import Observation
+import os
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -415,8 +416,9 @@ final class LiveSession {
         }
         if remote.id != state.id {
             // A session left over on the engine (say, discarded offline): the one in
-            // progress is this phone's. Bounded so a confused engine can't loop us.
-            guard conflicts < 3, (try? await api.deleteLiveSession()) != nil, !closed else { return }
+            // progress is this phone's. Bounded so a confused engine can't loop us. One
+            // finished offline is in the upload queue, so this one goes without saving.
+            guard conflicts < 3, (try? await api.deleteLiveSession(discard: true)) != nil, !closed else { return }
             dirty = true
             return await push()
         }
@@ -487,8 +489,9 @@ final class LiveSession {
 
     // MARK: Closing
 
-    /// Stops the timers and the Live Activity, forgets the session on disk and
-    /// (best effort) on the engine.
+    /// Stops the timers and the Live Activity and forgets the session on this phone.
+    /// The engine's copy is the store's to drop: after the finished session is saved,
+    /// or as a discard.
     func close() async {
         closed = true
         pushTask?.cancel()
@@ -498,9 +501,6 @@ final class LiveSession {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.restNotification] + Self.cardioNotifications)
         TrainingFiles.remove(TrainingFiles.live)
         TrainingFiles.remove(TrainingFiles.cardio)
-        if let api = PulsoModel.shared.api {
-            Task { try? await api.deleteLiveSession() }
-        }
         let final = ActivityContent(state: state.activityState(unit: TrainingStore.shared.unit(for:)), staleDate: nil)
         for activity in Activity<TrainingActivityAttributes>.activities {
             await activity.end(final, dismissalPolicy: .immediate)
@@ -532,15 +532,25 @@ final class LiveSession {
 /// JSON files under Application Support/Training: the live session, its cardio
 /// stopwatch and sessions waiting to upload.
 enum TrainingFiles {
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Pulso", category: "training")
+
     static let directory = URL.applicationSupportDirectory.appending(path: "Training", directoryHint: .isDirectory)
     static let live = directory.appending(path: "live-session.json")
     static let cardio = directory.appending(path: "live-cardio.json")
     static let pending = directory.appending(path: "pending-sessions.json")
     static let settings = directory.appending(path: "training-settings.json")
 
-    static func save<Value: Encodable>(_ value: Value, to url: URL) {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? JSONEncoder().encode(value).write(to: url, options: .atomic)
+    /// Logged when it fails: a session that can't be written is one that can be lost.
+    @discardableResult
+    static func save<Value: Encodable>(_ value: Value, to url: URL) -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(value).write(to: url, options: .atomic)
+            return true
+        } catch {
+            log.error("Couldn't write \(url.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)")
+            return false
+        }
     }
 
     static func load<Value: Decodable>(_ type: Value.Type, from url: URL) -> Value? {

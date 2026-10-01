@@ -46,10 +46,17 @@ struct RootView: View {
         }
         .animation(.snappy, value: model.credentials == nil)
         .sensoryFeedback(.success, trigger: model.credentials != nil) { _, paired in paired }
-        .task { await model.refresh() }
+        .task {
+            await model.refresh()
+            // A finished workout the Mac didn't get goes now, whatever tab opens first.
+            await training.uploadPending()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                Task { await model.refresh() }
+                Task {
+                    await model.refresh()
+                    await training.uploadPending()
+                }
                 // Replies the Mac kept writing while Pulso was away pick up where they were.
                 ChatStore.resumeAll()
             }
