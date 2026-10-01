@@ -1,0 +1,11 @@
+{
+  "name": "@pulso/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "productName": "Pulso",
+  "description": "Pulso's desktop shell. It points at the engine; it does not own one.",
+  "main": "main.js",
+  "devDependencies": {
+    "electron": "^44.5.1"
+  }
+}
