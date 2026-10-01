@@ -36,6 +36,34 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(product.macros(grams: 125), NutritionMacros(kcal: 76, protein: 4.4, carbs: 5.8, fat: 3.9, fiber: 0))
     }
 
+    func testDrinksOfferTheirPackageInMlAndLogItAsSaid() {
+        let coke = FoodProduct(barcode: "1", name: "Coca-Cola", brand: nil, per100g: .zero, servingGrams: nil, imageUrl: nil,
+                               liquid: true, packageSize: 600, packageKind: "botella")
+        XCTAssertEqual(coke.unit, .ml)
+        XCTAssertEqual(coke.portions.map(\.title), ["Botella (600 ml)", "Vaso (250 ml)", "Media (300 ml)"])
+        XCTAssertEqual(coke.defaultPortion.measure, Measure(amount: 1, unit: .botella, size: 600))
+        let can = FoodProduct(barcode: "2", name: "Lata", brand: nil, per100g: .zero, servingGrams: 355, imageUrl: nil,
+                              liquid: true, packageSize: 355, packageKind: "lata")
+        XCTAssertEqual(can.portions.map(\.title), ["Lata (355 ml)", "Vaso (250 ml)", "Media (\(177.5.formatted()) ml)"])
+        XCTAssertEqual(can.defaultPortion.measure, Measure(amount: 1, unit: .lata))
+    }
+
+    func testSolidsUseTheLabelAndOldProductsReadAsGrams() {
+        let cereal = FoodProduct(barcode: "3", name: "Cereal", brand: nil, per100g: .zero, servingGrams: 30, imageUrl: nil, packageSize: 375)
+        XCTAssertEqual(cereal.portions.map(\.amount), [30, 15, 375])
+        XCTAssertEqual(cereal.defaultPortion.amount, 30)
+        let bare = try? JSONDecoder().decode(FoodProduct.self, from: Data(#"{"barcode":"4","name":"X","per100g":{"kcal":1,"protein":0,"carbs":0,"fat":0,"fiber":0}}"#.utf8))
+        XCTAssertEqual(bare?.unit, .g)
+        XCTAssertEqual(bare?.portions.map(\.amount), [100, 30])
+    }
+
+    func testADrinkBetweenMealsIsASnack() {
+        XCTAssertEqual(MealSlot.forDrink(hour: 11), .snack)
+        XCTAssertEqual(MealSlot.forDrink(hour: 17), .snack)
+        XCTAssertEqual(MealSlot.forDrink(hour: 14), .comida)
+        XCTAssertEqual(MealSlot.forDrink(hour: 8), .desayuno)
+    }
+
     func testDayKeyRoundTrips() {
         let date = NutritionDate.date("2026-03-29")!
         XCTAssertEqual(NutritionDate.string(date), "2026-03-29")

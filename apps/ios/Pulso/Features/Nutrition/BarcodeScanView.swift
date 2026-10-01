@@ -124,23 +124,31 @@ struct BarcodeScanView: View {
     }
 }
 
-/// Grams (or servings, when the label gives a serving size) → macros → log.
+/// The amount in g, or ml for a drink, with presets from the label ("Lata (355 ml)") → macros → log.
+/// A preset that is a measure people say is stored as said, so the day reads "1 lata · 355 ml".
 struct PortionPicker: View {
     let product: FoodProduct
     let store: NutritionStore
     let onDone: () -> Void
-    @State private var grams: Double
-    @State private var slot = MealSlot.forHour(Calendar.current.component(.hour, from: .now))
+    @State private var amount: Double
+    /// Set while the amount is a preset measure; typing another amount clears it.
+    @State private var measure: Measure?
+    @State private var slot: MealSlot
     @State private var saving = false
 
     init(product: FoodProduct, store: NutritionStore, onDone: @escaping () -> Void) {
         self.product = product
         self.store = store
         self.onDone = onDone
-        _grams = State(initialValue: product.servingGrams ?? 100)
+        let portion = product.defaultPortion
+        let hour = Calendar.current.component(.hour, from: .now)
+        _amount = State(initialValue: portion.amount)
+        _measure = State(initialValue: portion.measure)
+        _slot = State(initialValue: product.isLiquid ? .forDrink(hour: hour) : .forHour(hour))
     }
 
-    private var macros: NutritionMacros { product.macros(grams: grams) }
+    private var unit: String { product.unit.rawValue }
+    private var macros: NutritionMacros { product.macros(grams: amount) }
 
     var body: some View {
         Form {
@@ -149,39 +157,49 @@ struct PortionPicker: View {
                     AsyncImage(url: product.imageUrl.flatMap(URL.init(string:))) { image in
                         image.resizable().scaledToFit()
                     } placeholder: {
-                        Image(systemName: "shippingbox").foregroundStyle(.secondary)
+                        Image(systemName: product.isLiquid ? "waterbottle" : "shippingbox").foregroundStyle(.secondary)
                     }
                     .frame(width: 56, height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     VStack(alignment: .leading) {
                         Text(product.name).font(.headline)
                         if let brand = product.brand { Text(brand).font(.subheadline).foregroundStyle(.secondary) }
-                        Text("\(Int(product.per100g.kcal)) kcal / 100 g").font(.caption).foregroundStyle(.secondary)
+                        Text("\(Int(product.per100g.kcal)) kcal por 100 \(unit)").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
-            Section("Cantidad") {
+            Section {
                 HStack {
-                    TextField("g", value: $grams, format: .number.precision(.fractionLength(0...1)))
+                    TextField(unit, value: $amount, format: .number.precision(.fractionLength(0...1)))
                         .keyboardType(.decimalPad)
-                        .font(.title2.weight(.semibold).monospacedDigit())
-                    Text("g").foregroundStyle(.secondary)
-                    Stepper("", value: $grams, in: 0...2000, step: 5).labelsHidden()
+                        .font(.title2.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
+                    Text(unit).foregroundStyle(.secondary)
+                    Stepper("Cantidad", onIncrement: { step(1) }, onDecrement: { step(-1) }).labelsHidden()
                 }
-                // Four presets outgrow the row at large text; they scroll rather than squeeze.
+                // Presets outgrow the row at large text; they scroll rather than squeeze.
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
-                        if let serving = product.servingGrams {
-                            preset("1 porción", serving)
-                            preset("½", serving / 2)
+                        ForEach(product.portions) { portion in
+                            Button(portion.title) {
+                                measure = portion.measure
+                                amount = portion.amount
+                            }
+                            .tint(portion.amount == amount ? Theme.energy : nil)
                         }
-                        preset("100 g", 100)
-                        preset("30 g", 30)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
                     .controlSize(.small)
                     .lineLimit(1)
                 }
+                .scrollClipDisabled()
+            } header: {
+                Text("Cantidad")
+            } footer: {
+                if let measure { Text(foodAmountText(amount, product.unit, measure: measure)) }
+            }
+            .onChange(of: amount) { _, new in
+                if measure?.quantity.amount != new { measure = nil }
             }
             Section("Comida") {
                 Picker("Momento", selection: $slot) {
@@ -197,8 +215,8 @@ struct PortionPicker: View {
                 Button {
                     Task {
                         saving = true
-                        let input = MealInput(name: product.name, slot: slot, quantity: grams, unit: .g, macros: macros,
-                                              source: "barcode", barcode: product.barcode)
+                        let input = MealInput(name: product.name, slot: slot, quantity: amount, unit: product.unit, macros: macros,
+                                              source: "barcode", barcode: product.barcode, measure: measure)
                         if await store.log(input) { onDone() }
                         saving = false
                     }
@@ -206,12 +224,29 @@ struct PortionPicker: View {
                     Text("Registrar").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glassProminent)
-                .disabled(grams <= 0 || saving)
+                .disabled(amount <= 0 || saving)
             }
         }
+        .sensoryFeedback(.selection, trigger: amount)
     }
 
-    private func preset(_ title: String, _ value: Double) -> some View {
-        Button(title) { grams = (value * 10).rounded() / 10 }
+    /// Half a can or bottle at a time while on one; 50 ml or 5 g otherwise.
+    private func step(_ direction: Double) {
+        if var current = measure {
+            current.amount = max(0.5, current.amount + direction * 0.5)
+            measure = current
+            amount = current.quantity.amount
+        } else {
+            amount = min(5000, max(0, amount + direction * (product.isLiquid ? 50 : 5)))
+        }
+    }
+}
+
+#Preview("Porción · bebida") {
+    NavigationStack {
+        PortionPicker(product: FoodProduct(barcode: "1", name: "Coca-Cola", brand: "Coca-Cola",
+                                           per100g: NutritionMacros(kcal: 42, protein: 0, carbs: 10.6, fat: 0, fiber: 0),
+                                           servingGrams: nil, imageUrl: nil, liquid: true, packageSize: 600, packageKind: "botella"),
+                      store: NutritionStore()) {}
     }
 }
