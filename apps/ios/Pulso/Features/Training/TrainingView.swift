@@ -34,9 +34,9 @@ struct TrainingView: View {
             .animation(.snappy, value: store.program)
         }
         .navigationTitle("Entreno")
-        .navigationDestination(for: ExerciseRoute.self) { ExerciseHistoryView(route: $0) }
-        .refreshable { await store.load() }
-        .task { await store.load() }
+        .navigationDestination(for: ExerciseRoute.self) { ExerciseDetailView(exerciseId: $0.exerciseId, name: $0.name) }
+        .refreshable { await load() }
+        .task { await load() }
         .fullScreenCover(isPresented: $showLive, onDismiss: finishIfRequested) {
             if let live = store.live {
                 LiveSessionView(session: live, store: store)
@@ -47,6 +47,14 @@ struct TrainingView: View {
     }
 
     @State private var showLive = false
+
+    /// The program, then each exercise's guide and thumbnail (and the next day's
+    /// demonstrations) cached for the gym.
+    private func load() async {
+        await store.load()
+        let ids = store.program?.days.flatMap { $0.exercises.map(\.exerciseId) } ?? []
+        await ExerciseCatalog.shared.prefetch(ids, animations: store.nextDay?.exercises.map(\.exerciseId) ?? [])
+    }
 
     private func finishIfRequested() {
         guard store.finishRequested else { return }
@@ -60,7 +68,7 @@ struct TrainingView: View {
     }
 }
 
-/// Pushes an exercise's history chart.
+/// Pushes an exercise's screen (guide and performance).
 struct ExerciseRoute: Hashable {
     var exerciseId: String
     var name: String
@@ -142,24 +150,30 @@ private struct Stat: View {
     }
 }
 
-/// One prescribed exercise: name and prescription, the suggested load on the right.
+/// One prescribed exercise: its demonstration still, name and prescription,
+/// the suggested load on the right. Opens the exercise screen.
 private struct ExerciseLine: View {
     let exercise: ProgramExercise
     let suggestion: LoadSuggestion?
 
+    private var detail: ExerciseDetail? { ExerciseCatalog.shared.details[exercise.exerciseId] }
+
     var body: some View {
         NavigationLink(value: ExerciseRoute(exerciseId: exercise.exerciseId, name: exercise.exerciseName)) {
-            HStack {
+            HStack(spacing: 12) {
+                ExerciseMediaView(path: detail?.media.thumbnail, cornerRadius: 10)
+                    .frame(width: 48, height: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(exercise.exerciseName).font(.body.weight(.medium)).foregroundStyle(.primary)
-                    Text(exercise.prescription).font(.subheadline).foregroundStyle(.secondary)
+                    Text(exercise.exerciseName).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
+                    Text(exercise.prescription).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 if let weight = suggestion?.weightKg, weight > 0 {
                     Text("\(weight.formatted()) kg")
                         .font(.subheadline.weight(.semibold))
                         .fontDesign(.rounded)
                         .foregroundStyle(Theme.training)
+                        .fixedSize()
                 }
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
@@ -325,3 +339,9 @@ private struct EmptyProgram: View {
         .padding(.horizontal, 24)
     }
 }
+
+#if DEBUG
+#Preview("Entreno · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
+    NavigationStack { TrainingView(model: .shared) }
+}
+#endif
