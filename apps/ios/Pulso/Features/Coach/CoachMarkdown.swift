@@ -1,159 +1,205 @@
 import SwiftUI
 
-/// Renders the Coach's Markdown. `Text` only understands inline Markdown, so
-/// blocks (headings, lists, tables, code, quotes) are split out here and each
-/// block's inline runs go through `AttributedString(markdown:)`.
+/// Renders the Coach's Markdown for a phone: comfortable line spacing, lists
+/// with hanging indents, and tables that never need sideways scrolling (a grid
+/// when they fit, otherwise one card per row). Blocks come from `MarkdownBlock`;
+/// each block's inline runs go through `AttributedString(markdown:)`.
 struct CoachMarkdown: View {
     let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
-                view(for: block)
+        MarkdownBlocks(blocks: MarkdownBlock.parse(text), depth: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MarkdownBlocks: View {
+    let blocks: [MarkdownBlock]
+    let depth: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                MarkdownBlockView(block: block, depth: depth)
+                    // Headings sit closer to what they introduce than to what came before.
+                    .padding(.top, index > 0 && block.isHeading ? 8 : 0)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    @ViewBuilder
-    private func view(for block: MarkdownBlock) -> some View {
+private struct MarkdownBlockView: View {
+    let block: MarkdownBlock
+    let depth: Int
+
+    var body: some View {
         switch block {
         case let .heading(level, text):
-            Text(inline(text))
-                .font(level <= 2 ? .title3.weight(.semibold) : .headline)
-                .padding(.top, 4)
+            Text(MarkdownInline.render(text))
+                .font(level <= 2 ? .title3.weight(.bold) : .headline)
+                .fontDesign(.rounded)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
         case let .paragraph(text):
-            Text(inline(text))
-        case let .item(marker, text, depth):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(marker)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .frame(minWidth: 14, alignment: .trailing)
-                Text(inline(text))
-            }
-            .padding(.leading, CGFloat(depth) * 16)
-        case let .quote(text):
-            Text(inline(text))
+            MarkdownText(text: text)
+        case let .list(ordered, items):
+            MarkdownList(ordered: ordered, items: items, depth: depth)
+        case let .quote(blocks):
+            MarkdownBlocks(blocks: blocks, depth: depth)
                 .foregroundStyle(.secondary)
-                .padding(.leading, 12)
-                .overlay(alignment: .leading) { Capsule().fill(.tint).frame(width: 3) }
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) { Capsule().fill(.tint.opacity(0.6)).frame(width: 3) }
         case let .code(text):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(text).font(.callout.monospaced()).padding(12)
+            Text(text)
+                .font(.callout.monospaced())
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        case let .table(table):
+            if table.fitsAsGrid {
+                MarkdownGrid(table: table)
+            } else {
+                MarkdownRowCards(table: table)
             }
-            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        case let .table(rows):
-            MarkdownTable(rows: rows, inline: inline)
         case .rule:
             Divider().padding(.vertical, 4)
         }
     }
-
-    private func inline(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
-    }
 }
 
-private struct MarkdownTable: View {
-    let rows: [[String]]
-    let inline: (String) -> AttributedString
+/// A paragraph with room between its lines.
+private struct MarkdownText: View {
+    let text: String
 
     var body: some View {
-        let columns = rows.map(\.count).max() ?? 0
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    GridRow {
-                        ForEach(0..<columns, id: \.self) { column in
-                            Text(inline(column < row.count ? row[column] : ""))
-                                .font(index == 0 ? .subheadline.weight(.semibold) : .subheadline)
-                                .foregroundStyle(index == 0 ? .secondary : .primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 220, alignment: .leading)
-                        }
-                    }
-                    if index == 0 { Divider().gridCellUnsizedAxes(.horizontal) }
-                }
-            }
-            .padding(14)
-        }
-        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        Text(MarkdownInline.render(text))
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
-enum MarkdownBlock: Equatable {
-    case heading(level: Int, text: String)
-    case paragraph(String)
-    case item(marker: String, text: String, depth: Int)
-    case quote(String)
-    case code(String)
-    case table([[String]])
-    case rule
+private struct MarkdownList: View {
+    let ordered: Bool
+    let items: [MarkdownListItem]
+    let depth: Int
 
-    static func parse(_ source: String) -> [MarkdownBlock] {
-        var blocks: [MarkdownBlock] = []
-        var paragraph: [String] = []
-        var table: [[String]] = []
-        var code: [String]?
+    private var bullet: String { ["•", "◦", "▪︎"][min(depth, 2)] }
 
-        func flush() {
-            if !paragraph.isEmpty { blocks.append(.paragraph(paragraph.joined(separator: "\n"))) }
-            if !table.isEmpty { blocks.append(.table(table)) }
-            paragraph = []
-            table = []
-        }
-
-        for raw in source.components(separatedBy: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("```") {
-                if let open = code {
-                    blocks.append(.code(open.joined(separator: "\n")))
-                    code = nil
-                } else {
-                    flush()
-                    code = []
+    var body: some View {
+        // Wide enough for the longest number, so every item's text starts at the same x.
+        let markerWidth: CGFloat = ordered ? CGFloat((items.map(\.marker.count).max() ?? 2) * 10 + 2) : 12
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(ordered ? item.marker : bullet)
+                        .foregroundStyle(ordered ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                        .monospacedDigit()
+                        .frame(width: markerWidth, alignment: ordered ? .trailing : .center)
+                    MarkdownBlocks(blocks: item.blocks, depth: depth + 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                continue
-            }
-            if code != nil {
-                code!.append(raw)
-                continue
-            }
-            if line.hasPrefix("|") {
-                if !paragraph.isEmpty { flush() }
-                let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-                // Skip the |---|:--:| separator row.
-                if !cells.allSatisfy({ $0.allSatisfy { "-: ".contains($0) } }) { table.append(cells) }
-                continue
-            }
-            if line.isEmpty {
-                flush()
-                continue
-            }
-            if let heading = line.firstMatch(of: #/^(#{1,6})\s+(.+)$/#) {
-                flush()
-                blocks.append(.heading(level: heading.1.count, text: String(heading.2)))
-            } else if line.wholeMatch(of: #/^([-*_])\s*(\1\s*){2,}$/#) != nil {
-                flush()
-                blocks.append(.rule)
-            } else if let item = raw.firstMatch(of: #/^(\s*)[-*+]\s+(.+)$/#) {
-                flush()
-                blocks.append(.item(marker: "•", text: String(item.2), depth: item.1.count / 2))
-            } else if let item = raw.firstMatch(of: #/^(\s*)(\d+)[.)]\s+(.+)$/#) {
-                flush()
-                blocks.append(.item(marker: "\(item.2).", text: String(item.3), depth: item.1.count / 2))
-            } else if line.hasPrefix(">") {
-                flush()
-                blocks.append(.quote(String(line.drop(while: { $0 == ">" || $0 == " " }))))
-            } else {
-                if !table.isEmpty { flush() }
-                paragraph.append(line)
             }
         }
-        // An unclosed fence while streaming still shows what has arrived.
-        if let open = code { flush(); blocks.append(.code(open.joined(separator: "\n"))) }
-        flush()
-        return blocks
+    }
+}
+
+/// ≤3 short columns: a compact grid that wraps inside the screen width.
+private struct MarkdownGrid: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 10) {
+            if !table.header.isEmpty {
+                row(table.header, header: true)
+                Divider().gridCellUnsizedAxes(.horizontal)
+            }
+            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, cells in
+                row(cells, header: false)
+            }
+        }
+        .font(.subheadline)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func row(_ cells: [String], header: Bool) -> some View {
+        GridRow {
+            ForEach(0..<table.columns, id: \.self) { column in
+                Text(MarkdownInline.render(column < cells.count ? cells[column] : ""))
+                    .fontWeight(header ? .semibold : nil)
+                    .foregroundStyle(header ? .secondary : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// Wider tables: one card per row, the first cell as its title and the rest as
+/// "header: value" lines. Nothing is clipped and nothing scrolls sideways.
+private struct MarkdownRowCards: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, cells in
+                VStack(alignment: .leading, spacing: 6) {
+                    if let title = cells.first {
+                        if !table.header.isEmpty, table.header.count > 1, !table.header[0].isEmpty {
+                            Text(table.header[0].uppercased())
+                                .font(.caption2.weight(.semibold))
+                                .tracking(0.5)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(MarkdownInline.render(title))
+                            .font(.subheadline.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(Array(cells.dropFirst().enumerated()), id: \.offset) { offset, value in
+                        if !value.isEmpty {
+                            field(label: offset + 1 < table.header.count ? table.header[offset + 1] : nil, value: value)
+                        }
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        }
+    }
+
+    private func field(label: String?, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let label, !label.isEmpty {
+                Text(MarkdownInline.render(label)).font(.caption).foregroundStyle(.secondary)
+            }
+            Text(MarkdownInline.render(value))
+                .font(.subheadline)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+enum MarkdownInline {
+    /// Bold, italic, links and `code` (monospaced on a soft fill). Falls back to the raw text.
+    static func render(_ text: String) -> AttributedString {
+        guard var string = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else {
+            return AttributedString(text)
+        }
+        for run in string.runs where run.inlinePresentationIntent?.contains(.code) == true {
+            string[run.range].font = .callout.monospaced()
+            string[run.range].backgroundColor = Color.secondary.opacity(0.18)
+        }
+        return string
+    }
+}
+
+private extension MarkdownBlock {
+    var isHeading: Bool {
+        if case .heading = self { return true }
+        return false
     }
 }
