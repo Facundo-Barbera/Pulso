@@ -88,6 +88,9 @@ struct MedicationView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 24)
             }
             .frame(width: 190, height: 190)
             .animation(.snappy, value: taken)
@@ -95,9 +98,12 @@ struct MedicationView: View {
             if let next = store.day?.next {
                 Label("Próxima: \(next.name) · \(LocalClock.display(next.time))", systemImage: "bell.badge")
                     .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .glassEffect(.regular, in: .capsule)
+                    .padding(.horizontal)
             } else if total > 0 && taken == total {
                 Label("Todo tomado por hoy", systemImage: "checkmark.seal.fill")
                     .font(.subheadline.weight(.medium))
@@ -140,10 +146,12 @@ struct MedicationView: View {
                             .foregroundStyle(.secondary)
                             .contentTransition(.numericText())
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     Button("Tomé una", systemImage: "plus") { Task { await store.takeNow(med) } }
                         .buttonStyle(.glass)
                         .controlSize(.small)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                         .sensoryFeedback(.success, trigger: count)
                 }
             }
@@ -206,6 +214,8 @@ private struct MedicationRow: View {
                     .font(.subheadline.weight(.semibold))
                     .fontDesign(.rounded)
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .layoutPriority(1)
                     .foregroundStyle(medication.lowStock ? Theme.energy : .secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -241,5 +251,20 @@ enum WeekdayNames {
         if days.sorted() == [1, 2, 3, 4, 5] { return "Entre semana" }
         if days.sorted() == [6, 7] { return "Fines de semana" }
         return days.sorted().map { names[$0 - 1].prefix(3).capitalized }.joined(separator: ", ")
+    }
+}
+
+#Preview("Medicación · 375 pt · XXL") {
+    let slot = DoseSlot(medicationId: "1", name: "Vitamina D3 + K2 2000 UI con aceite de oliva", kind: .suplemento, dose: 2, unit: "comprimidos",
+                        instructions: "Con la comida principal", date: LocalClock.date(.now), time: "21:30", status: .pendiente)
+    let med = Medication(id: "1", name: slot.name, kind: .suplemento, dose: 2, unit: "comprimidos", instructions: "Con la comida principal",
+                         schedule: MedicationSchedule(asNeeded: false, times: ["08:00", "14:00", "21:30"], days: [1, 3, 5]),
+                         startDate: "2026-09-01", stock: 4, lowStockThreshold: 7, lowStock: true, active: true)
+    return NarrowPreview(dynamicType: .xxLarge) {
+        Card {
+            DoseRow(slot: slot, store: .shared)
+            DoseRow(slot: slot, store: .shared, compact: true)
+        }
+        Card { MedicationRow(medication: med) }
     }
 }
