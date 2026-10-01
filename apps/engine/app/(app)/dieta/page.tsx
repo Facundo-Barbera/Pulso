@@ -38,7 +38,7 @@ function dayTitle(date: string, today: string) {
   return new Intl.DateTimeFormat("es", { weekday: "long" }).format(new Date(`${date}T12:00:00`));
 }
 
-/** Dieta: the day (macros hero, planned meals, what was logged, water), the plan's coming days and two weeks of progress. One primary action: Registrar. */
+/** Dieta: the day (macros hero, one Planeado → Real list of its meals and extras — or the timeline of what was logged without a plan — water), the plan's coming days and two weeks of progress. One primary action: Registrar. */
 export default async function Dieta({ searchParams }: { searchParams: Promise<Params> }) {
   const params = await searchParams;
   const today = localDate();
@@ -111,8 +111,11 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
           <>
             <MacroHero summary={day.summary} next={next} />
             <div className="mt-5 grid items-start gap-5 md:grid-cols-2 xl:grid-flow-dense xl:grid-cols-3">
-              {slots && <TodayPlan day={slots} recipes={slots.recipes} title={date === today ? "Plan de hoy" : "Plan del día"} className="md:col-span-2" delay={40} />}
-              <Timeline day={day} className="md:col-span-2 md:row-span-2" delay={60} />
+              {slots && slots.slots.length > 0 ? (
+                <TodayPlan day={slots} recipes={slots.recipes} entries={day.moments.flatMap((m) => m.entries)} title={date === today ? "Hoy" : "El día"} className="md:col-span-2 md:row-span-2" delay={40} />
+              ) : (
+                <Timeline day={day} className="md:col-span-2 md:row-span-2" delay={60} />
+              )}
               <WaterCard water={day.water} delay={110} />
               <WeekCard progress={progress} href={href({ vista: "progreso" }, today)} delay={160} />
             </div>

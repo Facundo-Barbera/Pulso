@@ -62,7 +62,7 @@ function fromLogged(f: Logged) {
  * change with «Deshacer»).
  */
 export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntry; replacing?: SlotView; onClose: () => void }) {
-  const { date: shownDate, hasPlan, frequent } = useDieta();
+  const { date: shownDate, frequent } = useDieta();
   const date = replacing?.date ?? shownDate;
   const { run, pending: running, error, setError } = useAction();
   const plan = usePlanActions();
@@ -78,7 +78,6 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
   const [per, setPer] = useState<Per>(initial?.per ?? EMPTY_PER);
   const [slot, setSlot] = useState<MealSlot>(entry?.slot ?? replacing?.slot ?? slotForHour(new Date().getHours()));
   const [time, setTime] = useState(entry?.time ?? nowTime());
-  const [offPlan, setOffPlan] = useState(false);
   const [barcode, setBarcode] = useState<string | null>(entry?.barcode ?? null);
   const [searching, setSearching] = useState(!entry);
   const [scan, setScan] = useState<{ code: string; status: "idle" | "looking" | "missing" } | null>(null);
@@ -127,7 +126,7 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     if (!replacing) return run("meals", "POST", body);
     setError(null);
     setReplacingBusy(true);
-    const result = await send("meals", "POST", { ...body, offPlan: true });
+    const result = await send("meals", "POST", body);
     if (!result.ok) {
       setReplacingBusy(false);
       setError(result.message);
@@ -196,7 +195,7 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     };
     const ok = entry
       ? await run(`meals/${entry.id}`, "PUT", body)
-      : await log({ ...body, source: barcode ? "barcode" : "manual", ...(offPlan ? { offPlan } : {}) });
+      : await log({ ...body, source: barcode ? "barcode" : "manual" });
     if (ok) close();
   }
 
@@ -208,7 +207,7 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     <Sheet
       open={open}
       onClose={close}
-      title={entry ? "Corregir" : replacing ? "Lo cambié por…" : "Registrar"}
+      title={entry ? "Corregir" : replacing ? `Tu ${replacing.title.toLowerCase()}` : "Registrar"}
       footer={
         <>
           <p className="text-muted-foreground mr-auto truncate text-[13px] tabular" aria-live="polite">
@@ -237,7 +236,7 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
       >
         {replacing && (
           <p className="bg-muted/60 text-muted-foreground -mt-1 rounded-xl px-3 py-2.5 text-[13px] leading-snug">
-            En vez de <span className="text-foreground font-medium">{replacing.label}</span> ({replacing.title.toLowerCase()}, {fmt(replacing.kcal)} kcal). Lo que registres queda fuera del plan y ocupa su lugar.
+            En vez de <span className="text-foreground font-medium">{replacing.label}</span> ({replacing.title.toLowerCase()}, {fmt(replacing.kcal)} kcal). Lo que registres pasa a ser tu {replacing.title.toLowerCase()} de verdad.
           </p>
         )}
         <div>
@@ -407,12 +406,6 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
           </details>
         </fieldset>
 
-        {hasPlan && !entry && !replacing && (
-          <label className="flex min-h-11 items-center gap-3 text-[14px]">
-            <input type="checkbox" checked={offPlan} onChange={(e) => setOffPlan(e.target.checked)} className="accent-primary size-4" />
-            Fuera del plan
-          </label>
-        )}
         {error && <p className="text-destructive text-[13px]">{error}</p>}
       </form>
     </Sheet>

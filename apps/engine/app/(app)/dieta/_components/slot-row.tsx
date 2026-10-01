@@ -1,14 +1,17 @@
 "use client";
 
 import type { SlotStatus } from "@pulso/contract";
-import { ArrowLeftRight, Check, ChefHat, Ellipsis, Minus, RotateCcw, SkipForward, Utensils, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, Check, ChefHat, Ellipsis, Minus, PenLine, RotateCcw, SkipForward, Store, Utensils, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SlotView } from "@/src/web/dieta-plan";
 import { cn } from "../../../_ui/cn";
 import { useDieta } from "./client";
 import { usePlanActions } from "./plan-actions";
 
-export const STATUS_LABELS: Record<SlotStatus, string> = { planned: "Pendiente", eaten: "Comida", replaced: "Reemplazada", skipped: "Saltada" };
+export const STATUS_LABELS: Record<SlotStatus, string> = { planned: "Pendiente", eaten: "Según el plan", replaced: "Otra cosa", skipped: "Saltada" };
+
+/** The status as the row says it: a pending meal well past its time reads «Sin registrar». */
+export const statusLabel = (slot: SlotView) => (slot.missed ? "Sin registrar" : STATUS_LABELS[slot.status]);
 
 const fmtKcal = new Intl.NumberFormat("es", { maximumFractionDigits: 0 });
 
@@ -30,7 +33,7 @@ function StatusMark({ slot, onEat, onUneat, busy }: { slot: SlotView; onEat: () 
     );
   const Icon = slot.status === "replaced" ? ArrowLeftRight : Minus;
   return (
-    <span className={cn(base, slot.status === "replaced" ? "bg-carbs/15 text-carbs" : "bg-muted text-muted-foreground")} aria-hidden>
+    <span className={cn(base, slot.status === "replaced" ? "bg-body/15 text-body" : "bg-muted text-muted-foreground")} aria-hidden>
       <Icon className="size-4" strokeWidth={2.4} />
     </span>
   );
@@ -92,9 +95,11 @@ function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
 }
 
 /**
- * One planned meal: status, what it is, where it comes from, kcal, and a menu
- * with what can happen to it — eaten, swapped for something else (opens
- * «Registrar» tied to it), skipped, or no time to cook today.
+ * One meal of the day as Planeado → Real: what was eaten, prominent, over what
+ * was planned, small and struck; a pending meal shows the plan, and once well
+ * past its time («sin registrar») two quick answers. The menu has what can
+ * happen to it — eaten, something else (opens «Registrar» tied to it), eaten
+ * out, skipped, or no time to cook today.
  */
 export function SlotRow({ slot, onOpen, showTitle = true }: { slot: SlotView; onOpen?: () => void; showTitle?: boolean }) {
   const { register } = useDieta();
@@ -113,7 +118,8 @@ export function SlotRow({ slot, onOpen, showTitle = true }: { slot: SlotView; on
             ? []
             : [
                 { label: "Me lo comí", icon: Utensils, run: busyWhile(() => actions.eat(slot)) },
-                { label: "Lo cambié por…", icon: ArrowLeftRight, run: () => register(undefined, slot) },
+                { label: "Registrar lo que comí", icon: PenLine, run: () => register(undefined, slot) },
+                { label: "Comí fuera", icon: Store, run: busyWhile(() => actions.ateOut(slot)) },
               ]),
           { label: slot.later ? "Me lo voy a saltar" : "Me lo salté", icon: SkipForward, run: busyWhile(() => actions.skip(slot)) },
           ...(slot.cooks ? [{ label: slot.later ? "Ese día no cocino" : "Hoy no cocino", icon: ChefHat, run: busyWhile(() => actions.noTimeToCook(slot)) }] : []),
@@ -122,32 +128,56 @@ export function SlotRow({ slot, onOpen, showTitle = true }: { slot: SlotView; on
         ? [{ label: "No me lo comí", icon: RotateCcw, run: busyWhile(() => actions.uneat(slot)) }]
         : [];
 
-  const done = slot.status !== "planned";
-  const crossed = slot.status === "skipped" || slot.status === "replaced";
+  const real = slot.real;
+  const kcal = real ? real.macros.kcal : slot.kcal;
   const detail = [showTitle && slot.title, slot.source].filter(Boolean).join(" · ");
+  const tone = slot.missed ? "text-energy" : slot.status === "planned" || slot.status === "skipped" ? "text-muted-foreground" : "text-body";
+  const quick = "bg-muted hover:bg-accent focus-visible:ring-ring inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium outline-none focus-visible:ring-2 disabled:opacity-50";
 
   return (
     <li className={cn("hover:bg-muted/50 flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", busy && "opacity-60")}>
       <StatusMark slot={slot} busy={busy} onEat={busyWhile(() => actions.eat(slot))} onUneat={busyWhile(() => actions.uneat(slot))} />
-      <button type="button" onClick={onOpen} disabled={!onOpen} className="focus-visible:ring-ring min-w-0 flex-1 rounded-lg text-left outline-none focus-visible:ring-2 disabled:cursor-default">
-        <span className={cn("block truncate text-[14px] font-medium", done && "text-muted-foreground", crossed && "line-through decoration-1")}>{slot.label}</span>
-        <span className="text-muted-foreground block truncate text-[12px]">
-          {slot.status === "replaced" && slot.replacedBy ? (
+      <div className="min-w-0 flex-1">
+        <button type="button" onClick={onOpen} disabled={!onOpen} className="focus-visible:ring-ring block w-full min-w-0 rounded-lg text-left outline-none focus-visible:ring-2 disabled:cursor-default">
+          {real ? (
             <>
-              <span className="text-carbs">Comiste {slot.replacedBy}</span>
-              {showTitle && ` · ${slot.title}`}
+              <span className="block truncate text-[14px] font-medium">{real.label}</span>
+              <span className="text-muted-foreground block truncate text-[12px]">
+                {real.asPlanned ? (
+                  "Como estaba planeado"
+                ) : (
+                  <>
+                    Planeado: <span className="line-through decoration-1">{slot.label}</span>
+                  </>
+                )}
+                {showTitle && ` · ${slot.title}`}
+              </span>
             </>
           ) : (
-            detail || STATUS_LABELS[slot.status]
+            <>
+              <span className={cn("block truncate text-[14px] font-medium", slot.status === "skipped" && "text-muted-foreground line-through decoration-1")}>{slot.label}</span>
+              <span className="text-muted-foreground block truncate text-[12px]">{detail || statusLabel(slot)}</span>
+            </>
           )}
-        </span>
-      </button>
+        </button>
+        {slot.missed && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <button onClick={busyWhile(() => actions.skip(slot))} disabled={busy} className={quick}>
+              <SkipForward className="size-3.5" />
+              Me la salté
+            </button>
+            <button onClick={() => register(undefined, slot)} className={quick}>
+              <PenLine className="size-3.5" />
+              Registrar lo que comí
+            </button>
+          </div>
+        )}
+      </div>
       <span className="hidden shrink-0 text-right sm:block">
-        <span className={cn("block text-[12px] font-medium", slot.status === "planned" ? "text-muted-foreground" : slot.status === "eaten" ? "text-body" : slot.status === "replaced" ? "text-carbs" : "text-muted-foreground")}>
-          {STATUS_LABELS[slot.status]}
-        </span>
-        <span className="text-muted-foreground tabular block text-[12px]">{fmtKcal.format(slot.kcal)} kcal</span>
+        <span className={cn("block text-[12px] font-medium", tone)}>{statusLabel(slot)}</span>
+        <span className="text-muted-foreground tabular block text-[12px]">{fmtKcal.format(kcal)} kcal</span>
       </span>
+      <span className="text-muted-foreground tabular shrink-0 text-[12px] sm:hidden">{fmtKcal.format(kcal)}</span>
       <RowMenu label={slot.label} items={items} />
     </li>
   );

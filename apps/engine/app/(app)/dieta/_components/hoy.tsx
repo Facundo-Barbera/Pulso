@@ -1,6 +1,6 @@
 import type { DailySummary, MealSlot } from "@pulso/contract";
 import { BarChart3, ClipboardList, Clock, Coffee, Cookie, CupSoda, Moon, Sandwich, Sunrise, Utensils, UtensilsCrossed, Wine, Zap, type LucideIcon } from "lucide-react";
-import type { DietaDay, DietaProgress, Moment } from "@/src/web/dieta";
+import type { DietaDay, DietaEntry, DietaProgress, Moment } from "@/src/web/dieta";
 import type { DietaLivingPlan, DayView, SlotView } from "@/src/web/dieta-plan";
 import { Card, CardTitle } from "../../../_ui/card";
 import { cn } from "../../../_ui/cn";
@@ -225,23 +225,22 @@ export function WeekCard({ progress, href, delay }: { progress: DietaProgress; h
 }
 
 /**
- * The day's planned meals with their status and source; each row's menu says
- * what happened (eaten, swapped, skipped, no time to cook). A batch cooked
- * today shows on top with «Ya lo cociné».
+ * The day as Planeado → Real: each meal with what was eaten over what was
+ * planned (or still pending, or «sin registrar»), then the day's extras. A batch
+ * cooked today shows on top with «Ya lo cociné». Totals compare real and planned.
  */
-export function TodayPlan({ day, recipes, title, className, delay }: { day: DayView; recipes: DietaLivingPlan["recipes"]; title: string; className?: string; delay?: number }) {
-  const open = day.slots.filter((s) => s.status !== "skipped" && s.status !== "replaced");
-  const eaten = open.filter((s) => s.status === "eaten").length;
+export function TodayPlan({ day, recipes, entries, title, className, delay }: { day: DayView; recipes: DietaLivingPlan["recipes"]; entries: DietaEntry[]; title: string; className?: string; delay?: number }) {
+  const extras = entries.filter((e) => day.extraIds.includes(e.id));
   return (
     <Card className={cn("relative has-[[aria-expanded=true]]:z-10", className)} delay={delay}>
-      <div className="mb-3 flex items-center gap-2.5">
+      <div className="mb-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <span className="bg-body/15 text-body grid size-7 place-items-center rounded-lg">
           <ClipboardList className="size-4" strokeWidth={2.2} />
         </span>
         <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-        {open.length > 0 && (
+        {day.slots.length > 0 && (
           <p className="text-muted-foreground ml-auto text-[13px] tabular">
-            {eaten} de {open.length} · {fmtNumber(day.kcal)} de {fmtNumber(day.goalKcal)} kcal
+            <span className="text-foreground font-medium">{fmtNumber(day.real.kcal)}</span> real · {fmtNumber(day.asPlanned.kcal)} planeado kcal
           </p>
         )}
       </div>
@@ -255,7 +254,32 @@ export function TodayPlan({ day, recipes, title, className, delay }: { day: DayV
       {day.slots.length === 0 ? (
         <EmptyState compact icon={ClipboardList} color="var(--domain-body)" title="Día libre en el plan" line="No hay comidas planeadas este día. Registra lo que comas y cuéntaselo al Coach si quieres ajustar." />
       ) : (
-        <SlotList slots={day.slots} recipes={recipes} />
+        <SlotList slots={day.slots} recipes={recipes} entries={entries} />
+      )}
+      {extras.length > 0 && (
+        <div className="border-border mt-3 border-t pt-3">
+          <p className="text-muted-foreground mb-1 text-[12px] font-semibold tracking-wide uppercase">Extras</p>
+          <ul className="-mx-2">
+            {extras.map((e) => {
+              const Icon = e.unit === "ml" ? (e.alcoholG ? Wine : CupSoda) : Cookie;
+              return (
+                <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
+                  <span className="bg-energy/12 text-energy grid size-8 shrink-0 place-items-center rounded-full">
+                    <Icon className="size-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px]">{e.name}</span>
+                    <span className="text-muted-foreground block truncate text-[12px] tabular">
+                      {e.time} · {fmtAmount(e.measure, e.quantity, e.unit)}
+                    </span>
+                  </span>
+                  <EntryActions entry={e} />
+                  <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmtNumber(e.kcal)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </Card>
   );

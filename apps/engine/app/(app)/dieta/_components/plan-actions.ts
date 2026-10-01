@@ -92,6 +92,8 @@ export function usePlanActions() {
         refresh();
       },
       skip: (slot: SlotView) => op({ op: "skip", slotId: slot.id, date: slot.date }),
+      /** «Comí fuera»: an estimate (the planned meal × 1.3) as its real meal; undo deletes it. */
+      ateOut: (slot: SlotView) => op({ op: "ate_out", slotId: slot.id, date: slot.date }),
       noTimeToCook: (slot: SlotView) => op({ op: "no_time_to_cook", date: slot.date, slot: slot.slot }),
       /** «Lo cambié por…» after the replacement was logged: ties it to the slot. Undoing also deletes the log. */
       replace: (slot: SlotView, entry: MealEntry) => op({ op: "replace", slotId: slot.id, date: slot.date, entryIds: [entry.id] }, () => forget([entry.id])),

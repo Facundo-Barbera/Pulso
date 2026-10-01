@@ -3,11 +3,13 @@
 import type { Macros, PlanItem, Recipe } from "@pulso/contract";
 import { Clock, Users } from "lucide-react";
 import { useState } from "react";
+import type { DietaEntry } from "@/src/web/dieta";
 import type { SlotView } from "@/src/web/dieta-plan";
+import { EntryActions } from "./actions";
 import { useDieta } from "./client";
 import { usePlanActions } from "./plan-actions";
 import { buttonPrimary, buttonQuiet, Sheet } from "./sheet";
-import { SlotRow, STATUS_LABELS } from "./slot-row";
+import { SlotRow, statusLabel } from "./slot-row";
 import { fmt, fmtAmount } from "./units";
 
 // Plan dates are calendar days: format in UTC so the browser's timezone can't shift them.
@@ -83,7 +85,7 @@ export function RecipeDetail({ recipe, portions }: { recipe: Recipe; portions?: 
 }
 
 /** A planned meal in full: what it is, where it comes from, its macros, and what can happen to it. */
-export function SlotSheet({ slot, recipe, onClose }: { slot: SlotView; recipe: Recipe | null; onClose: () => void }) {
+export function SlotSheet({ slot, recipe, entries = [], onClose }: { slot: SlotView; recipe: Recipe | null; entries?: DietaEntry[]; onClose: () => void }) {
   const [open, setOpen] = useState(true);
   const { register } = useDieta();
   const actions = usePlanActions();
@@ -118,6 +120,9 @@ export function SlotSheet({ slot, recipe, onClose }: { slot: SlotView; recipe: R
             </button>
             {!slot.later && (
               <>
+                <button onClick={act(() => actions.ateOut(slot))} disabled={busy} className={buttonQuiet}>
+                  Comí fuera
+                </button>
                 <button
                   onClick={() => {
                     close();
@@ -125,7 +130,7 @@ export function SlotSheet({ slot, recipe, onClose }: { slot: SlotView; recipe: R
                   }}
                   className={buttonQuiet}
                 >
-                  Lo cambié por…
+                  Registrar lo que comí
                 </button>
                 <button onClick={act(() => actions.eat(slot))} disabled={busy} className={buttonPrimary}>
                   Me lo comí
@@ -140,9 +145,34 @@ export function SlotSheet({ slot, recipe, onClose }: { slot: SlotView; recipe: R
         <p className="text-muted-foreground text-[13px] first-letter:uppercase">
           {slot.title} · {fmtPlanDay(slot.date)}
           {slot.source && ` · ${slot.source}`}
-          {slot.status !== "planned" && <span className="text-foreground font-medium"> · {STATUS_LABELS[slot.status]}</span>}
+          {(slot.status !== "planned" || slot.missed) && <span className="text-foreground font-medium"> · {statusLabel(slot)}</span>}
         </p>
-        {slot.status === "replaced" && slot.replacedBy && <p className="text-carbs text-[14px]">Comiste {slot.replacedBy} en su lugar.</p>}
+        {slot.real && !slot.real.asPlanned && (
+          <div className="bg-body/10 rounded-xl px-4 py-3">
+            <p className="text-muted-foreground text-[12px]">Comiste</p>
+            <p className="text-[15px] font-semibold">{slot.real.label}</p>
+            <p className="text-muted-foreground tabular mt-0.5 text-[13px]">
+              {fmt(Math.round(slot.real.macros.kcal))} kcal · {fmt(Math.round(slot.real.macros.protein))} g proteína · planeado {fmt(slot.kcal)} kcal
+            </p>
+          </div>
+        )}
+        {entries.length > 0 && (
+          <ul className="-mx-2 -mt-2">
+            {entries.map((e) => (
+              <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px]">{e.name}</span>
+                  <span className="text-muted-foreground block truncate text-[12px] tabular">
+                    {fmtAmount(e.measure, e.quantity, e.unit)} · {e.time}
+                  </span>
+                </span>
+                <EntryActions entry={e} />
+                <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmt(Math.round(e.kcal))}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {slot.real && !slot.real.asPlanned && <p className="text-muted-foreground -mb-2 text-[12px] font-medium">Lo planeado</p>}
         {slot.note && <p className="text-muted-foreground text-[13px] italic">«{slot.note}»</p>}
         {slot.adjusted && <p className="text-training text-[13px] font-medium">Porciones ajustadas por el Coach para hoy.</p>}
         {recipe ? (
@@ -162,7 +192,7 @@ export function SlotSheet({ slot, recipe, onClose }: { slot: SlotView; recipe: R
 }
 
 /** Rows of planned meals that open their detail sheet. */
-export function SlotList({ slots, recipes, showTitle = true }: { slots: SlotView[]; recipes: Record<string, Recipe>; showTitle?: boolean }) {
+export function SlotList({ slots, recipes, entries = [], showTitle = true }: { slots: SlotView[]; recipes: Record<string, Recipe>; entries?: DietaEntry[]; showTitle?: boolean }) {
   const [shown, setShown] = useState<{ slot: SlotView; key: number } | null>(null);
   const recipeOf = (slot: SlotView) => (slot.recipeId ? (recipes[slot.recipeId] ?? null) : null);
   return (
@@ -172,7 +202,15 @@ export function SlotList({ slots, recipes, showTitle = true }: { slots: SlotView
           <SlotRow key={slot.id} slot={slot} showTitle={showTitle} onOpen={() => setShown({ slot, key: Date.now() })} />
         ))}
       </ul>
-      {shown && <SlotSheet key={shown.key} slot={shown.slot} recipe={recipeOf(shown.slot)} onClose={() => setShown(null)} />}
+      {shown && (
+        <SlotSheet
+          key={shown.key}
+          slot={shown.slot}
+          recipe={recipeOf(shown.slot)}
+          entries={entries.filter((e) => shown.slot.entryIds.includes(e.id))}
+          onClose={() => setShown(null)}
+        />
+      )}
     </>
   );
 }
