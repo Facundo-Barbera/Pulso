@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bests, e1rm, nextLoad, recordsFor } from "./math";
+import { bests, e1rm, nextLoad, performance, recordsFor } from "./math";
 
 describe("e1rm (Epley)", () => {
   test("estimates from weight and reps", () => {
@@ -77,5 +77,31 @@ describe("nextLoad (double progression)", () => {
 
   test("bodyweight at the top adds a rep instead of load", () => {
     expect(nextLoad("dominadas", rx, last([[0, 10], [0, 10], [0, 10]]), 0)).toMatchObject({ weightKg: 0, reps: 11 });
+  });
+});
+
+describe("performance", () => {
+  test("records come from the first session that reached them; history is oldest first", () => {
+    const result = performance("press-banca", [
+      { at: 3, sets: [{ weightKg: 100, reps: 6 }, { weightKg: 100, reps: 5 }] },
+      { at: 1, sets: [{ weightKg: 90, reps: 8 }, { weightKg: 90, reps: 8 }, { weightKg: 90, reps: 8 }] },
+      { at: 2, sets: [{ weightKg: 100, reps: 3 }] },
+    ]);
+    expect(result.history).toEqual([
+      { at: 1, topWeightKg: 90, e1rm: 114, volumeKg: 2160 },
+      { at: 2, topWeightKg: 100, e1rm: 110, volumeKg: 300 },
+      { at: 3, topWeightKg: 100, e1rm: 120, volumeKg: 1100 },
+    ]);
+    // Same top load later with more reps wins; an equal later e1RM would not.
+    expect(result.maxWeight).toEqual({ kg: 100, reps: 6, at: 3 });
+    expect(result.bestE1rm).toEqual({ kg: 120, at: 3 });
+    expect(result.maxVolume).toEqual({ kg: 2160, at: 1 });
+  });
+
+  test("no sessions, or bodyweight-only work, leaves the records empty", () => {
+    expect(performance("x", [])).toEqual({ exerciseId: "x", maxWeight: null, bestE1rm: null, maxVolume: null, history: [] });
+    const dips = performance("fondos", [{ at: 1, sets: [{ weightKg: 0, reps: 12 }, { weightKg: 0, reps: 0 }] }]);
+    expect(dips.history).toEqual([{ at: 1, topWeightKg: 0, e1rm: 0, volumeKg: 0 }]);
+    expect([dips.maxWeight, dips.bestE1rm, dips.maxVolume]).toEqual([null, null, null]);
   });
 });

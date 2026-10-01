@@ -1,4 +1,4 @@
-import type { LoadSuggestion, PersonalRecord, SetLog } from "@pulso/contract";
+import type { ExercisePerformance, LoadSuggestion, PersonalRecord, SetLog } from "@pulso/contract";
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -79,4 +79,28 @@ export function nextLoad(
   }
   const reps = Math.min(rx.repMax, Math.max(rx.repMin, minReps + 1));
   return { ...base, weightKg: top, reps, reason: `Mantén ${top} kg y busca ${reps} reps en cada serie.` };
+}
+
+/**
+ * The Rendimiento view from one exercise's sessions. Each record is dated to
+ * the first session that reached it; ties on the heaviest load go to more reps.
+ * Bodyweight-only work has no load, so its records stay null.
+ */
+export function performance(exerciseId: string, sessions: { at: number; sets: Pick<SetLog, "weightKg" | "reps">[] }[]): ExercisePerformance {
+  const out: ExercisePerformance = { exerciseId, maxWeight: null, bestE1rm: null, maxVolume: null, history: [] };
+  for (const session of [...sessions].sort((a, b) => a.at - b.at)) {
+    const work = session.sets.filter((s) => s.reps > 0);
+    if (work.length === 0) continue;
+    const best = bests(work);
+    const volumeKg = round1(work.reduce((n, s) => n + s.weightKg * s.reps, 0));
+    out.history.push({ at: session.at, topWeightKg: best.weight, e1rm: best.e1rm, volumeKg });
+    if (best.weight > 0) {
+      const reps = Math.max(...work.filter((s) => s.weightKg === best.weight).map((s) => s.reps));
+      const prev = out.maxWeight;
+      if (!prev || best.weight > prev.kg || (best.weight === prev.kg && reps > prev.reps)) out.maxWeight = { kg: best.weight, reps, at: session.at };
+    }
+    if (best.e1rm > (out.bestE1rm?.kg ?? 0)) out.bestE1rm = { kg: best.e1rm, at: session.at };
+    if (volumeKg > (out.maxVolume?.kg ?? 0)) out.maxVolume = { kg: volumeKg, at: session.at };
+  }
+  return out;
 }

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type {
   ActiveProgramResponse,
   Exercise,
+  ExerciseDetail,
   ExerciseHistory,
+  ExercisePerformance,
   HistoryPoint,
   LoadSuggestion,
   PersonalRecord,
@@ -16,8 +18,12 @@ import type {
   TrainingSession,
 } from "@pulso/contract";
 import { db } from "../db";
+import { ANATOMY } from "./anatomy";
 import { INCREMENT_KG } from "./library";
-import { bests, nextLoad, recordsFor, type Prescription } from "./math";
+import { bests, nextLoad, performance, recordsFor, type Prescription } from "./math";
+import { mediaFor, mediaSourceOf } from "./media";
+import { TECHNIQUE } from "./technique";
+import { VIDEOS } from "./videos";
 
 /** A caller error: the message says what to fix. */
 export class TrainingError extends Error {}
@@ -40,6 +46,47 @@ export function listExercises(filter: { muscle?: string; equipment?: string; que
 export function getExercise(id: string): Exercise | undefined {
   const row = db().query<ExerciseRow, [string]>("SELECT id, name, muscle, secondary, equipment, kind FROM exercises WHERE id = ?").get(id);
   return row ? toExercise(row) : undefined;
+}
+
+// ── Exercise screen ──────────────────────────────────────────────────────────
+
+/** Everything the exercise screen shows: curated muscles, technique and videos, media, the person's notes. */
+export function exerciseDetail(id: string): ExerciseDetail | undefined {
+  const exercise = getExercise(id);
+  if (!exercise) return undefined;
+  const anatomy = ANATOMY[id];
+  return {
+    ...exercise,
+    nameEn: anatomy?.nameEn ?? null,
+    primaryMuscles: anatomy?.primary ?? [],
+    secondaryMuscles: anatomy?.secondary ?? [],
+    instructions: TECHNIQUE[id]?.instructions ?? [],
+    tips: TECHNIQUE[id]?.tips ?? [],
+    media: mediaFor(id, mediaSourceOf(id) !== undefined),
+    videos: VIDEOS[id] ?? [],
+    notes: db().query<{ notes: string }, [string]>("SELECT notes FROM exercise_notes WHERE exercise_id = ?").get(id)?.notes ?? null,
+  };
+}
+
+/** Replaces the person's notes on an exercise; blank clears them. Returns what is stored. */
+export function setExerciseNotes(id: string, notes: string | null, now = Date.now()): string | null {
+  if (!getExercise(id)) throw new TrainingError(`Unknown exercise id: ${id}.`);
+  const text = notes?.trim() || null;
+  if (text) {
+    db()
+      .query("INSERT INTO exercise_notes (exercise_id, notes, updated_at) VALUES (?, ?, ?) ON CONFLICT (exercise_id) DO UPDATE SET notes = excluded.notes, updated_at = excluded.updated_at")
+      .run(id, text, now);
+  } else {
+    db().query("DELETE FROM exercise_notes WHERE exercise_id = ?").run(id);
+  }
+  return text;
+}
+
+/** Records and per-session history on one exercise, from every logged session. */
+export function exercisePerformance(id: string): ExercisePerformance | undefined {
+  if (!getExercise(id)) return undefined;
+  const sessions = listSessions(Number.MAX_SAFE_INTEGER, id).map((s) => ({ at: s.startedAt, sets: s.sets.filter((set) => set.exerciseId === id) }));
+  return performance(id, sessions);
 }
 
 // ── Programs ─────────────────────────────────────────────────────────────────
