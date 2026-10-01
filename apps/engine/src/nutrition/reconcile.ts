@@ -11,11 +11,10 @@ import type { MealEntry, MealSlot } from "@pulso/contract";
 import { mealTimesBetween } from "../calendar/store";
 import { db } from "../db";
 import { nameKey } from "../shopping/aggregate";
-import { consume } from "../shopping/pantry";
 import { addDays, localDate } from "./dates";
 import { sum } from "./macros";
 import { revise } from "./revisions";
-import { eatenLines, findSlotRow, itemsOf, linksOf, slotOrder, slotRows, slotWithItem, updateSlot, type LinkRow, type SlotRow } from "./slots";
+import { findSlotRow, itemsOf, linksOf, slotOrder, slotRows, slotWithItem, updateSlot, type LinkRow, type SlotRow } from "./slots";
 
 /** A snack or drink under this many kcal, logged without saying which meal, stays an extra. */
 export const EXTRA_KCAL = 250;
@@ -166,7 +165,7 @@ export function settle(slotId: string): void {
 }
 
 /**
- * Ties entries to a slot: plan items as planned (using up the pantry), anything
+ * Ties entries to a slot: plan items as planned, anything
  * else instead of it. A plan item is one logged from the plan (a swapped item of
  * the Coach's adjustment has an id of its own) or one named like the slot's foods
  * ("Avena" for the planned avena, told to the Coach).
@@ -177,7 +176,6 @@ export function tie(entries: Logged[], row: SlotRow, forceReplacement = false): 
     const asPlanned = !forceReplacement && (!!e.planItemId || planned.has(nameKey(e.name)));
     db().query("DELETE FROM meal_entry_pins WHERE entry_id = ?").run(e.id);
     db().query("INSERT OR REPLACE INTO meal_slot_links (entry_id, slot_id, role) VALUES (?, ?, ?)").run(e.id, row.id, asPlanned ? "planned" : "replacement");
-    if (asPlanned) consume(eatenLines(e, row));
   }
   settle(row.id);
 }

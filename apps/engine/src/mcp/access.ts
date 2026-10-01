@@ -93,10 +93,6 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   update_shopping_item: "write",
   check_shopping_items: "write",
   remove_shopping_items: "write",
-  get_pantry: "read",
-  add_pantry_items: "write",
-  update_pantry_item: "write",
-  remove_pantry_items: "write",
 };
 
 /** Tools touching the profile or medications: their descriptions say so to outside agents. */

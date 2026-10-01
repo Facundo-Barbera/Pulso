@@ -137,11 +137,3 @@ export function slotWithItem(date: string, itemId: string): SlotRow | null {
     .all(date);
   return rows.find((r) => itemsOf(r).some((i) => i.id === itemId)) ?? null;
 }
-
-/** What eating `entry` as planned from `slot` uses up: the item itself, or its share of a recipe cooked that day. Batch portions were used up when cooked. */
-export function eatenLines(entry: Pick<MealEntry, "name" | "quantity" | "unit">, slot: SlotRow): Line[] {
-  if (slot.kind === "items") return [{ name: entry.name, quantity: entry.quantity, unit: entry.unit }];
-  if (slot.kind !== "recipe" || !slot.recipe_id) return [];
-  const recipe = findRecipe(slot.recipe_id);
-  return recipe ? ingredientLines(recipe, entry.unit === "serving" ? entry.quantity : (slot.portions ?? 1)) : [];
-}

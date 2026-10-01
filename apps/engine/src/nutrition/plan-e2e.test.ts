@@ -70,10 +70,10 @@ test("a real week: plan → list → ticks → Vualá → no salmon → no time 
   const byName = (name: string) => list.items.find((i: { name: string }) => i.name === name);
   expect(byName("Pasta")).toMatchObject({ quantity: 320 });
   expect(byName("Salmón")).toBeDefined();
-  // Ticks feed the pantry.
+  // Ticks stay on the list; there are no pantry tools any more.
   list = await call("check_shopping_items", { ids: [byName("Pasta").id, byName("Avena").id] });
-  const pantry = await call("get_pantry");
-  expect(pantry.map((p: { name: string }) => p.name).sort()).toEqual(["Avena", "Pasta"]);
+  expect([byName("Pasta").checked, byName("Avena").checked]).toEqual([true, true]);
+  expect(TOOLS.some((t) => t.name.includes("pantry"))).toBe(false);
 
   // Tuesday: breakfast skipped, a Vualá instead (minor: absorbed the same day).
   const horizon = await call("get_diet_horizon", { from: TUE, days: 1 });

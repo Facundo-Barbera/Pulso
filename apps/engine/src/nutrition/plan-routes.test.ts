@@ -5,8 +5,6 @@ import { POST as webOps } from "@/app/api/web/dieta/plan/ops/route";
 import { GET as webRevisions } from "@/app/api/web/dieta/plan/revisions/route";
 import { POST as webUndo } from "@/app/api/web/dieta/plan/revisions/undo/route";
 import { GET as webHorizon } from "@/app/api/web/dieta/horizon/route";
-import { GET as webPantry, POST as webPantryAdd } from "@/app/api/web/dieta/pantry/route";
-import { DELETE as webPantryRemove } from "@/app/api/web/dieta/pantry/[id]/route";
 import { POST as webRecipe } from "@/app/api/web/dieta/recipes/route";
 import { GET as webPreps } from "@/app/api/web/dieta/preps/route";
 import { gate } from "../tailnet-gate";
@@ -26,7 +24,7 @@ test("the phone needs its bearer; a viewing browser reads the plan but can't cha
   expect(gate({ method: "POST", pathname: "/api/web/dieta/plan/ops", device: viewer }).allow).toBe(false);
 });
 
-test("horizon, ops, revisions, undo, recipes, preps and pantry over HTTP", async () => {
+test("horizon, ops, revisions, undo, recipes and preps over HTTP", async () => {
   expect(await (await webHorizon(req("/api/web/dieta/horizon"))).json()).toEqual({ horizon: null });
   expect((await webOps(post("/x", { op: "skip", slot: "cena" }))).status).toBe(409);
 
@@ -56,11 +54,4 @@ test("horizon, ops, revisions, undo, recipes, preps and pantry over HTTP", async
   await webOps(post("/x", { op: "schedule_prep", recipeId: saved.id, cookDate: "2035-01-01", portions: 4, assign: [{ date: "2035-01-02", slot: "comida" }] }));
   const { preps } = await (await webPreps()).json();
   expect(preps[0]).toMatchObject({ recipeName: "Lentejas", leftover: 3 });
-
-  const added = await (await webPantryAdd(post("/x", { items: [{ name: "Arroz", quantity: 500, unit: "g" }] }))).json();
-  expect(added.items[0]).toMatchObject({ name: "Arroz", amount: "500 g" });
-  const ctx = { params: Promise.resolve({ id: added.items[0].id }) };
-  expect((await (await webPantryRemove(req("/x", { method: "DELETE" }), ctx)).json()).items).toEqual([]);
-  expect((await webPantryRemove(req("/x", { method: "DELETE" }), ctx)).status).toBe(404);
-  expect((await (await webPantry()).json()).items).toEqual([]);
 });

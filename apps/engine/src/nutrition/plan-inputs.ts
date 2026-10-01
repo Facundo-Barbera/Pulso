@@ -93,7 +93,7 @@ export const opShapes = {
   },
   ingredient_unavailable: {
     ingredient: z.string().trim().min(1).max(120).describe("What can't be had, in Spanish, e.g. 'salmón'"),
-    substitute: substituteSchema.optional().describe("Omit to preview: the affected meals and pantry items that could stand in"),
+    substitute: substituteSchema.optional().describe("Omit to preview the affected meals"),
     from: dateString.optional().describe("First day to change (default today)"),
     to: dateString.optional().describe("Last day to change (default the end of the plan's horizon)"),
   },

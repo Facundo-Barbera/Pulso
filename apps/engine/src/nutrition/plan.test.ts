@@ -1,8 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { DietPlanInput, Macros, PlanChange } from "@pulso/contract";
 import { db } from "../db";
-import { addPantryItems, listPantry } from "../shopping/pantry";
-import { checkShoppingItems, generateShoppingList, getShoppingList } from "../shopping/store";
+import { checkShoppingItems, generateShoppingList, getShoppingList, updateShoppingItem } from "../shopping/store";
 import { ownDatabase } from "../web/test-db";
 import { dietHorizon, prepView } from "./horizon";
 import { ingredientUnavailable, moveSlot, noTimeToCook, prepCooked, rebalanceDay, schedulePrep, skipSlot, spread, undo, useLeftover } from "./ops";
@@ -156,16 +155,14 @@ test("a big deviation spread over the next days never moves a day more than 15 %
   expect(dietHorizon(TUE, 1)!.days[0]!.shiftKcal).toBe(-300);
 });
 
-test("a missing ingredient is swapped only where it was used, preferring the pantry, and the list follows", () => {
+test("a missing ingredient is swapped only where it was used, and the list follows", () => {
   const plan = createPlan(planInput());
   dietHorizon(MON, 7);
   generateShoppingList({ from: MON, days: 4 });
-  addPantryItems([{ name: "Atún en conserva", quantity: 300, unit: "g" }]);
 
   const preview = ingredientUnavailable({ ingredient: "salmón", from: MON, to: THU });
   if (!("preview" in preview)) throw new Error("expected a preview");
   expect(preview.affected.map((s) => s.date)).toEqual([MON, WED]);
-  expect(preview.alternatives.map((p) => p.name)).toEqual(["Atún en conserva"]);
   expect(preview.summary).toBe("Salmón aparece en 2 comidas (lun 3 y mié 5).");
   expect(slotRows(plan.id, MON).find((r) => r.slot === "cena")!.items_json).toContain("Salmón");
 
@@ -183,11 +180,11 @@ test("a missing ingredient is swapped only where it was used, preferring the pan
   expect(snapshot(plan.id, TUE, THU)).toBe(untouched);
   expect(rest()).toBe(others);
 
-  // The list drops salmon and asks only for the tuna the pantry lacks (400 g − 300 g).
+  // The list drops salmon and asks for the tuna instead.
   expect(out.shoppingRefreshed).toBe(true);
   const items = getShoppingList().items;
   expect(items.find((i) => i.name === "Salmón")).toBeUndefined();
-  expect(items.find((i) => i.name === "Atún en conserva")).toMatchObject({ quantity: 100, amount: "100 g" });
+  expect(items.find((i) => i.name === "Atún en conserva")).toMatchObject({ quantity: 400, amount: "400 g" });
 });
 
 test("undo puts back exactly what a change touched; an older change waits for a later one on the same days", () => {
@@ -211,36 +208,55 @@ test("undo puts back exactly what a change touched; an older change waits for a 
   expect(() => undo(a.revision.id)).toThrow("undo «Saltaste desayuno del jue 6");
 });
 
-test("the shopping list is the plan minus the pantry; ticks stock the pantry and a new trip releases them", () => {
+test("the shopping list is what the plan needs, minus what was ticked or «Ya tengo» on it; a new trip resets the marks", () => {
   createPlan(planInput());
-  addPantryItems([{ name: "Arroz", quantity: 150, unit: "g" }, { name: "Sal" }]);
   let list = generateShoppingList({ from: MON, days: 2 });
-  // Monday needs 100 g of rice and the pantry has 150 g: no rice on the list.
-  expect(list.items.find((i) => i.name === "Arroz")).toBeUndefined();
   const chicken = list.items.find((i) => i.name === "Pechuga de pollo")!;
+  const rice = list.items.find((i) => i.name === "Arroz")!;
   expect(chicken.amount).toBe("200 g");
+  expect(rice.quantity).toBe(100);
 
   checkShoppingItems([chicken.id]);
-  expect(listPantry().find((p) => p.name === "Pechuga de pollo")).toMatchObject({ quantity: 200, unit: "g", source: "list", shoppingItemId: chicken.id });
-  // Regenerating the same trip keeps the tick (the pantry it stocked belongs to this list).
+  updateShoppingItem(rice.id, { pantry: true });
+  list = getShoppingList();
+  expect(list.text).not.toContain("Pechuga de pollo");
+  expect(list.text).not.toContain("Arroz");
+  // Regenerating the same trip keeps both marks.
   list = generateShoppingList({ from: MON, days: 2 });
-  expect(list.items.find((i) => i.id === chicken.id)).toMatchObject({ checked: true, amount: "200 g" });
-  // Unticking takes it back out.
+  expect(list.items.find((i) => i.id === chicken.id)).toMatchObject({ checked: true, pantry: false, amount: "200 g" });
+  expect(list.items.find((i) => i.id === rice.id)).toMatchObject({ checked: false, pantry: true });
   checkShoppingItems([chicken.id], false);
-  expect(listPantry().find((p) => p.name === "Pechuga de pollo")).toBeUndefined();
-  checkShoppingItems([chicken.id], true);
+  expect(getShoppingList().items.find((i) => i.id === chicken.id)!.checked).toBe(false);
 
-  // Eating Monday's lunch uses the chicken and the rice up.
+  // A trip from Wednesday (chicken and rice again) starts fresh: the plan's full need, nothing marked.
+  list = generateShoppingList({ from: WED, days: 1 });
+  expect(list.items.find((i) => i.name === "Pechuga de pollo")).toMatchObject({ checked: false, pantry: false, amount: "200 g" });
+  expect(list.items.find((i) => i.name === "Arroz")).toMatchObject({ pantry: false, quantity: 100 });
+});
+
+test("the old pantry table is kept but never read or written: not by ticks, «Ya tengo», eating or cooking", () => {
+  createPlan(planInput());
+  const at = Date.now();
+  db()
+    .query("INSERT INTO pantry_items (id, key, name, quantity, unit, category, source, created_at, updated_at) VALUES ('old', 'arroz|g', 'Arroz', 1000, 'g', 'panaderia_cereales', 'manual', ?, ?)")
+    .run(at, at);
+  const pantry = () => JSON.stringify(db().query("SELECT * FROM pantry_items").all());
+  const before = pantry();
+
+  // Rice at home no longer comes off the list.
+  const list = generateShoppingList({ from: MON, days: 2 });
+  expect(list.items.find((i) => i.name === "Arroz")).toMatchObject({ quantity: 100 });
+  const chicken = list.items.find((i) => i.name === "Pechuga de pollo")!;
+  checkShoppingItems([chicken.id]);
+  updateShoppingItem(list.items.find((i) => i.name === "Arroz")!.id, { pantry: true });
+  checkShoppingItems([chicken.id], false);
   const lunch = dietHorizon(MON, 1)!.days[0]!.slots.find((s) => s.slot === "comida")!;
   for (const item of lunch.items) logMeal({ ...item, slot: "comida", date: MON, planItemId: item.id });
-  expect(dietHorizon(MON, 1)!.days[0]!.slots.find((s) => s.slot === "comida")!.status).toBe("eaten");
-  expect(listPantry().find((p) => p.name === "Arroz")).toMatchObject({ quantity: 50 });
-  expect(listPantry().find((p) => p.name === "Pechuga de pollo")).toBeUndefined();
-
-  // A trip from Wednesday (chicken and rice again) starts fresh, counting what is at home.
-  list = generateShoppingList({ from: WED, days: 1 });
-  expect(list.items.find((i) => i.name === "Pechuga de pollo")).toMatchObject({ checked: false, amount: "200 g" });
-  expect(list.items.find((i) => i.name === "Arroz")).toMatchObject({ quantity: 50 });
+  logMeal({ name: "Arroz", quantity: 80, unit: "g", kcal: 290, protein: 6, carbs: 62, fat: 1, fiber: 1, slot: "cena", date: MON, barcode: "8410000000011" });
+  const prep = schedulePrep({ recipeId: bolognese().id, cookDate: TUE, portions: 2, assign: [{ date: WED, slot: "comida" }] });
+  prepCooked({ prepId: prep.slots.find((s) => s.kind === "prep")!.prepId!, cooked: true });
+  undo();
+  expect(pantry()).toBe(before);
 });
 
 const bolognese = () =>
@@ -274,10 +290,8 @@ test("a prep batch fills slots with portions, the list buys it once, leftovers a
   expect(list.items.find((i) => i.name === "Lentejas")).toMatchObject({ quantity: 250 });
   expect(list.items.find((i) => i.name === "Pechuga de pollo")).toBeUndefined();
 
-  // Cooking uses the pantry up; the batch is then off the list.
-  addPantryItems([{ name: "Pasta", quantity: 500, unit: "g" }]);
+  // Once cooked, the batch is off the list.
   prepCooked({ prepId, cooked: true });
-  expect(listPantry().find((p) => p.name === "Pasta")).toMatchObject({ quantity: 180 });
   expect(generateShoppingList({ from: SUN, days: 4 }).items.find((i) => i.name === "Carne picada de ternera")).toBeUndefined();
 
   // The free portion goes to Thursday's lunch; skipping Tuesday's frees one again.

@@ -1,6 +1,6 @@
 /**
  * The dated diet: the active plan laid out as concrete slots (date × meal),
- * recipes and prep batches that fill them, the pantry, and the revisions every
+ * recipes and prep batches that fill them, and the revisions every
  * local change leaves (each can be undone). See apps/engine/src/nutrition/DIET.md.
  */
 import type { DayAdjustment, Macros, MealSlot, MeasureUnit, PlanItem } from "./nutrition";
@@ -194,23 +194,3 @@ export type PlanChange = {
 
 /** A plan change on the wire: `op` plus its fields (see the engine's plan-inputs.ts for each). */
 export type PlanOpInput = { op: string } & Record<string, unknown>;
-
-export type PantryItem = {
-  id: string;
-  name: string;
-  /** Amount in `unit` (g, ml, ud or the unit it is counted in); null = "some", enough for any need. */
-  quantity: number | null;
-  unit: string | null;
-  /** As shown: "1,4 kg", "6". */
-  amount: string | null;
-  category: ShoppingCategory;
-  /** list: ticked or «Ya tengo» on the shopping list; manual: added by hand or by the Coach. */
-  source: "list" | "manual";
-  /** The shopping item it came from, while that item is still on the list. */
-  shoppingItemId: string | null;
-  boughtOn: string | null;
-  expiresOn: string | null;
-  updatedAt: number;
-};
-
-export type PantryInput = { name: string; quantity?: number | null; unit?: string | null; expiresOn?: string | null };

@@ -32,7 +32,7 @@ export async function shopping(run: () => unknown): Promise<Response> {
   }
 }
 
-/** Runs a dated-plan call (horizon, ops, recipes, pantry…): known errors → 400/404/409 with a Spanish message. */
+/** Runs a dated-plan call (horizon, ops, recipes…): known errors → 400/404/409 with a Spanish message. */
 export async function diet(run: () => unknown): Promise<Response> {
   try {
     return json(await run());

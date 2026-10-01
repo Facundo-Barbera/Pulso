@@ -3,7 +3,6 @@ import type { FoodProduct, MealInput, PortionEstimate } from "@pulso/contract";
 import { z } from "zod";
 import { lookupBarcode, normalizeBarcode } from "./barcode";
 import { parseTime } from "./dates";
-import { usePantryFor, pantryRowFor } from "./pantry-use";
 import { estimatePortion, PortionError } from "./portion";
 import { dateString, macroShape, mealShape, planItem, planShape, slot, targetsShape, toMealInput } from "./inputs";
 import { addDays, createPlan, dailySummary, deleteMeal, getTargets, listMeals, localDate, logMeals, planForDay, setTargets } from "./store";
@@ -16,7 +15,7 @@ const fail = (text: string) => ({ content: [{ type: "text" as const, text }], is
 
 const timeDescription = "Local time it happened, 'HH:MM' 24 h (e.g. '14:30'), or an ISO 8601 date-time. Defaults to now";
 
-/** What log_meal needs from an estimate: the amount as said, the total macros and the barcode (which links the pantry). */
+/** What log_meal needs from an estimate: the amount as said, the total macros and the barcode. */
 export function logItem(estimate: PortionEstimate) {
   const { measure, quantity, unit, macros } = estimate;
   return {
@@ -25,13 +24,6 @@ export function logItem(estimate: PortionEstimate) {
     ...macros,
     barcode: estimate.barcode || null,
   };
-}
-
-/** Package sizes by barcode, from the cache (a scanned product was just looked up). */
-async function packageSizes(codes: string[]): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
-  for (const code of new Set(codes)) out.set(code, (await lookupBarcode(code).catch(() => null))?.packageSize ?? null);
-  return out;
 }
 
 export const nutritionTools = [
@@ -69,12 +61,7 @@ export const nutritionTools = [
           slotId: slotId ?? null,
         });
       }
-      const entries = logMeals(meal, "agent");
-      const stocked = entries.flatMap((e) => (e.barcode && pantryRowFor(e.name) ? [e.barcode] : []));
-      const pantry = stocked.length ? usePantryFor(entries, await packageSizes(stocked)) : [];
-      if (!pantry.length) return json(entries);
-      // A second block, so the entries keep the shape every caller reads.
-      return { content: [...json(entries).content, { type: "text" as const, text: JSON.stringify({ pantryLeft: pantry }) }] };
+      return json(logMeals(meal, "agent"));
     },
   ),
   tool(
@@ -82,7 +69,7 @@ export const nutritionTools = [
     "Work out how much of a packaged product the person ate when they say it in words: 'una cucharada', '2 cucharaditas', 'media taza', 'la mitad del paquete', 'un tercio de la botella', '2 de 6 galletas', '3 galletas', 'un scoop', '30 g', '20 %'. " +
       "Give the product by `barcode` (a scanned product in the message has one; it is looked up in Open Food Facts) or, without one, as `product` with its label values. " +
       "Spoons and cups of a solid are converted with a food-specific density (azúcar, harina, avena, arroz crudo/cocido, crema de cacahuate, mayonesa, miel, aceite, leche/proteína en polvo, mantequilla, queso rallado, cereal…; level spoons: cucharada 15 ml, cucharadita 5 ml, taza 240 ml); shares use the package size; counts use `unitGrams`, `unitsPerPackage` (from the label or the photo) or a typical weight (galleta ~10 g). " +
-      "Returns `estimate` (quantity in g, or ml for drinks; total macros: kcal and grams; share of the package; `assumption`, one Spanish line to tell the person, e.g. '1 cucharada de Crema de cacahuete (rasa, ~16 g como crema de cacahuate) ≈ 16 g → 94 kcal'), `logItem` to pass as is (adding slot) in log_meal's items, and `pantry` when the product is in the pantry (log_meal then uses it up and says what is left). " +
+      "Returns `estimate` (quantity in g, or ml for drinks; total macros: kcal and grams; share of the package; `assumption`, one Spanish line to tell the person, e.g. '1 cucharada de Crema de cacahuete (rasa, ~16 g como crema de cacahuate) ≈ 16 g → 94 kcal'), `logItem` to pass as is (adding slot) in log_meal's items. " +
       "An error is a question to ask the person (e.g. how much each one weighs).",
     {
       barcode: z.string().optional().describe("8 to 14 digits"),
@@ -119,8 +106,7 @@ export const nutritionTools = [
       if (!product) return fail("Give a barcode or the product's label values");
       try {
         const estimate = estimatePortion(product, amount, { unitGrams, unitsPerPackage, density });
-        const row = pantryRowFor(product.name);
-        return json({ estimate, logItem: logItem(estimate), pantry: row ? { name: row.name, quantity: row.quantity, unit: row.unit } : null });
+        return json({ estimate, logItem: logItem(estimate) });
       } catch (error) {
         if (error instanceof PortionError) return fail(error.message);
         throw error;

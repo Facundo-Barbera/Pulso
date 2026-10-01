@@ -60,7 +60,7 @@ export type ShoppingList = {
   stale: boolean;
   /** Sorted by aisle, then name. */
   items: ShoppingItem[];
-  /** Bought items, and items to buy (pantry excluded). */
+  /** Bought items, and items to buy («Ya tengo» excluded). */
   done: number;
   total: number;
   /** The items still to buy as plain text, grouped by aisle, to send to someone. */

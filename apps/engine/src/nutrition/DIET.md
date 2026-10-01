@@ -1,4 +1,4 @@
-# The living diet: plan → shopping → pantry → eaten
+# The living diet: plan → shopping → eaten
 
 The person's complaint: the plan was per day, the shopping list per fortnight, and
 anything that went differently pushed toward regenerating the whole diet. Now there
@@ -12,10 +12,8 @@ plan_days + plan_slots (date × meal)  ◄── recipes / prep_batches fill slo
    │            ▲
    │            └── meal_slot_links ◄── meal_entries (logMeal with slotId / planItemId)
    ▼
-shopping list = slots still to eat + batches still to cook − pantry
-   │ tick / «Ya tengo»
-   ▼
-pantry_items ── used up when a planned meal is eaten or a batch is cooked
+shopping list = slots still to eat + batches still to cook
+   └── tick / «Ya tengo»: marks on the list's own items
 ```
 
 ## The dated plan (`slots.ts`, `horizon.ts`)
@@ -83,7 +81,7 @@ meal (halfway when closer): breakfast at 8 and lunch at 14 → breakfast until 1
 ## Changes are revisions (`revisions.ts`, `ops.ts`)
 
 Every op runs inside `revise()`: it snapshots the whole of each touched date (slots,
-links, day row, adjustment) plus touched batches and, when cooking, the pantry; runs;
+links, day row, adjustment) plus touched batches; runs;
 records `plan_revisions` with the Spanish summary. **Undo** writes the snapshot back.
 Default is the latest live change; an older one is refused while a later live change
 touches the same dates or batches. Undo itself is not a revision (no redo).
@@ -96,7 +94,7 @@ touches the same dates or batches. Undo itself is not a revision (no redo).
 | `place` (place_meal) | moves entries to another slot, or pins them as extras |
 | `rebalance` (rebalance_day / adjust_day_plan) | that day's overlay |
 | `spread` (spread_deviation) | shifts + overlays of the next N days |
-| `ingredient_unavailable` | without substitute: preview + pantry alternatives (same aisle). With one: items in affected planned slots; recipes and uncooked batches get a *variant* recipe (`variant_of`) |
+| `ingredient_unavailable` | without substitute: preview of the affected meals. With one: items in affected planned slots; recipes and uncooked batches get a *variant* recipe (`variant_of`) |
 | `no_time_to_cook` | auto: a free batch portion cooked by then, else swap with the next same-slot meal that needs no cooking (≤15 min); `quick` takes a fill |
 | `move` (move_slot) | moves, or swaps with a planned meal at the target |
 | `swap_days` | swaps the planned meals and labels of two dates |
@@ -112,25 +110,24 @@ Ingredients are for the whole pot (`quantity` + a `MeasureUnit`, total macros);
 `perServing` is derived. A **batch** is a recipe cooked on `cookDate` yielding
 `portions`; slots of kind `prep` hold its portions. `leftover` = portions − portions in
 slots still planned or eaten (skipping or replacing one frees it). Cooking marks it
-`cooked` and uses its ingredients up from the pantry; its ingredients leave the list.
+`cooked`; its ingredients leave the list.
 `suggest_prep_days` (`prepdays.ts`) ranks the coming days by free minutes between
 16:00 and an hour before bed (calendar busy blocks and planned training), so the Coach
 can propose cooking days; it never schedules them itself.
 
-## Shopping and pantry (`../shopping`)
+## Shopping (`../shopping`)
 
 - **Needs** (`planLines`): items of slots still `planned` in the range, ingredients of
   `recipe` slots, whole batches still to cook whose `cookDate` is in the range. Eaten,
   skipped and replaced meals and batch portions need nothing.
-- **List** = needs − free pantry (rows not stocked by this list's own ticks), rounded
-  to buyable amounts. Public behaviour kept: regenerating the **same** start date keeps
-  ids, aisles, manual items and marks. A **new start date** is a new trip: the last
-  list's ticks become plain pantry and plan items' marks reset.
-- **Pantry** (`pantry_items`): a tick or «Ya tengo» stocks the item's amount, linked to
-  it (untick removes it; deleting the item keeps it at home). Manual rows via the Coach
-  or the API; a row without amount means "some" and covers any need. Eating a planned
-  item or recipe slot and cooking a batch use it up (plain pantry first). It is an
-  estimate: nothing ever blocks on it, and deleting a meal does not restore it.
+- **List** = needs, rounded to buyable amounts. Bought (`checked`) and «Ya tengo»
+  (`pantry`) are marks on the list's own items; what is left to buy is what has neither.
+  Regenerating the **same** start date keeps ids, aisles, manual items and marks. A
+  **new start date** is a new trip: plan items' marks reset.
+- **No pantry.** Pulso doesn't track what is at home: the person shares food with
+  someone else, so it could never stay accurate. The `pantry_items` table (from when it
+  did) stays in the schema so no data is lost, but nothing reads or writes it — not
+  logging, ticks, cooking or undo. Old revisions' pantry snapshots are ignored.
 - Every plan op rebuilds the list for its range when one exists for the active plan.
 
 ## API (both surfaces; phone needs the bearer, web is cookie-gated by scope)
@@ -146,7 +143,6 @@ can propose cooking days; it never schedules them itself.
 | `GET/POST recipes`, `GET recipes/[id]` | `{ recipes }`, `{ recipe }` |
 | `GET preps` | `{ preps: PrepBatch[] }` |
 | `GET prep-days?from&days` | ranked days, tight meals, batch recipes |
-| `GET/POST pantry`, `PATCH/DELETE pantry/[id]` | `{ items: PantryItem[] }` |
 
 Errors: 400 `invalid_request`, 404 `not_found`, 409 `no_plan` / `plan_conflict`
 (Spanish `message`, engine reason in `detail`) / `cannot_undo`. Existing routes
@@ -156,5 +152,4 @@ Errors: 400 `invalid_request`, 404 `not_found`, 409 `no_plan` / `plan_conflict`
 
 - Dates laid out after an ingredient swap (beyond its range) come from the rotation
   again — salmon may be back next week; the Coach can swap again.
-- Pantry quantities aren't restored when a log is deleted; expiry is stored, not acted on.
 - No redo; undo is per revision, newest first when they overlap.

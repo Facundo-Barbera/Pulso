@@ -2,8 +2,6 @@ import { expect, test } from "bun:test";
 import type { FoodProduct } from "@pulso/contract";
 import { z } from "zod";
 import { db } from "../db";
-import { addPantryItems, listPantry } from "../shopping/pantry";
-import { usePantry } from "./pantry-use";
 import { describeProduct, estimatePortion, PortionError, portionFor } from "./portion";
 import { nutritionTools } from "./tools";
 
@@ -90,18 +88,6 @@ test("the phone's and web's portion call: unreadable → 400, unknown → 404", 
   expect(await portionFor({ barcode: peanut.barcode, amount: "una" }, async () => null)).toMatchObject({ status: 404 });
 });
 
-test("the pantry: grams come off the row and it says the share of the package left", () => {
-  addPantryItems([{ name: "Crema de cacahuete", quantity: 350, unit: "g" }]);
-  expect(usePantry("Crema de cacahuete natural", 52.5, 350)).toMatchObject({ name: "Crema de cacahuete", left: 297.5, leftPct: 85 });
-  // Counted in jars: a spoon is a share of one.
-  addPantryItems([{ name: "Miel", quantity: 1, unit: "bote" }]);
-  expect(usePantry("Miel de flores", 125, 500)).toMatchObject({ left: 0.75, unit: "bote", leftPct: 75 });
-  expect(usePantry("Atún en lata", 50, 80)).toBeUndefined();
-  // Used up: a plain row goes.
-  expect(usePantry("Miel de flores", 400, 500)).toMatchObject({ left: 0 });
-  expect(listPantry().some((p) => p.name === "Miel")).toBe(false);
-});
-
 async function call(name: string, args: unknown) {
   const t = nutritionTools.find((x) => x.name === name)!;
   const result = await t.handler(z.object(t.inputSchema).parse(args) as never, undefined);
@@ -109,19 +95,18 @@ async function call(name: string, args: unknown) {
   return { error: result.isError === true, texts, value: result.isError ? undefined : JSON.parse(texts[0]!) };
 }
 
-test("estimate_portion → log_meal: logged as said, its grams, and the pantry used up", async () => {
+test("estimate_portion → log_meal: logged as said, its grams, and nothing about a pantry", async () => {
   const code = "8410000000099";
   const jar = { ...peanut, barcode: code, name: "Crema de cacahuete tostado" };
   db().query("INSERT OR REPLACE INTO food_barcode_cache (barcode, product_json, fetched_at) VALUES (?, ?, ?)").run(code, JSON.stringify(jar), Date.now());
-  addPantryItems([{ name: "Crema de cacahuete tostado", quantity: 350, unit: "g" }]);
 
   const estimated = await call("estimate_portion", { barcode: code, amount: "una cucharada" });
   expect(estimated.value.estimate).toMatchObject({ quantity: 16, unit: "g" });
-  expect(estimated.value.pantry).toMatchObject({ name: "Crema de cacahuete tostado", quantity: 350 });
+  expect(estimated.value.pantry).toBeUndefined();
 
   const logged = await call("log_meal", { at: "2032-10-01T17:00", items: [{ ...estimated.value.logItem, slot: "snack" }] });
   expect(logged.value[0]).toMatchObject({ name: "Crema de cacahuete tostado", quantity: 16, unit: "g", kcal: 94, barcode: code, measure: { amount: 1, unit: "cucharada", size: 16 } });
-  expect(JSON.parse(logged.texts[1]!)).toEqual({ pantryLeft: [{ name: "Crema de cacahuete tostado", left: 334, unit: "g", leftPct: 95 }] });
+  expect(logged.texts).toHaveLength(1);
 
   expect((await call("estimate_portion", { barcode: code, amount: "3 piezas" })).error).toBe(true);
   const byLabel = await call("estimate_portion", { product: { name: "Mermelada de fresa", per100g: { kcal: 250, protein: 0, carbs: 60, fat: 0 } }, amount: "una cucharada" });

@@ -27,8 +27,7 @@ export const SHOPPING_SCHEMA = `
     days INTEGER NOT NULL,
     generated_at INTEGER NOT NULL
   );
-  -- What is at home. key = ingredient + unit, like shopping_items; a row fed by a tick or
-  -- «Ya tengo» keeps its shopping item while that item is on the list.
+  -- The retired pantry (what was at home). Kept so no data is lost; nothing reads or writes it.
   CREATE TABLE IF NOT EXISTS pantry_items (
     id TEXT PRIMARY KEY,
     key TEXT NOT NULL,

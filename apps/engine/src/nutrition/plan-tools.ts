@@ -113,7 +113,7 @@ export const planTools = [
   ),
   tool(
     "ingredient_unavailable",
-    "The person can't get an ingredient (not at the supermarket, ran out). Without `substitute` it only previews: which planned meals use it and which pantry items (same aisle) could stand in — prefer those, then ask or pick a close equivalent. " +
+    "The person can't get an ingredient (not at the supermarket, ran out). Without `substitute` it only previews: which planned meals use it; then ask or pick a close equivalent. " +
       "With `substitute` (name, ratio of amount, macros per 100 g/ml) it swaps the ingredient only in the affected meals still planned (and in batches not yet cooked, as a recipe variant), keeps everything else, and rebuilds the shopping list. " +
       CHANGE,
     opShapes.ingredient_unavailable,
@@ -177,7 +177,7 @@ export const planTools = [
   ),
   tool(
     "mark_prep_cooked",
-    "The person cooked a batch (cooked true) or not yet (false). Cooking uses its ingredients up from the pantry. " + CHANGE,
+    "The person cooked a batch (cooked true) or not yet (false). " + CHANGE,
     opShapes.prep_cooked,
     async (input) => safely(() => prepCooked(input)),
   ),

@@ -5,17 +5,16 @@
  * only when the person asks for a new one.
  */
 import { randomUUID } from "node:crypto";
-import type { Compensation, DietPlan, PantryItem, PlanChange, PlanItem, PlanSlot, Recipe } from "@pulso/contract";
+import type { Compensation, DietPlan, PlanChange, PlanItem, PlanSlot, Recipe } from "@pulso/contract";
 import { db } from "../db";
 import { nameKey } from "../shopping/aggregate";
-import { consume, pantryAlternatives } from "../shopping/pantry";
 import { refreshShoppingList } from "../shopping/store";
 import { adjustDayPlan, SLOT_TITLES, type AdjustResult } from "./adjust";
 import { addDays, daysBetween, localDate } from "./dates";
 import { PlanError, prepView, requirePlan, slotViews, statusOf } from "./horizon";
 import { MACRO_KEYS, round, sum } from "./macros";
 import type { Fill, OpInput } from "./plan-inputs";
-import { createRecipe, dishItem, getPrepRow, getRecipe, ingredientLines, insertPrep, updatePrep } from "./recipes";
+import { createRecipe, dishItem, getPrepRow, getRecipe, insertPrep, updatePrep } from "./recipes";
 import { tie, untie } from "./reconcile";
 import { revise, undoRevision } from "./revisions";
 import {
@@ -321,7 +320,7 @@ export function spread(input: OpInput<"spread">): PlanChange {
 /** "salmon" matches "Salmón a la plancha" and "Lomo de salmón", not "Salmonete". */
 const mentions = (name: string, wanted: string) => ` ${nameKey(name)} `.includes(` ${wanted} `);
 
-export type UnavailablePreview = { preview: true; ingredient: string; summary: string; affected: PlanSlot[]; alternatives: PantryItem[] };
+export type UnavailablePreview = { preview: true; ingredient: string; summary: string; affected: PlanSlot[] };
 
 function substituted<T extends PlanItem | Recipe["ingredients"][number]>(item: T, sub: NonNullable<OpInput<"ingredient_unavailable">["substitute"]>): T {
   const quantity = Math.round(item.quantity * sub.ratio * 10) / 10;
@@ -350,12 +349,11 @@ export function ingredientUnavailable(input: OpInput<"ingredient_unavailable">):
     return false;
   });
   if (!input.substitute) {
-    const alternatives = pantryAlternatives(input.ingredient);
     const days = [...new Set(affected.map((r) => dayLabel(r.date)))];
     const summary = affected.length
       ? `${capitalize(input.ingredient)} aparece en ${affected.length === 1 ? "1 comida" : `${affected.length} comidas`} (${listWords(days)}).`
       : `${capitalize(input.ingredient)} no aparece en lo que queda del plan.`;
-    return { preview: true, ingredient: input.ingredient, summary, affected: slotViews(affected), alternatives };
+    return { preview: true, ingredient: input.ingredient, summary, affected: slotViews(affected) };
   }
   if (!affected.length) throw new PlanError(`${input.ingredient} is not in any planned meal from ${from} to ${to}.`);
   const sub = input.substitute;
@@ -585,9 +583,8 @@ export function prepCooked(input: OpInput<"prep_cooked">): PlanChange {
   const prep = getPrepRow(input.prepId);
   if (prep.plan_id !== plan.id) throw new PlanError("That batch belongs to an older plan.");
   const recipe = getRecipe(prep.recipe_id);
-  const out = revise({ planId: plan.id, op: "prep_cooked", dates: [prep.cook_date], prepIds: [prep.id], pantry: true }, () => {
+  const out = revise({ planId: plan.id, op: "prep_cooked", dates: [prep.cook_date], prepIds: [prep.id] }, () => {
     if (input.cooked) {
-      if (prep.status !== "cooked") consume(ingredientLines(recipe, prep.portions));
       updatePrep(prep.id, { status: "cooked", cooked_at: Date.now() });
       return { summary: `Batch de ${lower(recipe.name)} cocinado: ${portionsText(prep.portions)}.` };
     }
