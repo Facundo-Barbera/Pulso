@@ -5,7 +5,11 @@ import { getProfile } from "./profile";
 import { childEnv, claudeExecutable, providerEnv } from "./provider";
 import { TOOLS } from "./registry";
 import { addMessage, failStreamingMessages, listMessages, sdkSessionOf, setSdkSession, updateMessage } from "./threads";
+import { liveCoachMode } from "../training/live-coach";
 import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
+
+/** A thread with its own short prompt and tool subset (the in-workout Coach). */
+export type TurnMode = { persona: string; context: string; tools: string[] };
 
 export type QueryFn = typeof query;
 
@@ -76,8 +80,8 @@ const confineTo =
  * pulso tools. No settings, hooks, plugins, skills, CLAUDE.md files or memory
  * from this Mac are loaded; the thread's own CLAUDE.md goes in the system prompt.
  */
-export function agentOptions(cwd: string, context: string, resume: string | undefined, abortController: AbortController): Options {
-  return {
+export function agentOptions(cwd: string, context: string, resume: string | undefined, abortController: AbortController, mode?: TurnMode): Options {
+  const base: Options = {
     cwd,
     resume,
     abortController,
@@ -103,6 +107,17 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     },
+  };
+  if (!mode) return base;
+  // Fast turns: a short plain prompt instead of Claude Code's, only the tools it needs, no files or web.
+  return {
+    ...base,
+    systemPrompt: `${mode.persona}\n\n${mode.context}`,
+    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: TOOLS.filter((t) => mode.tools.includes(t.name)) }) },
+    tools: [],
+    allowedTools: ["mcp__pulso"],
+    hooks: {},
+    maxTurns: 8,
   };
 }
 
@@ -154,10 +169,11 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: Q
 
   const attempt = async (prompt: string, resume: string | undefined) => {
     state = newTurnState();
-    const context = claudeMd(getProfile());
+    const mode = liveCoachMode(turn.threadId);
+    const context = mode?.context ?? claudeMd(getProfile());
     const cwd = prepareWorkspace(turn.threadId, context);
     try {
-      for await (const message of run({ prompt, options: agentOptions(cwd, context, resume, abortController) })) {
+      for await (const message of run({ prompt, options: agentOptions(cwd, context, resume, abortController, mode) })) {
         const known = state.sessionId;
         const events = translate(message, state);
         if (state.sessionId && state.sessionId !== known) setSdkSession(turn.threadId, state.sessionId);
