@@ -21,9 +21,14 @@ enum TrainingText {
     /// "8 repeticiones", "1 repetición".
     static func repetitions(_ count: Int) -> String { count == 1 ? "1 repetición" : "\(count) repeticiones" }
 
-    /// "80 kg, 8 repeticiones", or the repetitions alone without a load.
-    static func load(_ kg: Double, reps: Int) -> String {
-        kg > 0 ? "\(kg.formatted()) kg, \(repetitions(reps))" : repetitions(reps)
+    /// "80 kg, 8 repeticiones", "70 lb, 8 repeticiones", or the repetitions alone without a load.
+    static func load(_ kg: Double, reps: Int, unit: WeightUnit = .kg) -> String {
+        kg > 0 ? "\(unit.format(kg)), \(repetitions(reps))" : repetitions(reps)
+    }
+
+    /// A set from last time, short: "70 lb · 8", or "8 repeticiones" without a load.
+    static func previous(_ kg: Double, reps: Int, unit: WeightUnit) -> String {
+        kg > 0 ? "\(unit.format(kg)) · \(reps)" : repetitions(reps)
     }
 
     /// Repetitions to leave in the tank: the target RIR, else 10 − RPE.

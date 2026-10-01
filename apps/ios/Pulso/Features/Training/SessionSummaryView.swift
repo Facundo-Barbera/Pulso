@@ -25,7 +25,7 @@ struct SessionSummaryView: View {
                         Tile(value: Duration.seconds(session.duration).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated)), label: "Duración", systemImage: "clock")
                         if !session.sets.isEmpty || cardio.isEmpty {
                             Tile(value: "\(session.sets.count)", label: "Series", systemImage: "square.stack.3d.up")
-                            Tile(value: "\(Int(session.volumeKg).formatted()) kg", label: "Volumen", systemImage: "scalemass")
+                            Tile(value: TrainingStore.shared.defaultUnit.formatTotal(session.volumeKg), label: "Volumen", systemImage: "scalemass")
                         }
                     }
                     if !cardio.isEmpty {
@@ -127,6 +127,8 @@ private struct Tile: View {
 private struct RecordRow: View {
     let record: TrainingRecord
 
+    private var unit: WeightUnit { TrainingStore.shared.unit(for: record.exerciseId) }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
@@ -135,9 +137,9 @@ private struct RecordRow: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(record.valueText).font(.headline).fontDesign(.rounded).foregroundStyle(.orange)
-                if let previous = record.previous {
-                    Text("antes \(record.kind == "reps" ? "\(Int(previous))" : "\(previous.formatted()) kg")")
+                Text(record.valueText(unit)).font(.headline).fontDesign(.rounded).foregroundStyle(.orange)
+                if let previous = record.previousText(unit) {
+                    Text("antes \(previous)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

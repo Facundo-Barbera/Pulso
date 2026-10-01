@@ -30,7 +30,8 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(s.setsTotal, 5)
         XCTAssertEqual(s.focus, 0)
         XCTAssertEqual(s.version, 0)
-        XCTAssertEqual(s.exercises[0].target, "3 series de 6 a 8 repeticiones con 80 kg")
+        XCTAssertEqual(s.exercises[0].target(), "3 series de 6 a 8 repeticiones con 80 kg")
+        XCTAssertEqual(s.exercises[0].target(.lb), "3 series de 6 a 8 repeticiones con 175 lb")
     }
 
     func testHandSetLoadPrefillsWithoutASuggestion() {

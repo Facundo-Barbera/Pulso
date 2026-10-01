@@ -21,7 +21,10 @@ final class TrainingStore {
     private(set) var nextDayId: String?
     private(set) var suggestions: [String: LoadSuggestion] = [:]
     private(set) var hrZones: [HrZoneRange]?
-    private(set) var settings = TrainingSettings(preferredEquipment: [])
+    /// Kept on disk too: the gym may have no signal, and the units must still be right.
+    private(set) var settings = TrainingFiles.load(TrainingSettings.self, from: TrainingFiles.settings) ?? TrainingSettings(preferredEquipment: []) {
+        didSet { if settings != oldValue { TrainingFiles.save(settings, to: TrainingFiles.settings) } }
+    }
     private(set) var sessions: [TrainingSession] = []
     private(set) var loaded = false
     /// Latest weighed scan, newest first from the Cuerpo dashboard.
@@ -60,7 +63,7 @@ final class TrainingStore {
         nextDayId = response.nextDayId
         suggestions = response.suggestions
         hrZones = response.hrZones
-        if let fresh = response.settings { settings = fresh }
+        if let fresh = response.settings { adopt(fresh) }
     }
 
     /// Rewrites a day (solo hoy or para siempre) and shows the result. Throws so the editor can stay open.
@@ -75,14 +78,61 @@ final class TrainingStore {
         do { apply(try await api.resetProgramDay(dayId)) } catch { PulsoModel.shared.handle(error) }
     }
 
-    func saveSettings(_ new: TrainingSettings) async {
+    func savePreferredEquipment(_ equipment: [String]) async {
+        var new = settings
+        new.preferredEquipment = equipment
+        await saveSettings(new, TrainingSettingsUpdate(preferredEquipment: equipment))
+    }
+
+    // MARK: Units
+
+    /// The unit an exercise (library id) is shown, typed and stepped in.
+    func unit(for exerciseId: String) -> WeightUnit { settings.unit(for: exerciseId) }
+
+    var defaultUnit: WeightUnit { settings.defaultUnit }
+
+    /// "Unidad por defecto". Exercises following it change too, open sets in the live session included.
+    func setDefaultUnit(_ unit: WeightUnit) async {
+        guard unit != settings.defaultUnit else { return }
+        var new = settings
+        new.defaultUnit = unit
+        await saveSettings(new, TrainingSettingsUpdate(defaultUnit: unit))
+    }
+
+    /// The unit of one exercise's machine. A property of the exercise, not of a
+    /// day: it sticks for every session and applies at once (before the Mac
+    /// answers), open sets snapping to it; reverted if the Mac refuses.
+    @discardableResult
+    func setUnit(_ unit: WeightUnit, for exerciseId: String) -> Task<Void, Never>? {
+        guard unit != self.unit(for: exerciseId), let api = PulsoModel.shared.api else { return nil }
+        let old = settings
+        var new = settings
+        new.exerciseUnits[exerciseId] = unit
+        adopt(new)
+        return Task {
+            do { adopt(try await api.setExerciseUnit(exerciseId, unit: unit)) } catch {
+                adopt(old)
+                PulsoModel.shared.handle(error)
+            }
+        }
+    }
+
+    /// Shown at once, reverted when the Mac refuses.
+    private func saveSettings(_ new: TrainingSettings, _ update: TrainingSettingsUpdate) async {
         guard let api = PulsoModel.shared.api else { return }
         let old = settings
-        settings = new
-        do { settings = try await api.saveTrainingSettings(new) } catch {
-            settings = old
+        adopt(new)
+        do { adopt(try await api.saveTrainingSettings(update)) } catch {
+            adopt(old)
             PulsoModel.shared.handle(error)
         }
+    }
+
+    /// New settings; the live session's open sets move onto any exercise's new unit.
+    private func adopt(_ new: TrainingSettings) {
+        let old = settings
+        settings = new
+        live?.snapOpenSets { new.unit(for: $0) != old.unit(for: $0) ? new.unit(for: $0) : nil }
     }
 
     /// Opens the live session for `day` and hands it to the engine, where the Coach can change it.

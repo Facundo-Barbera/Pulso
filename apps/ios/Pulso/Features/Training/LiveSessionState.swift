@@ -59,16 +59,25 @@ struct LiveExercise: Identifiable, Hashable {
     /// The load of the next set to do (or the last one).
     var workingWeight: Double { (sets.first { !$0.done } ?? sets.last)?.weightKg ?? 0 }
 
-    /// "4 series de 6 a 8 repeticiones con 80 kg"
-    var target: String {
+    /// "4 series de 6 a 8 repeticiones con 80 kg", the load in `unit`.
+    func target(_ unit: WeightUnit = .kg) -> String {
         if isCardio || workingWeight <= 0 { return prescription }
-        return "\(prescription) con \(workingWeight.formatted()) kg"
+        return "\(prescription) con \(unit.format(unit.snapKg(workingWeight)))"
     }
+
+    /// "3 series de 8 a 10 · descanso 2:30", the target on one line.
+    var targetLine: String {
+        let sets = TrainingText.short(sets: self.sets.count, repMin: repMin, repMax: repMax)
+        return restSeconds > 0 ? "\(sets) · descanso \(TrainingFormat.rest(restSeconds))" : sets
+    }
+
+    /// "Acaba cada serie pudiendo hacer 2 más"; nil without an effort target.
+    var effortAdvice: String? { isCardio ? nil : TrainingText.effort(rir: targetRir, rpe: targetRpe) }
 
     /// "Acaba cada serie pudiendo hacer 2 más. Descansa 3 min.", the one line of advice.
     var guidance: String? {
         guard !isCardio else { return nil }
-        let parts = [TrainingText.effort(rir: targetRir, rpe: targetRpe), restSeconds > 0 ? "Descansa \(TrainingText.rest(restSeconds))" : nil].compactMap(\.self)
+        let parts = [effortAdvice, restSeconds > 0 ? "Descansa \(TrainingText.rest(restSeconds))" : nil].compactMap(\.self)
         return parts.isEmpty ? nil : parts.joined(separator: ". ") + "."
     }
 
@@ -216,7 +225,8 @@ struct LiveSessionState: Hashable {
     /// Checks a set off (starting its rest) or un-checks it. Checking carries
     /// the set's weight to the later sets not done yet, so a changed load
     /// sticks for the rest of the exercise.
-    mutating func toggle(exercise e: Int, set s: Int, now: Date = .now) {
+    /// The load logged is the one shown: on the exercise's `unit` steps (70 lb, not 31.75 kg read as 31,8).
+    mutating func toggle(exercise e: Int, set s: Int, now: Date = .now, unit: WeightUnit = .kg) {
         guard exercises.indices.contains(e), exercises[e].sets.indices.contains(s) else { return }
         if exercises[e].sets[s].done {
             exercises[e].sets[s].doneAt = nil
@@ -225,6 +235,7 @@ struct LiveSessionState: Hashable {
             return
         }
         exercises[e].sets[s].doneAt = now
+        exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
         exercises[e].skipped = false
         let weight = exercises[e].sets[s].weightKg
         for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
@@ -244,12 +255,15 @@ struct LiveSessionState: Hashable {
 
     /// "Registrar todas": checks off every set left as it stands, in order, with
     /// one rest after the last.
-    mutating func completeAll(exercise e: Int, now: Date = .now) {
+    mutating func completeAll(exercise e: Int, now: Date = .now, unit: WeightUnit = .kg) {
         guard exercises.indices.contains(e) else { return }
         let open = exercises[e].sets.indices.filter { !exercises[e].sets[$0].done }
         guard !open.isEmpty else { return }
         // A millisecond apart, so the saved order is the list's order.
-        for (i, s) in open.enumerated() { exercises[e].sets[s].doneAt = now.addingTimeInterval(Double(i) / 1000) }
+        for (i, s) in open.enumerated() {
+            exercises[e].sets[s].doneAt = now.addingTimeInterval(Double(i) / 1000)
+            exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
+        }
         exercises[e].skipped = false
         startRest(after: e, now: now)
     }
@@ -265,10 +279,11 @@ struct LiveSessionState: Hashable {
         }
     }
 
-    mutating func adjustWeight(exercise e: Int, set s: Int, by steps: Double) {
+    /// −/+ one step of the equipment in `unit` (5 lb, 2.5 kg; less on light loads), stored as its exact kg.
+    mutating func stepWeight(exercise e: Int, set s: Int, up: Bool, unit: WeightUnit = .kg) {
         guard has(e, s) else { return }
-        let step = exercises[e].weightStep
-        exercises[e].sets[s].weightKg = max(0, ((exercises[e].sets[s].weightKg + steps * step) / step).rounded() * step)
+        let value = unit.snap(exercises[e].sets[s].weightKg)
+        exercises[e].sets[s].weightKg = unit.fromUnit(up ? unit.stepUp(value) : unit.stepDown(value))
     }
 
     mutating func adjustReps(exercise e: Int, set s: Int, by delta: Int) {
@@ -276,10 +291,19 @@ struct LiveSessionState: Hashable {
         exercises[e].sets[s].reps = max(0, exercises[e].sets[s].reps + delta)
     }
 
-    /// Typed in: any load (plates aren't always on the step), never negative.
-    mutating func setWeight(exercise e: Int, set s: Int, to kg: Double) {
+    /// Typed in `unit`: any load to the quarter (plates aren't always on the step),
+    /// never negative, kept as its exact kg so 45 lb reads 45 lb again.
+    mutating func setWeight(exercise e: Int, set s: Int, to value: Double, unit: WeightUnit = .kg) {
         guard has(e, s) else { return }
-        exercises[e].sets[s].weightKg = max(0, (kg * 100).rounded() / 100)
+        exercises[e].sets[s].weightKg = unit.fromUnit(max(0, (value * 4).rounded() / 4))
+    }
+
+    /// The exercise's unit changed: its open sets move onto the new unit's steps; done ones keep what was lifted.
+    mutating func snapOpenSets(exercise e: Int, to unit: WeightUnit) {
+        guard exercises.indices.contains(e) else { return }
+        for s in exercises[e].sets.indices where !exercises[e].sets[s].done {
+            exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
+        }
     }
 
     mutating func setReps(exercise e: Int, set s: Int, to reps: Int) {
@@ -315,9 +339,11 @@ struct LiveSessionState: Hashable {
 
     // MARK: Rest
 
+    /// +15 s or −15 s. Cut to nothing, the rest ends.
     mutating func extendRest(by seconds: TimeInterval, now: Date = .now) {
         guard let end = restEndsAt, end > now else { return }
-        restEndsAt = end.addingTimeInterval(seconds)
+        let new = end.addingTimeInterval(seconds)
+        if new > now { restEndsAt = new } else { skipRest() }
     }
 
     mutating func skipRest() {
@@ -525,7 +551,8 @@ struct LiveSessionState: Hashable {
     }
 
     /// The lock screen: the cardio block `cardio` names when given, else the next set.
-    func activityState(now: Date = .now, cardio: (index: Int, status: TrainingActivityAttributes.ContentState.Cardio)? = nil) -> TrainingActivityAttributes.ContentState {
+    func activityState(now: Date = .now, cardio: (index: Int, status: TrainingActivityAttributes.ContentState.Cardio)? = nil,
+                       unit: (String) -> WeightUnit = { _ in .kg }) -> TrainingActivityAttributes.ContentState {
         let resting = resting(at: now)
         if let cardio, exercises.indices.contains(cardio.index) {
             let ex = exercises[cardio.index]
@@ -536,19 +563,18 @@ struct LiveSessionState: Hashable {
         }
         let ex = exercises[e]
         let set = ex.sets[s]
+        let weightUnit = unit(ex.exerciseId)
+        let kg = weightUnit.snapKg(set.weightKg)
         return .init(
             exerciseName: ex.name,
             setLabel: "Serie \(s + 1) de \(ex.sets.count)",
-            target: LiveSessionState.target(set),
+            target: TrainingText.load(kg, reps: set.reps, unit: weightUnit),
             setsDone: setsDone,
             setsTotal: setsTotal,
             restStartedAt: resting ? restStartedAt : nil,
-            restEndsAt: resting ? restEndsAt : nil
+            restEndsAt: resting ? restEndsAt : nil,
+            weight: kg > 0 ? weightUnit.format(kg) : nil
         )
-    }
-
-    static func target(_ set: LiveSet) -> String {
-        TrainingText.load(set.weightKg, reps: set.reps)
     }
 
     static func ms(_ date: Date) -> Double { (date.timeIntervalSince1970 * 1000).rounded() }

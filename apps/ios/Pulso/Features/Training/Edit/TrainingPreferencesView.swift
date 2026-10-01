@@ -119,7 +119,7 @@ struct TrainingPreferencesView: View {
     private func save() {
         saving = true
         Task {
-            await TrainingStore.shared.saveSettings(TrainingSettings(preferredEquipment: chosen))
+            await TrainingStore.shared.savePreferredEquipment(chosen)
             dismiss()
         }
     }

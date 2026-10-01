@@ -22,7 +22,7 @@ final class TrainingTests: XCTestCase {
 
     func testCheckingASetStartsRestAndCarriesTheLoadForward() {
         var state = LiveSessionState(day: day, programId: "p", suggestions: suggestions, now: t0)
-        state.adjustWeight(exercise: 0, set: 0, by: 1)
+        state.stepWeight(exercise: 0, set: 0, up: true)
         state.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(60))
         XCTAssertEqual(state.exercises[0].sets.map(\.weightKg), [82.5, 82.5, 82.5])
         XCTAssertEqual(state.restEndsAt, t0.addingTimeInterval(180))
@@ -46,12 +46,14 @@ final class TrainingTests: XCTestCase {
         XCTAssertEqual(state.activityState(now: t0).exerciseName, "Sesión completa")
     }
 
-    func testWeightSnapsToTheStepAndNeverGoesNegative() {
+    func testWeightStepsOnTheUnitsGridAndNeverGoesNegative() {
         var state = LiveSessionState(day: day, programId: "p", suggestions: [:], now: t0)
-        state.adjustWeight(exercise: 0, set: 0, by: -1)
+        state.stepWeight(exercise: 0, set: 0, up: false)
         XCTAssertEqual(state.exercises[0].sets[0].weightKg, 0)
-        state.adjustWeight(exercise: 0, set: 0, by: 3)
-        XCTAssertEqual(state.exercises[0].sets[0].weightKg, 7.5)
+        for _ in 0..<3 { state.stepWeight(exercise: 0, set: 0, up: true) }
+        XCTAssertEqual(state.exercises[0].sets[0].weightKg, 3, "1 kg steps up to 10 kg")
+        for _ in 0..<3 { state.stepWeight(exercise: 1, set: 0, up: true, unit: .lb) }
+        XCTAssertEqual(state.exercises[1].sets[0].weightKg, WeightUnit.lb.fromUnit(7.5), "2.5 lb steps up to 25 lb, kept as exact kg")
     }
 
     func testSessionKeepsDoneSetsInOrderWithPerExerciseIndexes() {

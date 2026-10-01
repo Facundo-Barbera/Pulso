@@ -8,7 +8,7 @@ struct TrainingActivityAttributes: ActivityAttributes {
         var exerciseName: String
         /// "Serie 2 de 4"
         var setLabel: String
-        /// "80 kg × 8"
+        /// "80 kg, 8 repeticiones", "70 lb, 8 repeticiones": the load in the exercise's unit.
         var target: String
         var setsDone: Int
         var setsTotal: Int
@@ -17,6 +17,8 @@ struct TrainingActivityAttributes: ActivityAttributes {
         var restEndsAt: Date?
         /// Set while a cardio block is on screen. Optional so either side of an update decodes the other.
         var cardio: Cardio? = nil
+        /// The next set's load in its exercise's unit, "70 lb"; nil without one. Optional for older builds.
+        var weight: String? = nil
 
         var resting: Bool { restEndsAt.map { $0 > .now } ?? false }
         var restRange: ClosedRange<Date>? {

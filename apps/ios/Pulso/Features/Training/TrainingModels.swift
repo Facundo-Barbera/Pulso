@@ -171,6 +171,46 @@ struct SimilarExercise: Codable, Identifiable, Hashable {
 struct TrainingSettings: Codable, Hashable {
     /// Most preferred first, e.g. ["machine", "cable"].
     var preferredEquipment: [String]
+    /// For exercises without their own unit, and for totals such as a session's volume.
+    var defaultUnit: WeightUnit = .kg
+    /// Library exercise id → the unit its machine or plates use.
+    var exerciseUnits: [String: WeightUnit] = [:]
+
+    /// The unit `exerciseId` (a library id) is shown, typed and stepped in.
+    func unit(for exerciseId: String) -> WeightUnit { exerciseUnits[exerciseId] ?? defaultUnit }
+
+    init(preferredEquipment: [String], defaultUnit: WeightUnit = .kg, exerciseUnits: [String: WeightUnit] = [:]) {
+        self.preferredEquipment = preferredEquipment
+        self.defaultUnit = defaultUnit
+        self.exerciseUnits = exerciseUnits
+    }
+
+    private enum CodingKeys: String, CodingKey { case preferredEquipment, defaultUnit, exerciseUnits }
+
+    /// Lenient: an older engine sends neither unit field, and an unknown unit is skipped.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        preferredEquipment = try c.decodeIfPresent([String].self, forKey: .preferredEquipment) ?? []
+        defaultUnit = (try? c.decodeIfPresent(String.self, forKey: .defaultUnit)).flatMap(WeightUnit.init(rawValue:)) ?? .kg
+        let units = try? c.decodeIfPresent([String: String].self, forKey: .exerciseUnits)
+        exerciseUnits = units?.compactMapValues(WeightUnit.init(rawValue:)) ?? [:]
+    }
+}
+
+/// `PUT /api/mobile/training/settings`: only the fields given change.
+struct TrainingSettingsUpdate: Encodable {
+    var preferredEquipment: [String]? = nil
+    var defaultUnit: WeightUnit? = nil
+}
+
+/// `PUT /api/mobile/training/exercises/:id/unit`; a nil unit is sent as null (follow the default).
+struct ExerciseUnitBody: Encodable {
+    var unit: WeightUnit?
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(["unit": unit])
+    }
 }
 
 /// "today" (solo hoy) or "always" (para siempre).
@@ -273,7 +313,13 @@ struct TrainingRecord: Codable, Hashable {
         }
     }
 
-    var valueText: String { kind == "reps" ? TrainingText.repetitions(Int(value)) : "\(value.formatted()) kg" }
+    /// The record in the exercise's unit: "102,5 kg", "225 lb", "12 repeticiones".
+    func valueText(_ unit: WeightUnit) -> String { text(value, unit) }
+    func previousText(_ unit: WeightUnit) -> String? { previous.map { kind == "reps" ? "\(Int($0))" : unit.format($0) } }
+
+    private func text(_ value: Double, _ unit: WeightUnit) -> String {
+        kind == "reps" ? TrainingText.repetitions(Int(value)) : unit.format(value)
+    }
 }
 
 struct TrainingSessionSaved: Codable {
@@ -331,7 +377,12 @@ extension PulsoAPI {
         try await call("api/mobile/training/settings", method: "GET")
     }
 
-    func saveTrainingSettings(_ settings: TrainingSettings) async throws -> TrainingSettings {
-        try await call("api/mobile/training/settings", method: "PUT", body: settings)
+    func saveTrainingSettings(_ update: TrainingSettingsUpdate) async throws -> TrainingSettings {
+        try await call("api/mobile/training/settings", method: "PUT", body: update)
+    }
+
+    /// Pins an exercise (library id) to kg or lb; nil follows the default unit again.
+    func setExerciseUnit(_ exerciseId: String, unit: WeightUnit?) async throws -> TrainingSettings {
+        try await call("api/mobile/training/exercises/\(exerciseId)/unit", method: "PUT", body: ExerciseUnitBody(unit: unit))
     }
 }

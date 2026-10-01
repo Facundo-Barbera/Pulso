@@ -84,30 +84,47 @@ final class LiveSession {
 
     // MARK: Sets
 
+    /// The unit exercise `e` is shown and stepped in, from the training settings.
+    func unit(_ e: Int) -> WeightUnit {
+        state.exercises.indices.contains(e) ? TrainingStore.shared.unit(for: state.exercises[e].exerciseId) : .kg
+    }
+
     func toggle(exercise e: Int, set s: Int) {
-        mutate { $0.toggle(exercise: e, set: s) }
+        mutate { $0.toggle(exercise: e, set: s, unit: unit(e)) }
         armRest()
         // No rest to wait for (0 s or the session's last set): move on now.
         if !state.resting() { mutate { $0.advanceIfDone() } }
     }
 
     func completeAll(exercise e: Int) {
-        mutate { $0.completeAll(exercise: e) }
+        mutate { $0.completeAll(exercise: e, unit: unit(e)) }
         armRest()
         if !state.resting() { mutate { $0.advanceIfDone() } }
     }
 
     func setEffort(exercise e: Int, to value: Int?) { mutate { $0.setEffort(exercise: e, to: value) } }
-    func adjustWeight(exercise e: Int, set s: Int, by steps: Double) { mutate { $0.adjustWeight(exercise: e, set: s, by: steps) } }
+    func stepWeight(exercise e: Int, set s: Int, up: Bool) { mutate { $0.stepWeight(exercise: e, set: s, up: up, unit: unit(e)) } }
     func adjustReps(exercise e: Int, set s: Int, by delta: Int) { mutate { $0.adjustReps(exercise: e, set: s, by: delta) } }
-    func setWeight(exercise e: Int, set s: Int, to kg: Double) { mutate { $0.setWeight(exercise: e, set: s, to: kg) } }
+    /// `value` as typed, in the exercise's unit.
+    func setWeight(exercise e: Int, set s: Int, to value: Double) { mutate { $0.setWeight(exercise: e, set: s, to: value, unit: unit(e)) } }
     func setReps(exercise e: Int, set s: Int, to reps: Int) { mutate { $0.setReps(exercise: e, set: s, to: reps) } }
     func addSet(exercise e: Int) { mutate { $0.addSet(exercise: e) } }
     func removeSet(exercise e: Int, set s: Int) { mutate { $0.removeSet(exercise: e, set: s) } }
 
+    /// After a unit change: each exercise `unit(for:)` names gets its open sets on that unit's steps.
+    func snapOpenSets(_ unit: (String) -> WeightUnit?) {
+        mutate { state in
+            for e in state.exercises.indices {
+                if let new = unit(state.exercises[e].exerciseId) { state.snapOpenSets(exercise: e, to: new) }
+            }
+        }
+    }
+
+    /// +15 s or −15 s; a rest cut to nothing ends (and moves on if the exercise is done).
     func extendRest(by seconds: TimeInterval) {
         mutate { $0.extendRest(by: seconds) }
         armRest()
+        if !state.resting() { withAnimation(.snappy) { mutate { $0.advanceIfDone() } } }
     }
 
     func skipRest() {
@@ -284,7 +301,7 @@ final class LiveSession {
 
         let content = UNMutableNotificationContent()
         content.title = "Descanso terminado"
-        let next = state.activityState(now: end)
+        let next = state.activityState(now: end, unit: TrainingStore.shared.unit(for:))
         content.body = next.target.isEmpty ? next.exerciseName : "\(next.exerciseName) · \(next.target)"
         content.sound = .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, end.timeIntervalSinceNow), repeats: false)
@@ -481,7 +498,7 @@ final class LiveSession {
         if let api = PulsoModel.shared.api {
             Task { try? await api.deleteLiveSession() }
         }
-        let final = ActivityContent(state: state.activityState(), staleDate: nil)
+        let final = ActivityContent(state: state.activityState(unit: TrainingStore.shared.unit(for:)), staleDate: nil)
         for activity in Activity<TrainingActivityAttributes>.activities {
             await activity.end(final, dismissalPolicy: .immediate)
         }
@@ -492,7 +509,7 @@ final class LiveSession {
 
     private func activityState() -> TrainingActivityAttributes.ContentState {
         let cardio = cardioIndex.map { ($0, CardioCue.status(state.exercises[$0], clock: clock, zones: TrainingStore.shared.hrZones)) }
-        return state.activityState(cardio: cardio)
+        return state.activityState(cardio: cardio, unit: TrainingStore.shared.unit(for:))
     }
 
     private func startActivity() {
@@ -516,6 +533,7 @@ enum TrainingFiles {
     static let live = directory.appending(path: "live-session.json")
     static let cardio = directory.appending(path: "live-cardio.json")
     static let pending = directory.appending(path: "pending-sessions.json")
+    static let settings = directory.appending(path: "training-settings.json")
 
     static func save<Value: Encodable>(_ value: Value, to url: URL) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -282,7 +282,7 @@ private struct NextExerciseLabel: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Siguiente").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Text(exercise.name).font(.headline).foregroundStyle(.primary)
-                Text(exercise.target).font(.caption).foregroundStyle(.secondary)
+                Text(exercise.target(TrainingStore.shared.unit(for: exercise.exerciseId))).font(.caption).foregroundStyle(.secondary)
             }
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -37,10 +37,10 @@ enum TrainingPlan {
         return max(10, Int((Double(seconds) / 60 / 5).rounded()) * 5)
     }
 
-    /// "4 series de 6 a 8 repeticiones con 32,5 kg", the load only when there is a suggestion.
-    static func prescription(_ exercise: ProgramExercise, weightKg: Double?) -> String {
+    /// "4 series de 6 a 8 repeticiones con 32,5 kg" (or "con 70 lb"), the load only when there is one.
+    static func prescription(_ exercise: ProgramExercise, weightKg: Double?, unit: WeightUnit = .kg) -> String {
         guard let weightKg, weightKg > 0 else { return exercise.prescription }
-        return "\(exercise.prescription) con \(weightKg.formatted()) kg"
+        return "\(exercise.prescription) con \(unit.format(unit.snapKg(weightKg)))"
     }
 
     /// MET × kg × hours; nil without a body weight.

@@ -51,6 +51,16 @@ struct TrainingLiveActivity: Widget {
                             .foregroundStyle(training)
                             .multilineTextAlignment(.trailing)
                             .frame(maxWidth: 80)
+                    } else if let weight = state.weight {
+                        VStack(alignment: .trailing, spacing: 0) {
+                            Text(weight)
+                                .font(.title3.bold().monospacedDigit())
+                                .foregroundStyle(training)
+                            Text("\(state.setsDone)/\(state.setsTotal) series").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .fontDesign(.rounded)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     } else {
                         Text("\(state.setsDone)/\(state.setsTotal)")
                             .font(.title3.bold().monospacedDigit())
@@ -94,6 +104,14 @@ struct TrainingLiveActivity: Widget {
                         .monospacedDigit()
                         .foregroundStyle(training)
                         .frame(maxWidth: 44)
+                } else if let weight = state.weight {
+                    // The load on the machine is what matters between sets: "70 lb".
+                    Text(weight)
+                        .monospacedDigit()
+                        .foregroundStyle(training)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: 64)
                 } else {
                     Text("\(state.setsDone)/\(state.setsTotal)").monospacedDigit()
                 }

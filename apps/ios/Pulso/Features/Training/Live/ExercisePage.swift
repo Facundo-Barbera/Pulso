@@ -77,7 +77,7 @@ struct ExercisePage: View {
                 editing = nil
             }
         case .edit: withAnimation(.snappy) { editing = editing == id ? nil : id }
-        case .weight(let steps): withAnimation(.snappy) { session.adjustWeight(exercise: index, set: s, by: steps) }
+        case .weight(let steps): withAnimation(.snappy) { session.stepWeight(exercise: index, set: s, up: steps > 0) }
         case .reps(let delta): withAnimation(.snappy) { session.adjustReps(exercise: index, set: s, by: delta) }
         case .setWeight(let kg): session.setWeight(exercise: index, set: s, to: kg)
         case .setReps(let reps): session.setReps(exercise: index, set: s, to: reps)
