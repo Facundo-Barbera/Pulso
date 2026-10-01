@@ -1,4 +1,5 @@
 import { VIA_HEADER } from "@pulso/contract";
+import { isMcpPath } from "./mcp/paths";
 
 /**
  * What the tailnet may reach. Loopback (no via header) is this Mac and is
@@ -16,5 +17,7 @@ export function fromTailnet(headers: { get(name: string): string | null }): bool
 export function gate(pathname: string): Verdict {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === "/api/mobile" || path.startsWith("/api/mobile/")) return { allow: true };
+  // External agents: the MCP endpoint checks its own client secret.
+  if (isMcpPath(path)) return { allow: true };
   return { allow: false, status: 403, reason: "this only answers on the Mac running Pulso" };
 }
