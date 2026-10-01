@@ -1,16 +1,14 @@
 import Charts
 import SwiftUI
 
-// MARK: - Readiness
+// MARK: - Readiness hero
 
 extension Readiness {
-    var color: Color {
-        switch level {
-        case "high": Theme.body
-        case "medium": Theme.carbs
-        case "low": Theme.protein
-        default: .secondary
-        }
+    var color: Color { Self.color(score: score) }
+
+    static func color(score: Int?) -> Color {
+        guard let score else { return .secondary }
+        return score >= 75 ? Theme.body : score >= 50 ? Theme.carbs : Theme.protein
     }
 
     var title: String {
@@ -23,61 +21,77 @@ extension Readiness {
     }
 }
 
-struct ReadinessCard: View {
+/// The screen's hero: a big readiness ring, what it means, and why.
+struct ReadinessHero: View {
     let readiness: Readiness?
 
     var body: some View {
-        Card {
-            CardTitle(text: "Recuperación", systemImage: "bolt.heart")
-            if let readiness {
-                HStack(spacing: 18) {
-                    Ring(progress: Double(readiness.score ?? 0) / 100, color: readiness.color, lineWidth: 12) {
-                        VStack(spacing: 0) {
-                            Text(readiness.score.map(String.init) ?? "–")
-                                .font(.system(size: 38, weight: .bold, design: .rounded))
-                                .contentTransition(.numericText())
-                            Text("de 100").font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(width: 112, height: 112)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(readiness.title).font(.title3.weight(.semibold))
-                        Text(readiness.explanation).font(.subheadline).foregroundStyle(.secondary)
+        VStack(spacing: 18) {
+            Ring(progress: Double(readiness?.score ?? 0) / 100, color: readiness?.color ?? .secondary, lineWidth: 16) {
+                VStack(spacing: 0) {
+                    Text(readiness?.score.map(String.init) ?? "–")
+                        .font(.system(size: 56, weight: .bold, design: .rounded))
+                        .contentTransition(.numericText())
+                    Text("recuperación").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 180, height: 180)
+
+            VStack(spacing: 6) {
+                Text(readiness?.title ?? "Calculando…").font(.title3.weight(.semibold))
+                if let explanation = readiness?.explanation {
+                    Text(explanation)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+
+            if let factors = readiness?.factors {
+                GlassEffectContainer(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ForEach(factors) { FactorPill(factor: $0) }
                     }
                 }
-                Divider()
-                ForEach(readiness.factors) { FactorRow(factor: $0) }
-            } else {
-                Text("Cargando…").foregroundStyle(.secondary)
             }
         }
-        .animation(.spring, value: readiness)
+        .padding(.vertical, 22)
+        .padding(.horizontal, Theme.padding)
+        .frame(maxWidth: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.corner + 6, style: .continuous)
+                .fill(.background.secondary)
+                .overlay(
+                    RadialGradient(colors: [(readiness?.color ?? .clear).opacity(0.22), .clear], center: .top, startRadius: 10, endRadius: 320)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.corner + 6, style: .continuous))
+                )
+        }
+        .animation(.snappy, value: readiness)
     }
 }
 
-private struct FactorRow: View {
+private struct FactorPill: View {
     let factor: ReadinessFactor
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(factor.label).font(.subheadline.weight(.medium))
-                Text(factor.detail).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(value).font(.subheadline.monospacedDigit().weight(.semibold))
+        VStack(spacing: 3) {
+            Image(systemName: symbol).font(.caption).foregroundStyle(Readiness.color(score: factor.score))
+            Text(value).font(.subheadline.weight(.semibold)).fontDesign(.rounded).contentTransition(.numericText())
+            Text(factor.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
-        .overlay(alignment: .bottom) {
-            if let score = factor.score {
-                GeometryReader { geo in
-                    Capsule().fill(.quaternary)
-                    Capsule().fill(color(score)).frame(width: geo.size.width * Double(score) / 100)
-                }
-                .frame(height: 3)
-                .offset(y: 6)
-            }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .glassEffect(.regular.tint(Readiness.color(score: factor.score).opacity(0.12)), in: .rect(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(factor.detail)
+    }
+
+    private var symbol: String {
+        switch factor.key {
+        case "hrv": "waveform.path.ecg"
+        case "resting_hr": "heart.fill"
+        default: "moon.zzz.fill"
         }
-        .padding(.bottom, 6)
     }
 
     private var value: String {
@@ -87,10 +101,6 @@ private struct FactorRow: View {
         case "resting_hr": return "\(Int(v.rounded())) lpm"
         default: return Format.duration(minutes: v)
         }
-    }
-
-    private func color(_ score: Int) -> Color {
-        score >= 75 ? Theme.body : score >= 50 ? Theme.carbs : Theme.protein
     }
 }
 
@@ -103,14 +113,18 @@ struct Ring<Content: View>: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(color.opacity(0.18), lineWidth: lineWidth)
+            Circle().stroke(color.opacity(0.16), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: min(max(progress, 0), 1))
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(
+                    AngularGradient(colors: [color.opacity(0.7), color], center: .center, startAngle: .degrees(0), endAngle: .degrees(360 * max(progress, 0.01))),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
                 .rotationEffect(.degrees(-90))
             content
         }
         .padding(lineWidth / 2)
+        .animation(.snappy, value: progress)
     }
 }
 
@@ -121,8 +135,8 @@ struct ActivityCard: View {
 
     var body: some View {
         Card {
-            CardTitle(text: "Actividad", systemImage: "figure.walk")
-            HStack {
+            CardTitle(text: "Actividad", systemImage: "flame")
+            HStack(alignment: .top) {
                 goal("Pasos", day?.steps, TodayStore.stepGoal, Theme.body, "figure.walk") { Int($0).formatted() }
                 goal("Activas", day?.activeEnergy, TodayStore.energyGoal, Theme.energy, "flame.fill") { "\(Int($0)) kcal" }
                 goal("Ejercicio", day?.exerciseMinutes, TodayStore.exerciseGoal, Theme.training, "bolt.fill") { "\(Int($0)) min" }
@@ -131,12 +145,20 @@ struct ActivityCard: View {
     }
 
     private func goal(_ label: String, _ value: Double?, _ target: Double, _ color: Color, _ icon: String, _ format: (Double) -> String) -> some View {
-        VStack(spacing: 6) {
-            Ring(progress: (value ?? 0) / target, color: color, lineWidth: 7) {
-                Image(systemName: icon).font(.body.weight(.semibold)).foregroundStyle(color)
+        let done = (value ?? 0) >= target
+        return VStack(spacing: 6) {
+            Ring(progress: (value ?? 0) / target, color: color, lineWidth: 8) {
+                Image(systemName: done ? "checkmark" : icon)
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(color)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: done)
             }
-            .frame(width: 64, height: 64)
-            Text(value.map(format) ?? "–").font(.subheadline.monospacedDigit().weight(.semibold))
+            .frame(width: 70, height: 70)
+            Text(value.map(format) ?? "–")
+                .font(.subheadline.weight(.semibold))
+                .fontDesign(.rounded)
+                .contentTransition(.numericText())
             Text("\(label) · \(format(target))").font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -147,77 +169,108 @@ struct ActivityCard: View {
 
 struct SleepCard: View {
     let day: DailyMetrics?
-
-    private static let deep = Color(red: 0.30, green: 0.30, blue: 0.85)
-    private static let core = Color(red: 0.35, green: 0.62, blue: 0.98)
-    private static let rem = Color(red: 0.45, green: 0.85, blue: 0.95)
-    private static let awake = Theme.energy
+    let onSync: () -> Void
 
     var body: some View {
         Card {
-            CardTitle(text: "Sueño anoche", systemImage: "bed.double.fill")
+            CardTitle(text: "Sueño anoche", systemImage: "moon.stars.fill")
             if let minutes = day?.sleepMinutes {
-                Text(Format.duration(minutes: minutes)).font(.title2.weight(.bold).monospacedDigit())
+                HStack(alignment: .firstTextBaseline) {
+                    Text(Format.duration(minutes: minutes))
+                        .font(.title.weight(.bold))
+                        .fontDesign(.rounded)
+                        .contentTransition(.numericText())
+                    Spacer()
+                    Text("Meta 8 h").font(.caption).foregroundStyle(.secondary)
+                }
                 if let stages, stages.contains(where: { $0.minutes > 0 }) {
-                    GeometryReader { geo in
-                        let total = stages.map(\.minutes).reduce(0, +)
-                        HStack(spacing: 2) {
-                            ForEach(stages, id: \.label) { stage in
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(stage.color)
-                                    .frame(width: max(0, geo.size.width - 6) * stage.minutes / total)
-                            }
-                        }
-                    }
-                    .frame(height: 14)
-                    HStack(spacing: 12) {
-                        ForEach(stages, id: \.label) { stage in
-                            HStack(spacing: 4) {
-                                Circle().fill(stage.color).frame(width: 7, height: 7)
-                                Text("\(stage.label) \(Format.duration(minutes: stage.minutes))")
-                            }
-                        }
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    StagesBar(stages: stages)
                 }
             } else {
-                Text("Sin datos de sueño. Usá el Apple Watch al dormir para ver tus fases.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                EmptyCardState(
+                    symbol: "bed.double",
+                    message: "Duerme con el Apple Watch puesto para ver tus fases de sueño.",
+                    action: ("Actualizar", onSync)
+                )
             }
         }
     }
 
-    private var stages: [(label: String, minutes: Double, color: Color)]? {
+    private var stages: [Stage]? {
         guard let day, day.sleepDeep != nil || day.sleepCore != nil || day.sleepRem != nil else { return nil }
         return [
-            ("Profundo", day.sleepDeep ?? 0, Self.deep),
-            ("Básico", day.sleepCore ?? 0, Self.core),
-            ("REM", day.sleepRem ?? 0, Self.rem),
-            ("Despierto", day.sleepAwake ?? 0, Self.awake),
+            Stage(label: "Profundo", minutes: day.sleepDeep ?? 0, color: Theme.training),
+            Stage(label: "Básico", minutes: day.sleepCore ?? 0, color: Theme.fat),
+            Stage(label: "REM", minutes: day.sleepRem ?? 0, color: Theme.body),
+            Stage(label: "Despierto", minutes: day.sleepAwake ?? 0, color: Theme.energy),
         ]
     }
 }
 
-// MARK: - Signals
+struct Stage {
+    var label: String
+    var minutes: Double
+    var color: Color
+}
 
-struct SignalsCard: View {
+private struct StagesBar: View {
+    let stages: [Stage]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GeometryReader { geo in
+                let total = stages.map(\.minutes).reduce(0, +)
+                let gaps = CGFloat(stages.count - 1) * 3
+                HStack(spacing: 3) {
+                    ForEach(stages, id: \.label) { stage in
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(stage.color.gradient)
+                            .frame(width: max(0, geo.size.width - gaps) * stage.minutes / total)
+                    }
+                }
+            }
+            .frame(height: 16)
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                GridRow {
+                    legend(stages[0])
+                    legend(stages[1])
+                }
+                GridRow {
+                    legend(stages[2])
+                    legend(stages[3])
+                }
+            }
+        }
+    }
+
+    private func legend(_ stage: Stage) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(stage.color).frame(width: 8, height: 8)
+            Text(stage.label).foregroundStyle(.secondary)
+            Text(Format.duration(minutes: stage.minutes)).fontDesign(.rounded).fontWeight(.medium)
+        }
+        .font(.caption)
+    }
+}
+
+// MARK: - Trends
+
+struct TrendsCard: View {
     let store: TodayStore
 
     var body: some View {
         Card {
-            CardTitle(text: "Señales · 14 días", systemImage: "waveform.path.ecg")
-            HStack(spacing: 16) {
-                Sparkline(title: "VFC", unit: "ms", points: store.trend(14) { $0.hrv }, baseline: baseline("hrv"), color: Theme.body)
-                Sparkline(title: "Pulso reposo", unit: "lpm", points: store.trend(14) { $0.restingHeartRate }, baseline: baseline("resting_hr"), color: Theme.protein)
-            }
+            CardTitle(text: "Tendencias · 14 días", systemImage: "chart.xyaxis.line")
+            Sparkline(title: "VFC", unit: "ms", points: store.trend(14) { $0.hrv }, baseline: baseline("hrv"), color: Theme.body)
+            Divider()
+            Sparkline(title: "Pulso en reposo", unit: "lpm", points: store.trend(14) { $0.restingHeartRate }, baseline: baseline("resting_hr"), color: Theme.protein)
             let vo2 = store.days.last { $0.vo2max != nil }?.vo2max
             let breathing = store.today?.respiratoryRate
             if vo2 != nil || breathing != nil {
                 Divider()
                 HStack {
-                    if let vo2 { chip("VO₂ máx", String(format: "%.1f", vo2), "ml/kg·min") }
-                    if let breathing { chip("Respiración", String(format: "%.1f", breathing), "rpm") }
+                    if let vo2 { stat("VO₂ máx", vo2, "ml/kg·min") }
+                    if let breathing { stat("Respiración", breathing, "rpm") }
                 }
             }
         }
@@ -227,11 +280,11 @@ struct SignalsCard: View {
         store.readiness?.factors.first { $0.key == key }?.baseline
     }
 
-    private func chip(_ label: String, _ value: String, _ unit: String) -> some View {
+    private func stat(_ label: String, _ value: Double, _ unit: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value).font(.headline.monospacedDigit())
+                Text(value.formatted(.number.precision(.fractionLength(1)))).font(.headline).fontDesign(.rounded)
                 Text(unit).font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -239,120 +292,79 @@ struct SignalsCard: View {
     }
 }
 
+/// A 14-day line with a soft area, the baseline dashed, and a readout of the touched day.
 private struct Sparkline: View {
     let title: String
     let unit: String
     let points: [(date: Date, value: Double)]
     let baseline: Double?
     let color: Color
+    @State private var selected: Date?
+
+    private var shown: (date: Date, value: Double)? {
+        guard let selected else { return points.last }
+        return points.min { abs($0.date.timeIntervalSince(selected)) < abs($1.date.timeIntervalSince(selected)) }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(points.last.map { "\(Int($0.value.rounded()))" } ?? "–").font(.title3.weight(.bold).monospacedDigit())
-                Text(unit).font(.caption2).foregroundStyle(.secondary)
-            }
-            Chart {
-                if let baseline {
-                    RuleMark(y: .value("Media", baseline))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                        .foregroundStyle(.secondary.opacity(0.6))
-                }
-                ForEach(points, id: \.date) { point in
-                    LineMark(x: .value("Día", point.date), y: .value(title, point.value))
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(color)
-                }
-                if let last = points.last {
-                    PointMark(x: .value("Día", last.date), y: .value(title, last.value))
-                        .foregroundStyle(color)
-                        .symbolSize(30)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.subheadline.weight(.medium))
+                Spacer()
+                if let shown {
+                    Text(Int(shown.value.rounded()), format: .number)
+                        .font(.title3.weight(.bold))
+                        .fontDesign(.rounded)
+                        .contentTransition(.numericText())
+                    Text(unit).font(.caption).foregroundStyle(.secondary)
+                    Text(selected == nil ? "hoy" : shown.date.formatted(.dateTime.day().month(.abbreviated)))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .chartXAxis(.hidden)
-            .chartYAxis(.hidden)
-            .chartYScale(domain: .automatic(includesZero: false))
-            .frame(height: 54)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Workouts
-
-struct WorkoutsCard: View {
-    let workouts: [Workout]
-
-    var body: some View {
-        Card {
-            CardTitle(text: "Entrenamientos recientes", systemImage: "figure.run")
-            if workouts.isEmpty {
-                Text("Todavía nada.").font(.subheadline).foregroundStyle(.secondary)
-            }
-            ForEach(workouts.prefix(4)) { workout in
-                let start = Date(timeIntervalSince1970: workout.startedAt / 1000)
-                HStack(spacing: 12) {
-                    Image(systemName: Self.icon(workout.activity))
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Theme.training)
-                        .frame(width: 34, height: 34)
-                        .background(Theme.training.opacity(0.15), in: Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(Self.name(workout.activity)).font(.subheadline.weight(.semibold))
-                        Text(details(workout, start: start)).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text(start.formatted(.relative(presentation: .named).locale(Locale(identifier: "es"))))
-                        .font(.caption).foregroundStyle(.tertiary)
-                }
+            if points.count < 2 {
+                Text("Hacen falta unos días de datos del Apple Watch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 64)
+            } else {
+                chart
             }
         }
+        .animation(.snappy, value: selected)
+        .sensoryFeedback(.selection, trigger: shown?.date)
     }
 
-    private func details(_ workout: Workout, start: Date) -> String {
-        var parts = ["\(Int((workout.endedAt - workout.startedAt) / 60_000)) min"]
-        if let energy = workout.energy { parts.append("\(Int(energy)) kcal") }
-        if let distance = workout.distance, distance > 0 { parts.append(String(format: "%.2f km", distance / 1000)) }
-        return parts.joined(separator: " · ")
-    }
-
-    static func name(_ activity: String) -> String {
-        switch activity {
-        case "running": "Carrera"
-        case "walking": "Caminata"
-        case "hiking": "Senderismo"
-        case "cycling": "Ciclismo"
-        case "swimming": "Natación"
-        case "strength", "functional_strength": "Fuerza"
-        case "hiit": "HIIT"
-        case "yoga": "Yoga"
-        case "rowing": "Remo"
-        case "elliptical": "Elíptica"
-        case "core": "Core"
-        case "flexibility": "Flexibilidad"
-        case "cross_training": "Entrenamiento cruzado"
-        case "soccer": "Fútbol"
-        default: "Entrenamiento"
+    private var chart: some View {
+        let low = min(points.map(\.value).min() ?? 0, baseline ?? .infinity)
+        let high = max(points.map(\.value).max() ?? 1, baseline ?? -.infinity)
+        let pad = max((high - low) * 0.2, 1)
+        return Chart {
+            ForEach(points, id: \.date) { point in
+                AreaMark(x: .value("Día", point.date), yStart: .value("Base", low - pad), yEnd: .value(title, point.value))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.28), color.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("Día", point.date), y: .value(title, point.value))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            }
+            if let baseline {
+                RuleMark(y: .value("Media", baseline))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    .foregroundStyle(.secondary.opacity(0.5))
+            }
+            if let shown {
+                PointMark(x: .value("Día", shown.date), y: .value(title, shown.value))
+                    .foregroundStyle(color)
+                    .symbolSize(60)
+            }
         }
-    }
-
-    static func icon(_ activity: String) -> String {
-        switch activity {
-        case "running": "figure.run"
-        case "walking": "figure.walk"
-        case "hiking": "figure.hiking"
-        case "cycling": "figure.outdoor.cycle"
-        case "swimming": "figure.pool.swim"
-        case "strength", "functional_strength": "dumbbell.fill"
-        case "hiit", "cross_training": "figure.highintensity.intervaltraining"
-        case "yoga", "flexibility": "figure.yoga"
-        case "rowing": "figure.rower"
-        case "elliptical": "figure.elliptical"
-        case "core": "figure.core.training"
-        case "soccer": "figure.soccer"
-        default: "figure.mixed.cardio"
-        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartYScale(domain: (low - pad)...(high + pad))
+        .chartXSelection(value: $selected)
+        .frame(height: 64)
     }
 }
 

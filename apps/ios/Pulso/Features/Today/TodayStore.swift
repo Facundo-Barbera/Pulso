@@ -15,6 +15,11 @@ final class TodayStore {
     private(set) var days: [DailyMetrics] = []
     private(set) var readiness: Readiness?
     private(set) var syncing = false
+    /// When the engine last answered, for the "actualizado hace…" line.
+    private(set) var updatedAt: Date?
+
+    /// Workouts with duplicates from two recording apps merged.
+    var workouts: [Workout] { WorkoutMerge.merged(PulsoModel.shared.workouts) }
 
     var today: DailyMetrics? { days.last { $0.date == (readiness?.date ?? DayKey.string(.now)) } }
 
@@ -32,12 +37,14 @@ final class TodayStore {
             let response = try await api.daily()
             days = response.days
             readiness = response.readiness
+            updatedAt = .now
         } catch {
             PulsoModel.shared.handle(error)
         }
     }
 
-    /// HealthKit → Mac (daily signals, then workouts), then reload. Runs on open and on pull-to-refresh.
+    /// HealthKit → Mac (daily signals, then workouts), then reload. Silent: runs on open, on
+    /// foreground and on pull-to-refresh.
     func sync() async {
         guard !syncing else { return }
         syncing = true
