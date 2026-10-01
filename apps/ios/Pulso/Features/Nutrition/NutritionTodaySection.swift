@@ -28,7 +28,8 @@ struct NutritionTodaySection: View {
                 onAdd: addWater,
                 onUndo: undoWater,
                 onCustom: { sheet = .waterAmount },
-                onSettings: { sheet = .water }
+                onSettings: { sheet = .water },
+                onShowEntries: { sheet = .waterEntries }
             )
         }
         if day.meals.isEmpty {

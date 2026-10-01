@@ -2,13 +2,14 @@ import SwiftUI
 
 /// The day's water in one row: a small ring, "1 de 15 vasos", and one button
 /// that adds their glass. Hold it for a bottle, a litre, another amount,
-/// undo and the water settings.
+/// undo and the water settings. Tapping the count lists the day's glasses.
 struct WaterCard: View {
     let water: WaterDay
     let onAdd: (Double) -> Void
     let onUndo: () -> Void
     let onCustom: () -> Void
     let onSettings: () -> Void
+    let onShowEntries: () -> Void
 
     private var settings: WaterSettings { water.settings }
     private var done: Bool { water.totalMl >= water.goalMl }
@@ -33,6 +34,12 @@ struct WaterCard: View {
     }
 
     private var summary: some View {
+        Button(action: onShowEntries) { summaryContent }
+            .buttonStyle(.plain)
+            .accessibilityHint("Muestra el agua de hoy para borrar un registro")
+    }
+
+    private var summaryContent: some View {
         HStack(spacing: 14) {
             ZStack {
                 ProgressRing(progress: water.progress, color: Theme.water, lineWidth: 6)
@@ -213,7 +220,7 @@ struct WaterSettingsSheet: View {
                          entries: [WaterEntry(id: "1", date: "2026-10-01", loggedAt: 0, amountMl: 250, source: "manual")],
                          settings: .standard)
     NarrowPreview(dynamicType: .xxLarge) {
-        WaterCard(water: water, onAdd: { _ in }, onUndo: {}, onCustom: {}, onSettings: {})
+        WaterCard(water: water, onAdd: { _ in }, onUndo: {}, onCustom: {}, onSettings: {}, onShowEntries: {})
     }
 }
 
@@ -221,6 +228,6 @@ struct WaterSettingsSheet: View {
     let water = WaterDay(date: "2026-10-01", totalMl: 1800, goalMl: 2000, goalSource: "default", entries: [],
                          settings: WaterSettings(goalMl: nil, unit: .ml, glassMl: 300, bottleMl: 1000))
     NarrowPreview {
-        WaterCard(water: water, onAdd: { _ in }, onUndo: {}, onCustom: {}, onSettings: {})
+        WaterCard(water: water, onAdd: { _ in }, onUndo: {}, onCustom: {}, onSettings: {}, onShowEntries: {})
     }
 }

@@ -16,7 +16,7 @@ struct NutritionView: View {
     @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
-        case register, quickAdd, snack, scan, targets, water, waterAmount
+        case register, quickAdd, snack, scan, targets, water, waterAmount, waterEntries
         var id: String { rawValue }
     }
 
@@ -85,6 +85,8 @@ struct NutritionView: View {
             case .waterAmount:
                 WaterAmountSheet(settings: store.water?.settings ?? .standard) { ml in addWater(ml) }
                     .presentationDetents([.height(280)])
+            case .waterEntries:
+                WaterEntriesSheet(store: store).presentationDetents([.medium, .large])
             }
         }
         .overlay(alignment: .top) {
