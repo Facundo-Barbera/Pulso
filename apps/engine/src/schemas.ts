@@ -4,5 +4,6 @@
  * every boot, in this order.
  */
 import { CORE_SCHEMA } from "./core-schema";
+import { SLEEP_SCHEMA } from "./sleep/schema";
 
-export const SCHEMAS: string[] = [CORE_SCHEMA];
+export const SCHEMAS: string[] = [CORE_SCHEMA, SLEEP_SCHEMA];
