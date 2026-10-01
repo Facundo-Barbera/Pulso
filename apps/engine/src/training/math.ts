@@ -59,7 +59,7 @@ export function nextLoad(
   incrementKg: number,
 ): LoadSuggestion {
   if (!last || last.sets.length === 0) {
-    return { exerciseId, weightKg: null, reps: rx.repMin, reason: "Sin historial: elige un peso que te deje 2 reps en reserva.", lastSessionAt: null };
+    return { exerciseId, weightKg: null, reps: rx.repMin, reason: "Primera vez: elige un peso que puedas mover bien.", lastSessionAt: null };
   }
   const top = Math.max(...last.sets.map((s) => s.weightKg));
   const atTop = last.sets.filter((s) => s.weightKg === top);
@@ -68,17 +68,17 @@ export function nextLoad(
 
   if (atTop.length >= rx.sets && minReps >= rx.repMax) {
     if (incrementKg === 0) {
-      return { ...base, weightKg: top, reps: rx.repMax + 1, reason: `Completaste ${rx.sets}×${rx.repMax}: suma una rep o añade lastre.` };
+      return { ...base, weightKg: top, reps: rx.repMax + 1, reason: `Hiciste ${rx.sets} series de ${rx.repMax}: haz una repetición más o añade peso.` };
     }
     const weightKg = round1(top + incrementKg);
-    return { ...base, weightKg, reps: rx.repMin, reason: `Completaste ${rx.sets}×${rx.repMax} con ${top} kg: sube a ${weightKg} kg.` };
+    return { ...base, weightKg, reps: rx.repMin, reason: `Hiciste ${rx.sets} series de ${rx.repMax} con ${top} kg: sube a ${weightKg} kg.` };
   }
   if (minReps < rx.repMin && incrementKg > 0 && top > incrementKg) {
     const weightKg = round1(top - incrementKg);
-    return { ...base, weightKg, reps: rx.repMin, reason: `No llegaste a ${rx.repMin} reps con ${top} kg: baja a ${weightKg} kg.` };
+    return { ...base, weightKg, reps: rx.repMin, reason: `Con ${top} kg no llegaste a ${rx.repMin} repeticiones: baja a ${weightKg} kg.` };
   }
   const reps = Math.min(rx.repMax, Math.max(rx.repMin, minReps + 1));
-  return { ...base, weightKg: top, reps, reason: `Mantén ${top} kg y busca ${reps} reps en cada serie.` };
+  return { ...base, weightKg: top, reps, reason: `Repite ${top} kg e intenta ${reps} repeticiones en cada serie.` };
 }
 
 /**
