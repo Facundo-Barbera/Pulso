@@ -5,6 +5,6 @@
     "paths": { "@/*": ["./*"] },
     "plugins": [{ "name": "next" }]
   },
-  "include": ["src", "app", "proxy.ts", "next.config.ts", "next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
+  "include": ["src", "app", "proxy.ts", "instrumentation.ts","next.config.ts", "next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
   "exclude": ["node_modules"]
 }

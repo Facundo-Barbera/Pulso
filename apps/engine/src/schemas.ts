@@ -5,6 +5,7 @@
  */
 import { AGENT_SCHEMA } from "./agent/schema";
 import { BODY_SCHEMA } from "./body/schema";
+import { COACH_SCHEMA } from "./coach/schema";
 import { CORE_SCHEMA } from "./core-schema";
 import { DAILY_SCHEMA } from "./daily/schema";
 import { MEDICATION_SCHEMA } from "./medication/schema";
@@ -21,4 +22,5 @@ export const SCHEMAS: string[] = [
   DAILY_SCHEMA,
   SLEEP_SCHEMA,
   MEDICATION_SCHEMA,
+  COACH_SCHEMA,
 ];
