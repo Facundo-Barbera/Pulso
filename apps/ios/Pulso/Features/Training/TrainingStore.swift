@@ -22,6 +22,8 @@ final class TrainingStore {
     private(set) var suggestions: [String: LoadSuggestion] = [:]
     private(set) var sessions: [TrainingSession] = []
     private(set) var loaded = false
+    /// Latest weighed scan, newest first from the Cuerpo dashboard.
+    private(set) var bodyWeightKg: Double?
     private(set) var finishing = false
     var live: LiveSession? = LiveSession.restore()
     var summary: SessionSummary?
@@ -46,6 +48,10 @@ final class TrainingStore {
             PulsoModel.shared.handle(error)
         }
         loaded = true
+        // Only for the kcal estimate: a failure just hides it.
+        if let scans = try? await api.bodyDashboard().scans {
+            bodyWeightKg = scans.lazy.compactMap(\.weight).first
+        }
     }
 
     func start(_ day: ProgramDay) {
