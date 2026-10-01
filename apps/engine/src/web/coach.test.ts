@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { addMessage, createThread } from "../agent/threads";
-import { claimBrief, completeBrief } from "../coach/store";
-import { coachHome, coachThread } from "./coach";
+import { claimBrief, completeBrief, latestBrief } from "../coach/store";
+import { coachBrief, coachThread } from "./coach";
 
 test("a thread reads with its messages, not running when no turn is in flight", () => {
   const thread = createThread();
@@ -14,16 +14,14 @@ test("a thread reads with its messages, not running when no turn is in flight", 
   expect(coachThread("nope")).toBeUndefined();
 });
 
-test("home lists threads newest first with the latest daily brief", async () => {
-  const older = createThread();
-  addMessage(older.id, "user", "uno", "done");
-  await Bun.sleep(2);
-  const newer = createThread();
-  addMessage(newer.id, "user", "dos", "done");
-  const brief = claimBrief("daily", "2030-01-02")!;
-  completeBrief(brief.id, "Buen día.");
+test("a new chat gets the latest daily brief, and the one it answers only if it has text", () => {
+  // Old periods: the test database is shared with the brief scheduler's tests, which read the latest.
+  const done = claimBrief("daily", "2000-01-02")!;
+  completeBrief(done.id, "Buen día.");
+  const empty = claimBrief("weekly", "2000-01-02")!;
 
-  const home = coachHome();
-  expect(home.threads.findIndex((t) => t.id === newer.id)).toBeLessThan(home.threads.findIndex((t) => t.id === older.id));
-  expect(home.brief).toMatchObject({ period: "2030-01-02", text: "Buen día." });
+  expect(coachBrief()).toEqual({ brief: latestBrief("daily"), replyTo: null });
+  expect(coachBrief(done.id).replyTo?.id).toBe(done.id);
+  expect(coachBrief(empty.id).replyTo).toBeNull();
+  expect(coachBrief("nope").replyTo).toBeNull();
 });
