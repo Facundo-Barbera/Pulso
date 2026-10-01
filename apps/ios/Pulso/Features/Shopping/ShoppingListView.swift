@@ -9,30 +9,16 @@ struct ShoppingListToolbarItem: ToolbarContent {
     }
 }
 
-/// Lista de compras: what is left to buy for the plan's coming days (minus what
-/// is at home), by aisle; and Despensa, what is at home, as the second segment.
-/// Hero = how much is bought; then one card per aisle; tap a row to tick it,
-/// which moves it to the Despensa.
+/// Lista de compras: what is left to buy for the plan's coming days, by aisle.
+/// Hero = how much is bought; then one card per aisle; tap a row to tick it.
+/// «Ya tengo» puts an item aside for this list.
 struct ShoppingListView: View {
     @State private var store = ShoppingStore()
     @State private var editing: Editing?
-    @State private var pantryEditing: PantryEditing?
-    @State private var tab = Tab.lista
     @Environment(\.askCoach) private var askCoach
-
-    enum Tab: String, CaseIterable, Identifiable {
-        case lista, despensa
-        var id: String { rawValue }
-        var title: String { self == .lista ? "Lista" : "Despensa" }
-    }
 
     enum Editing: Identifiable {
         case new, item(ShoppingItem)
-        var id: String { if case .item(let item) = self { item.id } else { "new" } }
-    }
-
-    enum PantryEditing: Identifiable {
-        case new, item(PantryItem)
         var id: String { if case .item(let item) = self { item.id } else { "new" } }
     }
 
@@ -40,14 +26,7 @@ struct ShoppingListView: View {
         ScrollView {
             VStack(spacing: 16) {
                 if let list = store.list {
-                    Picker("Sección", selection: $tab) {
-                        ForEach(Tab.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    switch tab {
-                    case .lista: content(list).transition(.opacity)
-                    case .despensa: PantryContent(store: store) { pantryEditing = $0 }.transition(.opacity)
-                    }
+                    content(list)
                 } else if store.loading {
                     ProgressView().controlSize(.large).padding(.top, 120)
                 } else {
@@ -61,21 +40,15 @@ struct ShoppingListView: View {
             .padding(.horizontal)
             .padding(.bottom, 24)
             .animation(.snappy, value: store.list)
-            .animation(.snappy, value: store.pantry)
-            .animation(.snappy, value: tab)
         }
         .background(Color(.systemGroupedBackground))
-        .navigationTitle(tab == .lista ? "Lista de compras" : "Despensa")
+        .navigationTitle("Lista de compras")
         .toolbar { toolbar }
         .refreshable { await store.load() }
         .task { await store.load() }
         .sheet(item: $editing) { editing in
             ShoppingItemEditor(editing: editing, store: store).presentationDetents([.medium, .large])
         }
-        .sheet(item: $pantryEditing) { editing in
-            PantryEditor(editing: editing, store: store).presentationDetents([.medium, .large])
-        }
-        .sensoryFeedback(.selection, trigger: tab)
         .sensoryFeedback(.selection, trigger: store.list?.bought ?? 0)
         .sensoryFeedback(.success, trigger: store.list.map { $0.toBuy > 0 && $0.pending == 0 } ?? false) { _, done in done }
     }
@@ -85,7 +58,7 @@ struct ShoppingListView: View {
         if list.items.isEmpty {
             if list.hasPlan {
                 EmptyStateView(systemImage: "cart", title: "Genera tu lista desde tu plan",
-                               message: "Lo que falta para los próximos días, menos lo que ya tienes en casa, por pasillo.", tint: Theme.body)
+                               message: "Lo que pide tu plan para los próximos días, por pasillo.", tint: Theme.body)
                 RangeCard(store: store, title: "Generar lista")
             } else {
                 EmptyStateView(systemImage: "cart", title: "Genera tu lista desde tu plan",
@@ -103,10 +76,7 @@ struct ShoppingListView: View {
                 AisleCard(category: section.category, items: section.items, store: store) { editing = .item($0) }
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
-            if !list.pantry.isEmpty { pantryCard(list.pantry) }
-            Label("Lo que marcas pasa a tu despensa.", systemImage: "house")
-                .font(.footnote).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if !list.alreadyHave.isEmpty { alreadyHaveCard(list.alreadyHave) }
             if list.hasPlan { RangeCard(store: store, title: "Regenerar") }
         }
     }
@@ -123,7 +93,7 @@ struct ShoppingListView: View {
         }
     }
 
-    private func pantryCard(_ items: [ShoppingItem]) -> some View {
+    private func alreadyHaveCard(_ items: [ShoppingItem]) -> some View {
         Card {
             CardTitle(text: "Ya tengo", systemImage: "house.fill")
             ForEach(items) { item in
@@ -142,15 +112,13 @@ struct ShoppingListView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
-            if tab == .lista, let list = store.list, list.pending > 0 {
+            if let list = store.list, list.pending > 0 {
                 ShareLink(item: list.text, preview: SharePreview("Lista de compras")) {
                     Label("Compartir", systemImage: "square.and.arrow.up")
                 }
             }
-            Button("Añadir", systemImage: "plus") {
-                if tab == .lista { editing = .new } else { pantryEditing = .new }
-            }
-            .disabled(store.list == nil || (tab == .despensa && store.pantry == nil))
+            Button("Añadir", systemImage: "plus") { editing = .new }
+                .disabled(store.list == nil)
         }
     }
 }
@@ -301,7 +269,7 @@ private struct RangeCard: View {
             .buttonStyle(.glassProminent)
             .controlSize(.large)
             .disabled(store.generating)
-            Text("Lo que marcaste, lo que añadiste a mano y lo que tienes en casa se tienen en cuenta.")
+            Text("Lo que marcaste y lo que añadiste a mano se quedan.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

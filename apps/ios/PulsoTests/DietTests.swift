@@ -1,7 +1,7 @@
 import XCTest
 @testable import Pulso
 
-/// The dated plan as the engine sends it (fixtures captured from the engine's own horizon, ops and pantry).
+/// The dated plan as the engine sends it (fixtures captured from the engine's own horizon and ops).
 final class DietTests: XCTestCase {
     private let horizonJSON = #"""
     {"planId":"f39c","planName":"Definición","from":"2026-10-01","to":"2026-10-03","horizonDays":14,"days":[{"date":"2026-10-01","label":"A","slots":[
