@@ -119,7 +119,7 @@ struct ReadinessSnippet: View {
             }
             .frame(width: 84, height: 84)
             VStack(alignment: .leading, spacing: 4) {
-                Text(readiness.title).font(.headline)
+                Text(readiness.title).font(.headline).lineLimit(2)
                 Text(readiness.explanation).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
         }

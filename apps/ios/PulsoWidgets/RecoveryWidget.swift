@@ -39,6 +39,8 @@ struct RecoveryWidgetView: View {
                     .font(.title3.weight(.bold))
                     .fontDesign(.rounded)
                     .widgetAccentable()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if let explanation = recovery?.explanation, !explanation.isEmpty {
                     Text(explanation).font(.caption2).lineLimit(1).foregroundStyle(.secondary)
                 }
@@ -67,6 +69,8 @@ struct RecoveryWidgetView: View {
                 Text(recovery.levelLabel)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity)
             }
         } else {
@@ -80,4 +84,16 @@ struct RecoveryWidgetView: View {
 } timeline: {
     SnapshotEntry(date: .now, snapshot: .preview, paired: true)
     SnapshotEntry(date: .now, snapshot: nil, paired: false)
+}
+
+#Preview(as: .accessoryRectangular) {
+    RecoveryWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .preview, paired: true)
+}
+
+#Preview(as: .accessoryCircular) {
+    RecoveryWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .preview, paired: true)
 }

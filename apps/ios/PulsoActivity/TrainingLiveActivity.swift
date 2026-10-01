@@ -51,10 +51,12 @@ struct TrainingLiveActivity: Widget {
                     VStack(spacing: 8) {
                         HStack {
                             Text(state.setLabel)
-                            Spacer()
+                            Spacer(minLength: 8)
                             Text(state.target).fontWeight(.semibold).foregroundStyle(training)
                         }
                         .font(.subheadline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         if let range = state.restRange, state.resting {
                             ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
                                 .tint(training)
@@ -100,18 +102,16 @@ private struct LockScreenView: View {
                     .foregroundStyle(training)
                     .frame(width: 44, height: 44)
                     .background(Circle().fill(training.opacity(0.2)))
+                // On a 375 pt lock screen this column gets ~130 pt beside the timer: "Serie 3 de 4 ·
+                // 12 × 80 kg" wrapped to three lines and the activity got clipped. Target on its own line.
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(state.exerciseName).font(.headline).lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(state.setLabel)
-                        if !state.target.isEmpty {
-                            Text("·")
-                            Text(state.target).fontWeight(.semibold).foregroundStyle(training)
-                        }
+                    Text(state.exerciseName).font(.headline).minimumScaleFactor(0.8)
+                    Text(state.setLabel).font(.subheadline).foregroundStyle(.secondary)
+                    if !state.target.isEmpty {
+                        Text(state.target).font(.subheadline.weight(.semibold)).foregroundStyle(training)
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
                 Spacer(minLength: 8)
                 if let range = state.restRange, state.resting {
                     VStack(alignment: .trailing, spacing: 0) {
@@ -129,7 +129,7 @@ private struct LockScreenView: View {
                             .fontDesign(.rounded)
                             .multilineTextAlignment(.trailing)
                             .frame(maxWidth: 90, alignment: .trailing)
-                        Text("\(state.setsDone)/\(state.setsTotal) series").font(.caption).foregroundStyle(.secondary)
+                        Text("\(state.setsDone)/\(state.setsTotal) series").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
