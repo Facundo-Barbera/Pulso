@@ -11,7 +11,6 @@ import {
   medicationDay,
   medicationInputSchema,
   medicationPatchSchema,
-  timeSchema,
   updateMedication,
 } from "./store";
 
@@ -33,14 +32,20 @@ async function safely(run: () => unknown) {
 }
 
 const SCHEDULE_HELP =
-  "schedule: { asNeeded, times: local 24h 'HH:MM' list, days: ISO weekdays 1=Monday..7=Sunday, empty = every day }. " +
+  "schedule: { asNeeded, times: fixed local 24h 'HH:MM' list, days: ISO weekdays 1=Monday..7=Sunday applying to every slot (empty = every day), " +
+  "training: null or { withinMinutes (default 60), restDayTime: 'HH:MM' or null } for 'after training' (due when a workout ends, to take within withinMinutes; " +
+  "on days without training it is due at restDayTime, or not at all when null = 'no tomar'), " +
+  "meals: any of 'desayuno' | 'comida' | 'cena' (due at that meal's planned time), bedtime: true for 'antes de dormir' (30 min before sleep time) }. " +
+  "Combine them freely, e.g. creatine after training and at 09:00 on rest days = { times: [], training: { withinMinutes: 60, restDayTime: '09:00' } }. " +
+  "Each slot has a key: its 'HH:MM' for fixed times, else 'entreno', 'desayuno', 'comida', 'cena' or 'dormir' (a training slot keeps 'entreno' even on rest days). " +
   "Dates are local 'YYYY-MM-DD'. stock counts doses left (each 'tomada' uses one); lowStockThreshold warns at or below it.";
 
 export const medicationTools = [
   tool(
     "list_medications",
     `The person's medications and supplements with dose (amount + unit), form, instructions, schedule, start/end dates, stock and lowStock flag. ` +
-      `Optionally includes today's dose slots with their status (pendiente/tomada/omitida/pospuesta). ${BOUNDARY}`,
+      `Optionally includes today's dose slots with their status (pendiente/tomada/omitida/pospuesta): each has slot (its key), moment, time ('HH:MM' when due, ` +
+      `null while waiting for a planned or in-progress workout) and, for training-linked ones, training.state trained/training/planned/rest. ${BOUNDARY}`,
     {
       includeInactive: z.boolean().default(false).describe("Also list paused medications."),
       includeToday: z.boolean().default(true).describe("Add today's slots and the next pending dose."),
@@ -54,7 +59,8 @@ export const medicationTools = [
   tool(
     "add_medication",
     `Adds a medication or supplement the person says they take, exactly as they describe it (do not suggest doses). ` +
-      `kind is 'medicamento' or 'suplemento'. ${SCHEDULE_HELP} Ask for the times if a scheduled med has none. ${BOUNDARY}`,
+      `kind is 'medicamento' or 'suplemento' (creatine, protein, vitamins, omega 3, magnesium… are 'suplemento'; units like g, scoop, cápsula, gomita, ml). ` +
+      `${SCHEDULE_HELP} Ask when to take it if the person didn't say. ${BOUNDARY}`,
     medicationInputSchema.shape,
     async (input) => safely(() => addMedication(input)),
   ),
@@ -68,12 +74,12 @@ export const medicationTools = [
   tool(
     "log_dose",
     `Records a dose the person reports: status 'tomada' (taken), 'omitida' (skipped) or 'pospuesta' (postponed). ` +
-      `For a scheduled dose pass the slot's date and scheduledTime ('HH:MM' from the schedule); re-logging a slot overwrites it. ` +
+      `For a scheduled dose pass the slot's date and scheduledTime = the slot key from list_medications' today.slots[].slot ('HH:MM', or 'entreno', 'desayuno', 'comida', 'cena', 'dormir'); re-logging a slot overwrites it. ` +
       `For an as-needed or extra intake omit scheduledTime. 'tomada' takes one from stock. takenAt is epoch ms, default now. ${BOUNDARY}`,
     {
       medicationId: z.string(),
       date: dateSchema.optional().describe("Local date of the slot; default today."),
-      scheduledTime: timeSchema.optional(),
+      scheduledTime: z.string().optional().describe("Slot key: 'HH:MM' or entreno/desayuno/comida/cena/dormir."),
       status: z.enum(["tomada", "omitida", "pospuesta"]),
       takenAt: z.number().positive().optional(),
     },
