@@ -16,7 +16,10 @@ export function pulsoHome(): string {
 /** Where the engine keeps its data: `PULSO_DATA_DIR` (tests, scratch copies), or `<home>/engine`. */
 export function dataDir(): string {
   const configured = process.env.PULSO_DATA_DIR?.trim();
-  return configured ? path.resolve(configured) : path.join(pulsoHome(), "engine");
+  if (configured) return path.resolve(configured);
+  // `bun test` started outside apps/engine skips its bunfig preload; it once wrote test threads into the person's data.
+  if (process.env.NODE_ENV === "test") throw new Error("tests need PULSO_DATA_DIR: run them from apps/engine (bunfig.toml preloads a temp dir)");
+  return path.join(pulsoHome(), "engine");
 }
 
 // One connection per process; Next's dev reloads re-evaluate modules, so it lives on globalThis.
