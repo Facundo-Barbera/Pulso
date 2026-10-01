@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { CardioTarget, Exercise, LiveExercise, LiveSession, LiveSet } from "@pulso/contract";
 import { db } from "../db";
-import { getExercise, listSessions, suggestLoad, TrainingError } from "./store";
+import { getExercise, listSessions, suggestLoad, TrainingError, unitOf } from "./store";
 import { withSupersets } from "./superset";
+import { formatBoth, formatWeight, snapKg } from "./units";
 
 /**
  * The session in progress, mirrored from the phone so the Coach can change it.
@@ -137,6 +138,12 @@ function startingLoad(exerciseId: string, repMin: number, repMax: number, sets: 
 const freshSets = (count: number, weightKg: number, reps: number): LiveSet[] =>
   Array.from({ length: count }, () => ({ id: randomUUID(), weightKg, reps, rpe: null, doneAt: null }));
 
+/** A load for the Coach: kg as is; on a pound machine the pounds first, then the kg the tools take. */
+function load(kg: number, exerciseId: string): string {
+  const unit = unitOf(exerciseId);
+  return unit === "kg" ? formatWeight(kg, unit) : formatBoth(kg, unit);
+}
+
 const DEFAULT_CARDIO: CardioTarget = { durationMinutes: 15, zone: 2 };
 
 /** A new live exercise from the library, taking targets from `like` (the one it replaces) when given. */
@@ -223,7 +230,8 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
       if (ex.repMin > ex.repMax) throw new TrainingError(`repMin (${ex.repMin}) is above repMax (${ex.repMax}).`);
       if (op.restSeconds != null) ex.restSeconds = op.restSeconds;
       const open = ex.sets.filter((s) => s.doneAt == null);
-      if (op.weightKg != null) for (const s of open) s.weightKg = op.weightKg;
+      // The Coach thinks in kg; the sets land on the steps of the exercise's machine.
+      if (op.weightKg != null) for (const s of open) s.weightKg = snapKg(op.weightKg, unitOf(ex.exerciseId));
       if (op.reps != null) for (const s of open) s.reps = op.reps;
       if (op.sets != null) {
         const doneCount = ex.sets.length - open.length;
@@ -236,7 +244,7 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
           for (let s = ex.sets.length - 1; s >= 0 && drop > 0; s--) if (ex.sets[s]!.doneAt == null) (ex.sets.splice(s, 1), drop--);
         }
       }
-      return `${ex.name}: ${ex.sets.length} × ${ex.repMin === ex.repMax ? ex.repMin : `${ex.repMin}–${ex.repMax}`}${open[0] ? ` · ${open[0].weightKg} kg` : ""}${supersetLine(op.supersetId === undefined ? undefined : ex.supersetId)}`;
+      return `${ex.name}: ${ex.sets.length} × ${ex.repMin === ex.repMax ? ex.repMin : `${ex.repMin}–${ex.repMax}`}${open[0] ? ` · ${load(open[0].weightKg, ex.exerciseId)}` : ""}${supersetLine(op.supersetId === undefined ? undefined : ex.supersetId)}`;
     }
     case "add": {
       const exercise = libraryExercise(op.exerciseId);
@@ -245,7 +253,7 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
         repMin: op.repMin ?? 8,
         repMax: op.repMax ?? op.repMin ?? 12,
         restSeconds: op.restSeconds ?? 90,
-        weightKg: op.weightKg,
+        weightKg: op.weightKg == null ? undefined : snapKg(op.weightKg, unitOf(exercise.id)),
         cardio: op.cardio,
       });
       next.supersetId = op.supersetId?.trim() || null;
@@ -331,8 +339,8 @@ export function describeLive(session: LiveSession, now = Date.now()): string {
       return `${i + 1}. ${ex.name} [${ex.exerciseId}] — cardio ${target}${status}${mark}`;
     }
     const doneSets = ex.sets.filter((s) => s.doneAt != null).length;
-    const load = ex.sets.find((s) => s.doneAt == null) ?? ex.sets.at(-1);
-    return `${i + 1}. ${ex.name} [${ex.exerciseId}, ${ex.equipment}] — ${ex.sets.length}×${ex.repMin}–${ex.repMax}${load ? ` · ${load.weightKg} kg` : ""} · ${doneSets}/${ex.sets.length} series${ex.supersetId ? ` · superserie ${ex.supersetId}` : ""}${status}${mark}`;
+    const weight = ex.sets.find((s) => s.doneAt == null) ?? ex.sets.at(-1);
+    return `${i + 1}. ${ex.name} [${ex.exerciseId}, ${ex.equipment}] — ${ex.sets.length}×${ex.repMin}–${ex.repMax}${weight ? ` · ${load(weight.weightKg, ex.exerciseId)}` : ""} · ${doneSets}/${ex.sets.length} series${ex.supersetId ? ` · superserie ${ex.supersetId}` : ""}${status}${mark}`;
   });
   return [`Sesión "${session.name}", ${minutes} min en marcha.`, ...lines].join("\n");
 }

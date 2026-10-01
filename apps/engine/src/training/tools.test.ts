@@ -108,8 +108,17 @@ test("get_exercise returns the detail; list_exercises says which have media", as
   expect((await call("get_exercise", { exerciseId: "nope" })).isError).toBe(true);
 });
 
+test("este remo en libras → its unit sticks; the default changes alone", async () => {
+  expect((await call("set_exercise_unit", { exerciseId: "remo-maquina", unit: "lb" })).data.exerciseUnits).toEqual({ "remo-maquina": "lb" });
+  expect((await call("set_training_preferences", { defaultUnit: "lb" })).data).toMatchObject({ defaultUnit: "lb", exerciseUnits: { "remo-maquina": "lb" } });
+  expect((await call("get_training_preferences", {})).data.defaultUnit).toBe("lb");
+  expect((await call("set_exercise_unit", { exerciseId: "nope", unit: "lb" })).isError).toBe(true);
+  await call("set_exercise_unit", { exerciseId: "remo-maquina", unit: null });
+  await call("set_training_preferences", { defaultUnit: "kg" });
+});
+
 test("prefiero máquinas → preferences → machine alternatives first → swap for good in every day", async () => {
-  expect((await call("set_training_preferences", { preferredEquipment: ["machine", "cable", "machine"] })).data).toEqual({ preferredEquipment: ["machine", "cable"] });
+  expect((await call("set_training_preferences", { preferredEquipment: ["machine", "cable", "machine"] })).data).toEqual({ preferredEquipment: ["machine", "cable"], defaultUnit: "kg", exerciseUnits: {} });
   expect((await call("get_training_preferences", {})).data.preferredEquipment).toEqual(["machine", "cable"]);
 
   const similar = await call("find_similar_exercises", { exerciseId: "sentadilla", limit: 3 });

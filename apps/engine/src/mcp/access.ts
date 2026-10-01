@@ -65,6 +65,7 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   find_similar_exercises: "read",
   get_training_preferences: "read",
   set_training_preferences: "write",
+  set_exercise_unit: "write",
   get_live_session: "read",
   edit_live_session: "write",
   list_body_scans: "read",

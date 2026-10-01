@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape, supersetIdShape } from "./inputs";
+import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape, supersetIdShape, weightUnitEnum } from "./inputs";
 import { describeLive, editLive, getLive, type LiveOp } from "./live";
 import { idsWithMedia } from "./media";
 import { similarExercises } from "./similar";
@@ -17,6 +17,7 @@ import {
   listSessions,
   nextDay,
   saveSession,
+  setExerciseUnit,
   setTrainingSettings,
   suggestDay,
   trainingSettings,
@@ -52,7 +53,7 @@ const liveOp = z.discriminatedUnion("op", [
     sets: z.number().int().min(1).max(10).optional().describe("Total sets; sets already done are kept."),
     repMin: z.number().int().min(1).max(50).optional(),
     repMax: z.number().int().min(1).max(50).optional(),
-    weightKg: z.number().min(0).max(1000).optional().describe("Load for the sets not done yet, kg."),
+    weightKg: z.number().min(0).max(1000).optional().describe("Load for the sets not done yet, kg (convert from the exercise's unit; it lands on that unit's steps)."),
     reps: z.number().int().min(1).max(50).optional().describe("Reps for the sets not done yet."),
     restSeconds: z.number().int().min(0).max(600).optional(),
     cardio: cardioTargetShape.optional().describe("Cardio blocks: the target fields to change."),
@@ -122,7 +123,7 @@ export const trainingTools = [
 
   tool(
     "get_active_program",
-    "The active program with its days and prescriptions, plus `nextDayId` (the day to train next: pinned to today's weekday, else the one after the last day done) and `suggestions` (next load per program exercise id, kg). `program` is null when none is active.",
+    "The active program with its days and prescriptions, plus `nextDayId` (the day to train next: pinned to today's weekday, else the one after the last day done) and `suggestions` (next load per program exercise id, kg, on the steps of each exercise's unit: see get_training_preferences). `program` is null when none is active.",
     {},
     async () => guard(() => activeProgramView()),
   ),
@@ -184,16 +185,26 @@ export const trainingTools = [
 
   tool(
     "get_training_preferences",
-    "The person's training preferences: preferredEquipment, most preferred first (e.g. [\"machine\", \"cable\"]). Respect it when building or adapting programs and choosing swaps.",
+    'The person\'s training preferences: preferredEquipment, most preferred first (e.g. ["machine", "cable"]); defaultUnit ("kg" or "lb"); exerciseUnits, the exercises (library id) whose machine or plates use their own unit. Respect the equipment when building or adapting programs and choosing swaps. Every weight in the tools is kg, but speak to the person in each exercise\'s unit (exerciseUnits[id] ?? defaultUnit; 1 lb = 0.45359237 kg): "70 lb", not "31,75 kg".',
     {},
     async () => guard(() => trainingSettings()),
   ),
 
   tool(
     "set_training_preferences",
-    'Save the equipment the person prefers, most preferred first (e.g. "prefiero máquinas" → ["machine", "cable"]). Replaces the whole list; pass [] to clear it. Alternatives in the app rank by it.',
-    { preferredEquipment: z.array(equipmentEnum).max(7) },
-    async ({ preferredEquipment }) => guard(() => setTrainingSettings({ preferredEquipment })),
+    'Save the equipment the person prefers, most preferred first (e.g. "prefiero máquinas" → ["machine", "cable"]; replaces the whole list, [] clears it; alternatives in the app rank by it), and/or the default weight unit for exercises without their own and for totals ("usa libras" → "lb"). Only the fields given change.',
+    { preferredEquipment: z.array(equipmentEnum).max(7).optional(), defaultUnit: weightUnitEnum.optional() },
+    async (settings) => guard(() => setTrainingSettings(settings)),
+  ),
+
+  tool(
+    "set_exercise_unit",
+    'Set the unit one exercise is shown, typed and suggested in, because its machine or plates use it (e.g. "este press en libras", "el remo en máquina va en libras"). It sticks for every future session and the live one; weights stay stored in kg and pound loads land on 5 lb steps. null makes it follow the default unit again. Returns the preferences.',
+    {
+      exerciseId: z.string().describe("Library id, e.g. 'remo-maquina'; in a live session the exercise's exerciseId from get_live_session."),
+      unit: weightUnitEnum.nullable(),
+    },
+    async ({ exerciseId, unit }) => guard(() => setExerciseUnit(exerciseId, unit)),
   ),
 
   tool(
@@ -247,7 +258,7 @@ export const trainingTools = [
 
   tool(
     "suggest_next_loads",
-    "Next load and target reps (kg) for each exercise of a day of the active program, by double progression: all prescribed sets at the top of the rep range → add one increment; short of the bottom → back off; otherwise same load, one more rep. weightKg is null when the exercise has no history. Defaults to the next day to train.",
+    "Next load (kg, on the steps of each exercise's unit; the reason speaks in that unit) and target reps for each exercise of a day of the active program, by double progression: all prescribed sets at the top of the rep range → add one increment; short of the bottom → back off; otherwise same load, one more rep. weightKg is null when the exercise has no history. Defaults to the next day to train.",
     { dayId: z.string().optional().describe("Program day id from get_active_program; omit for the next day.") },
     async ({ dayId }) =>
       guard(() => {
