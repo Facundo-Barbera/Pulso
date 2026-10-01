@@ -3,6 +3,8 @@ import SwiftUI
 /// Manual entry, with frequent foods on top for one-tap logging.
 struct QuickAddView: View {
     let store: NutritionStore
+    /// What was typed in Registrar's search, so it isn't typed twice.
+    var initialName = ""
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var slot = MealSlot.forHour(Calendar.current.component(.hour, from: .now))
@@ -86,6 +88,7 @@ struct QuickAddView: View {
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || quantity <= 0 || saving)
                 }
             }
+            .onAppear { if name.isEmpty { name = initialName } }
         }
     }
 

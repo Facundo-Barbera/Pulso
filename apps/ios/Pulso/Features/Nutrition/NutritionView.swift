@@ -1,43 +1,57 @@
 import SwiftUI
 
-/// The Dieta tab, in three parts under a sticky day header:
-/// Hoy (macros, water, what's left, the day's meals), Plan (the plan as the
-/// Coach adjusted it, with "comido" ticks) and Progreso (the week).
-/// Adding food lives in a floating glass bar on Hoy.
+/// The Dieta tab: Hoy (the macro hero, water and the day's meals), Plan (the
+/// plan as the Coach adjusted it, with "comido" ticks) and Progreso (the week),
+/// under a plain section switch and a compact day row. Everything that adds
+/// food starts from one floating "Registrar" button on Hoy.
 struct NutritionView: View {
     let model: PulsoModel
     @State private var store = NutritionStore()
     @State private var section = DietSection.hoy
     @State private var sheet: Sheet?
-    @State private var toast: String?
+    @State private var toast: Toast?
+    @State private var showShopping = false
+    /// What was typed in Registrar when it hands over to the manual form.
+    @State private var draftName = ""
     @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
-        case quickAdd, snack, scan, targets, water, waterAmount
+        case register, quickAdd, snack, scan, targets, water, waterAmount
         var id: String { rawValue }
+    }
+
+    /// A short message at the top, optionally with an undo.
+    struct Toast: Identifiable, Equatable {
+        let id = UUID()
+        var message: String
+        var undo: (() -> Void)?
+        static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
     }
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 16, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    if let day = store.day {
-                        content(day)
-                    } else if store.loading {
-                        ProgressView().controlSize(.large).padding(.top, 120)
-                    } else {
-                        EmptyStateView(systemImage: "fork.knife.circle", title: "Sin conexión con la Mac",
-                                       message: "No se pudo cargar tu dieta.", tint: Theme.energy, actionTitle: "Reintentar") {
-                            Task { await store.load() }
-                        }
-                        .padding(.top, 40)
+            VStack(spacing: 16) {
+                VStack(spacing: 6) {
+                    Picker("Sección", selection: $section) {
+                        ForEach(DietSection.allCases) { Text($0.title).tag($0) }
                     }
-                } header: {
-                    DayHeader(store: store, section: $section)
+                    .pickerStyle(.segmented)
+                    DaySwitcher(store: store)
+                }
+                if let day = store.day {
+                    content(day)
+                } else if store.loading {
+                    ProgressView().controlSize(.large).padding(.top, 120)
+                } else {
+                    EmptyStateView(systemImage: "fork.knife.circle", title: "Sin conexión con la Mac",
+                                   message: "No se pudo cargar tu dieta.", tint: Theme.energy, actionTitle: "Reintentar") {
+                        Task { await store.load() }
+                    }
+                    .padding(.top, 40)
                 }
             }
             .padding(.horizontal)
-            // The add bar is a safe-area inset, so the scroll already ends above it.
+            // The Registrar button is a safe-area inset, so the scroll already ends above it.
             .padding(.bottom, 24)
             .animation(.snappy, value: store.day)
             .animation(.snappy, value: section)
@@ -45,14 +59,21 @@ struct NutritionView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Dieta")
         .toolbar { toolbar }
+        .navigationDestination(isPresented: $showShopping) { ShoppingListView() }
         .refreshable { await store.load() }
         .task { await store.load() }
         .safeAreaInset(edge: .bottom) {
-            if section == .hoy { addBar.transition(.move(edge: .bottom).combined(with: .opacity)) }
+            if section == .hoy && store.day != nil {
+                registerButton.transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { sheet in
             switch sheet {
-            case .quickAdd: QuickAddView(store: store).presentationDetents([.medium, .large])
+            case .register:
+                RegisterSheet(foods: store.allFrequent, nextMeal: store.isToday ? store.nextMeal : nil,
+                              onLog: { await store.log($0) }, onEatPlan: { await store.eat($0) }, onRoute: route)
+                    .presentationDetents([.large])
+            case .quickAdd: QuickAddView(store: store, initialName: draftName).presentationDetents([.medium, .large])
             case .snack: SnackAddView(store: store).presentationDetents([.large])
             case .scan: BarcodeScanView(store: store).presentationDetents([.large])
             case .targets: TargetsView(store: store).presentationDetents([.medium, .large])
@@ -62,20 +83,12 @@ struct NutritionView: View {
                         .presentationDetents([.medium, .large])
                 }
             case .waterAmount:
-                WaterAmountSheet(settings: store.water?.settings ?? .standard) { ml in Task { await store.addWater(ml: ml) } }
+                WaterAmountSheet(settings: store.water?.settings ?? .standard) { ml in addWater(ml) }
                     .presentationDetents([.height(280)])
             }
         }
         .overlay(alignment: .top) {
-            if let toast {
-                Text(toast)
-                    .font(.subheadline.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 18).padding(.vertical, 10)
-                    .glassEffect()
-                    .padding(.horizontal)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            if let toast { ToastView(toast: toast) { self.toast = nil } }
         }
         .sensoryFeedback(.success, trigger: store.day?.meals.count ?? 0) { old, new in new > old }
         .sensoryFeedback(.selection, trigger: section)
@@ -86,6 +99,7 @@ struct NutritionView: View {
         switch section {
         case .hoy:
             NutritionTodaySection(day: day, store: store, sheet: $sheet, showPlan: { section = .plan },
+                                  addWater: addWater, undoWater: { Task { await store.undoWater() } },
                                   copyPrevious: { Task { await copyPrevious() } }, draftForCoach: { askCoach($0, send: false) })
                 .transition(.opacity)
         case .plan:
@@ -98,12 +112,14 @@ struct NutritionView: View {
         }
     }
 
+    /// One toolbar control: the shopping list and the settings that used to sit around the screen.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ShoppingListToolbarItem()
         ToolbarItem(placement: .topBarTrailing) {
             Menu("Más", systemImage: "ellipsis") {
+                Button("Lista de compras", systemImage: "cart") { showShopping = true }
                 Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }
+                Divider()
                 Button("Objetivos diarios", systemImage: "target") { sheet = .targets }
                 Button("Ajustes de agua", systemImage: "drop") { sheet = .water }
                     .disabled(store.water == nil)
@@ -111,48 +127,39 @@ struct NutritionView: View {
         }
     }
 
-    /// The glass quick-add bar floating over Hoy. At large text the side
-    /// buttons drop their titles (scan first) so all three still fit a 375 pt phone.
-    private var addBar: some View {
-        GlassEffectContainer(spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                addButtons(scanTitle: true, snackTitle: true)
-                addButtons(scanTitle: false, snackTitle: true)
-                addButtons(scanTitle: false, snackTitle: false)
-            }
+    /// The single floating action on Hoy. Short enough to never truncate, even at the largest text.
+    private var registerButton: some View {
+        Button { sheet = .register } label: {
+            Label("Registrar", systemImage: "plus")
+                .font(.headline)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 14).padding(.vertical, 6)
         }
+        .buttonStyle(.glassProminent)
         .controlSize(.large)
-        .padding(.horizontal)
         .padding(.bottom, 8)
     }
 
-    private func addButtons(scanTitle: Bool, snackTitle: Bool) -> some View {
-        HStack(spacing: 12) {
-            sideButton("Escanear", "barcode.viewfinder", title: scanTitle) { sheet = .scan }
-            sideButton("Snack o bebida", "cup.and.saucer.fill", title: snackTitle) { sheet = .snack }
-            Button { sheet = .quickAdd } label: {
-                Label("Añadir comida", systemImage: "plus")
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6).padding(.vertical, 4)
-            }
-            .buttonStyle(.glassProminent)
+    /// Registrar hands over to the scanner, the snack form, the plan or the manual form.
+    private func route(_ route: RegisterSheet.Route) {
+        switch route {
+        case .scan: sheet = .scan
+        case .snack: sheet = .snack
+        case .manual(let name):
+            draftName = name
+            sheet = .quickAdd
+        case .plan:
+            sheet = nil
+            section = .plan
         }
     }
 
-    private func sideButton(_ text: String, _ symbol: String, title: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Group {
-                if title {
-                    Label(text, systemImage: symbol)
-                } else {
-                    Label(text, systemImage: symbol).labelStyle(.iconOnly)
-                }
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 6).padding(.vertical, 4)
+    private func addWater(_ ml: Double) {
+        Task {
+            guard let entry = await store.addWater(ml: ml) else { return }
+            show("+\(WaterSettings.litres(ml)) de agua") { Task { await store.removeWater(entry) } }
         }
-        .buttonStyle(.glass)
     }
 
     private func copyPrevious() async {
@@ -160,11 +167,12 @@ struct NutritionView: View {
         show(copied == 0 ? "El día anterior está vacío" : "\(copied) alimentos copiados")
     }
 
-    private func show(_ message: String) {
-        withAnimation(.snappy) { toast = message }
+    private func show(_ message: String, undo: (() -> Void)? = nil) {
+        let next = Toast(message: message, undo: undo)
+        withAnimation(.snappy) { toast = next }
         Task {
-            try? await Task.sleep(for: .seconds(2))
-            withAnimation(.snappy) { if toast == message { toast = nil } }
+            try? await Task.sleep(for: .seconds(undo == nil ? 2 : 4))
+            withAnimation(.snappy) { if toast == next { toast = nil } }
         }
     }
 }
@@ -182,48 +190,41 @@ enum DietSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Pinned above the content: the day with its arrows (tap the day to go back
-/// to today) and the Hoy · Plan · Progreso switch.
-private struct DayHeader: View {
+/// "‹  Hoy, 1 de octubre  ›" in one quiet row. Tap the date to go back to today.
+private struct DaySwitcher: View {
     let store: NutritionStore
-    @Binding var section: DietSection
 
     private var dayTitle: String {
-        if store.isToday { return "Hoy" }
-        if Calendar.current.isDateInYesterday(store.date) { return "Ayer" }
-        return store.date.formatted(.dateTime.weekday(.wide)).capitalized
+        let date = store.date.formatted(.dateTime.day().month(.wide))
+        if store.isToday { return "Hoy, \(date)" }
+        if Calendar.current.isDateInYesterday(store.date) { return "Ayer, \(date)" }
+        return "\(store.date.formatted(.dateTime.weekday(.wide)).capitalized), \(date)"
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 4) {
-                arrow("Día anterior", "chevron.left", days: -1)
-                Spacer(minLength: 4)
-                Button { Task { await store.goToToday() } } label: {
-                    VStack(spacing: 0) {
-                        Text(dayTitle).font(.headline)
-                            .contentTransition(.interpolate)
-                        Text(store.date.formatted(.dateTime.day().month(.wide)))
-                            .font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: 4) {
+            arrow("Día anterior", "chevron.left", days: -1)
+            Spacer(minLength: 4)
+            Button { Task { await store.goToToday() } } label: {
+                HStack(spacing: 6) {
+                    Text(dayTitle)
+                        .contentTransition(.interpolate)
+                    if !store.isToday {
+                        Image(systemName: "arrow.uturn.backward.circle.fill")
+                            .foregroundStyle(.tint)
+                            .transition(.scale.combined(with: .opacity))
                     }
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                 }
-                .buttonStyle(.plain)
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.center)
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isToday)
+            .accessibilityHint(store.isToday ? "" : "Vuelve a hoy")
+            Spacer(minLength: 4)
+            arrow("Día siguiente", "chevron.right", days: 1)
                 .disabled(store.isToday)
-                .accessibilityHint(store.isToday ? "" : "Vuelve a hoy")
-                Spacer(minLength: 4)
-                arrow("Día siguiente", "chevron.right", days: 1)
-                    .disabled(store.isToday)
-            }
-            Picker("Sección", selection: $section) {
-                ForEach(DietSection.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
         }
-        .padding(10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 24))
-        .padding(.top, 4)
         .animation(.snappy, value: store.dateKey)
         .sensoryFeedback(.selection, trigger: store.dateKey)
     }
@@ -231,12 +232,38 @@ private struct DayHeader: View {
     private func arrow(_ title: String, _ symbol: String, days: Int) -> some View {
         Button { Task { await store.shift(days: days) } } label: {
             Image(systemName: symbol)
-                .font(.body.weight(.semibold))
-                .frame(width: 40, height: 40)
-                .contentShape(.circle)
+                .font(.footnote.weight(.semibold))
+                .frame(width: 44, height: 36)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
         .accessibilityLabel(title)
+    }
+}
+
+/// The transient message at the top; with an undo it stays a little longer.
+private struct ToastView: View {
+    let toast: NutritionView.Toast
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(toast.message)
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.leading)
+            if let undo = toast.undo {
+                Button("Deshacer") {
+                    undo()
+                    onClose()
+                }
+                .font(.subheadline.weight(.bold))
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .glassEffect()
+        .padding(.horizontal)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 
@@ -253,6 +280,10 @@ let previewNutritionSummary = NutritionSummary(
 
 #Preview("Cabecera · 375 pt · XXL") {
     NarrowPreview(dynamicType: .xxLarge) {
-        DayHeader(store: NutritionStore(), section: .constant(.plan))
+        Picker("Sección", selection: .constant(DietSection.hoy)) {
+            ForEach(DietSection.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        DaySwitcher(store: NutritionStore())
     }
 }

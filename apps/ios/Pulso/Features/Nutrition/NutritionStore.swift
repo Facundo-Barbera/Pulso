@@ -26,6 +26,19 @@ final class NutritionStore {
 
     func isEaten(_ item: DietPlanItem) -> Bool { day?.plan?.eatenItemIds.contains(item.id) ?? false }
 
+    /// The first planned meal with nothing logged in its slot yet.
+    var nextMeal: DietPlanForDay.Meal? {
+        guard let day, let plan = day.plan else { return nil }
+        let logged = Set(day.meals.map(\.slot))
+        return plan.meals.first { meal in !logged.contains(meal.slot) && !meal.items.allSatisfy(isEaten) }
+    }
+
+    /// Frequent foods and snacks in one list, for the Registrar sheet.
+    var allFrequent: [FrequentFood] {
+        var seen = Set<String>()
+        return (frequent + frequentSnacks).filter { seen.insert($0.id).inserted }
+    }
+
     func shift(days: Int) async {
         date = Calendar.current.date(byAdding: .day, value: days, to: date) ?? date
         await load()
@@ -76,6 +89,15 @@ final class NutritionStore {
         await run { _ = try await api.eatPlanItem(item.id, date: dateKey) }
     }
 
+    /// "Comí lo del plan": every item of the meal not yet logged, with one reload.
+    @discardableResult
+    func eat(_ meal: DietPlanForDay.Meal) async -> Bool {
+        guard let api else { return false }
+        let items = meal.items.filter { !isEaten($0) }
+        let key = dateKey
+        return await run { for item in items { _ = try await api.eatPlanItem(item.id, date: key) } }
+    }
+
     /// "Copiar ayer": every entry of the previous day onto the selected one.
     func copyPreviousDay() async -> Int {
         guard let api, let previous = Calendar.current.date(byAdding: .day, value: -1, to: date) else { return 0 }
@@ -87,8 +109,10 @@ final class NutritionStore {
     // MARK: Water
 
     /// Adds water right away (the card fills before the Mac answers), then mirrors it to Salud.
-    func addWater(ml: Double) async {
-        guard let api, ml > 0 else { return }
+    /// Returns the logged entry, so it can be undone.
+    @discardableResult
+    func addWater(ml: Double) async -> WaterEntry? {
+        guard let api, ml > 0 else { return nil }
         let key = dateKey
         if var water = day?.water {
             water.totalMl += ml
@@ -98,20 +122,29 @@ final class NutritionStore {
             let (entry, updated) = try await api.logWater(ml: ml, date: key, loggedAt: eatenAtNow().timeIntervalSince1970 * 1000)
             if dateKey == key { day?.water = updated }
             await WaterHealth.save(entry)
+            return entry
         } catch {
             PulsoModel.shared.handle(error)
             await load()
+            return nil
         }
     }
 
     /// Removes the day's latest water entry, here and in Salud.
     func undoWater() async {
-        guard let api, let last = day?.water?.entries.last else { return }
-        day?.water?.entries.removeLast()
-        day?.water?.totalMl -= last.amountMl
+        guard let last = day?.water?.entries.last else { return }
+        await removeWater(last)
+    }
+
+    func removeWater(_ entry: WaterEntry) async {
+        guard let api else { return }
+        if day?.water?.entries.contains(entry) == true {
+            day?.water?.entries.removeAll { $0.id == entry.id }
+            day?.water?.totalMl -= entry.amountMl
+        }
         do {
-            try await api.deleteWater(last.id)
-            await WaterHealth.delete(last.id)
+            try await api.deleteWater(entry.id)
+            await WaterHealth.delete(entry.id)
         } catch {
             PulsoModel.shared.handle(error)
         }

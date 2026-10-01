@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Dieta · Hoy: the macro hero, what's left with the next planned meal,
-/// water, and the day's meals as a timeline of collapsible slots.
+/// Dieta · Hoy: the macro hero with the next planned meal under it, water in
+/// one row, and the day's meals as a timeline of collapsible slots.
 struct NutritionTodaySection: View {
     let day: NutritionDay
     let store: NutritionStore
     @Binding var sheet: NutritionView.Sheet?
     let showPlan: () -> Void
+    let addWater: (Double) -> Void
+    let undoWater: () -> Void
     let copyPrevious: () -> Void
     /// Opens the Coach with this text waiting in the composer.
     let draftForCoach: (String) -> Void
@@ -15,15 +17,16 @@ struct NutritionTodaySection: View {
         Card {
             MacroHero(summary: day.summary) { sheet = .targets }
                 .padding(.vertical, 6)
-        }
-        if let remaining = day.summary.remaining {
-            RemainingCard(remaining: remaining, next: nextMeal, adjusted: day.plan?.adjustment != nil, onOpenPlan: showPlan)
+            if let next = store.nextMeal {
+                Divider().padding(.top, 6)
+                NextMealLine(meal: next, onOpenPlan: showPlan)
+            }
         }
         if let water = day.water {
             WaterCard(
                 water: water,
-                onAdd: { ml in Task { await store.addWater(ml: ml) } },
-                onUndo: { Task { await store.undoWater() } },
+                onAdd: addWater,
+                onUndo: undoWater,
                 onCustom: { sheet = .waterAmount },
                 onSettings: { sheet = .water }
             )
@@ -37,107 +40,68 @@ struct NutritionTodaySection: View {
         }
     }
 
-    /// The first planned meal with nothing logged in its slot yet.
-    private var nextMeal: DietPlanForDay.Meal? {
-        guard let plan = day.plan else { return nil }
-        let logged = Set(day.meals.map(\.slot))
-        return plan.meals.first { meal in !logged.contains(meal.slot) && !meal.items.allSatisfy { store.isEaten($0) } }
-    }
-
+    /// Symbol, one line, one action: telling the Coach today, copying the day before on a past day.
     private var emptyDay: some View {
         Card {
-            VStack(spacing: 12) {
-                Image(systemName: "fork.knife.circle.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(Theme.energy.gradient)
-                    .symbolEffect(.bounce, value: store.dateKey)
-                Text(store.isToday ? "Cuéntale al Coach qué comiste" : "Nada registrado este día")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                // Side by side these need ~410 pt; a 375 pt card has ~310, so they stack.
-                AdaptiveStack {
-                    Button("Copiar el día anterior", systemImage: "doc.on.doc", action: copyPrevious)
-                        .buttonStyle(.glass)
-                    if store.isToday {
-                        Button("Contarle al Coach", systemImage: "sparkles") { draftForCoach("A las \(Date.now.formatted(date: .omitted, time: .shortened)) comí ") }
-                            .buttonStyle(.glassProminent)
-                    }
+            EmptyStateView(
+                systemImage: "fork.knife.circle",
+                title: store.isToday ? "Nada registrado hoy" : "Nada registrado este día",
+                message: store.isToday ? "Toca Registrar o cuéntale al Coach qué comiste." : nil,
+                tint: Theme.energy,
+                actionTitle: store.isToday ? "Contarle al Coach" : "Copiar el día anterior"
+            ) {
+                if store.isToday {
+                    draftForCoach("A las \(Date.now.formatted(date: .omitted, time: .shortened)) comí ")
+                } else {
+                    copyPrevious()
                 }
-                .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
+            .symbolEffect(.bounce, value: store.dateKey)
         }
     }
 }
 
-/// "Te quedan": the day's remaining macros, and the next meal of the plan.
-private struct RemainingCard: View {
-    let remaining: NutritionMacros
-    let next: DietPlanForDay.Meal?
-    let adjusted: Bool
+/// "Siguiente: Desayuno · 428 kcal" under the hero, quiet; the foods only when they fit.
+private struct NextMealLine: View {
+    let meal: DietPlanForDay.Meal
     let onOpenPlan: () -> Void
 
-    var body: some View {
-        Card {
-            CardTitle(text: remaining.kcal >= 0 ? "Te quedan" : "Te pasaste", systemImage: "chart.pie")
-            HStack(spacing: 8) {
-                tile("kcal", remaining.kcal, Theme.energy)
-                tile("Prot.", remaining.protein, Theme.protein)
-                tile("Carbos", remaining.carbs, Theme.carbs)
-                tile("Grasa", remaining.fat, Theme.fat)
-            }
-            if let next {
-                Divider().padding(.vertical, 2)
-                Button(action: onOpenPlan) {
-                    HStack(spacing: 12) {
-                        Image(systemName: next.slot.systemImage)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Theme.body)
-                            .frame(width: 34, height: 34)
-                            .background(Theme.body.opacity(0.14), in: .circle)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text("Siguiente: \(next.slot.title)").font(.subheadline.weight(.semibold))
-                                if next.adjusted {
-                                    Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.training)
-                                        .accessibilityLabel("Ajustado por el Coach")
-                                }
-                            }
-                            Text(next.items.map(\.name).joined(separator: ", "))
-                                .font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 6)
-                        Text("\(Int(next.items.reduce(0) { $0 + $1.kcal })) kcal")
-                            .font(.caption.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
-                            .foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
-                    }
-                    .lineLimit(1)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Abre el plan")
-            }
-        }
-    }
+    private var kcal: Int { Int(meal.items.reduce(0) { $0 + $1.kcal }) }
+    private var foods: String { meal.items.map(\.name).joined(separator: ", ") }
 
-    private func tile(_ title: String, _ value: Double, _ color: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(abs(value), format: .number.precision(.fractionLength(0)))
-                .font(.headline.monospacedDigit())
-                .foregroundStyle(value < 0 ? Theme.energy : .primary)
-                .contentTransition(.numericText(value: value))
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+    var body: some View {
+        Button(action: onOpenPlan) {
+            HStack(spacing: 12) {
+                Image(systemName: meal.slot.systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.body)
+                    .frame(width: 32, height: 32)
+                    .background(Theme.body.opacity(0.14), in: .circle)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Siguiente: \(meal.slot.title)").font(.subheadline.weight(.semibold))
+                        if meal.adjusted {
+                            Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.training)
+                                .accessibilityLabel("Ajustado por el Coach")
+                        }
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        Text("\(kcal) kcal · \(foods)")
+                        Text("\(kcal) kcal · \(meal.items.count) \(meal.items.count == 1 ? "alimento" : "alimentos")")
+                        Text("\(kcal) kcal")
+                    }
+                    .font(.caption.monospacedDigit()).fontDesign(.rounded)
+                    .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
         }
-        .fontDesign(.rounded)
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .animation(.snappy, value: value)
+        .buttonStyle(.plain)
+        .accessibilityHint("Abre el plan")
     }
 }
 
@@ -261,17 +225,26 @@ private struct SlotRow: View {
         .sensoryFeedback(.selection, trigger: expanded)
     }
 
+    /// Title, a dot when off the plan, the time; what it was on the second line only when it fits whole.
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(group.title).font(.headline)
-                HStack(spacing: 4) {
-                    Text(time, format: .dateTime.hour().minute())
+                HStack(spacing: 6) {
+                    Text(group.title).font(.headline)
                     if offPlan {
-                        Text("· Fuera del plan").foregroundStyle(Theme.carbs)
+                        Circle().fill(Theme.carbs).frame(width: 7, height: 7)
+                            .accessibilityLabel("Fuera del plan")
                     }
-                    if !expanded {
-                        Text("· \(note ?? meals.map(\.name).joined(separator: ", "))")
+                }
+                let clock = Text(time, format: .dateTime.hour().minute())
+                Group {
+                    if expanded {
+                        clock
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            Text("\(clock) · \(note ?? meals.map(\.name).joined(separator: ", "))")
+                            clock
+                        }
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
@@ -407,19 +380,37 @@ private let previewMeals = [
               measure: Measure(amount: 1, unit: .puño)),
 ]
 
-#Preview("Hoy · 375 pt · XXL") {
-    NarrowPreview(dynamicType: .xxLarge) {
-        RemainingCard(remaining: previewNutritionSummary.remaining!,
-                      next: DietPlanForDay.Meal(slot: .merienda, name: nil, items: [
-                          DietPlanItem(id: "y", name: "Yogur griego", quantity: 255, unit: .g, kcal: 240, protein: 22, carbs: 9, fat: 12, fiber: 0),
-                      ], change: "scaled"),
-                      adjusted: true) {}
-        MealTimeline(meals: previewMeals) { _ in }
+private let previewWater = WaterDay(date: "2026-10-01", totalMl: 250, goalMl: 3700, goalSource: "weight",
+                                    entries: [WaterEntry(id: "w", date: "2026-10-01", loggedAt: 0, amountMl: 250, source: "manual")],
+                                    settings: .standard)
+
+@MainActor private func previewToday(_ day: NutritionDay) -> some View {
+    NutritionTodaySection(day: day, store: NutritionStore(), sheet: .constant(nil), showPlan: {}, addWater: { _ in },
+                          undoWater: {}, copyPrevious: {}, draftForCoach: { _ in })
+}
+
+#Preview("Hoy · con datos") {
+    NarrowPreview {
+        previewToday(NutritionDay(summary: previewNutritionSummary, meals: previewMeals, plan: nil, water: previewWater))
     }
 }
 
-#Preview("Hoy · 375 pt") {
-    NarrowPreview {
+#Preview("Hoy · vacío · 375 pt · XXL") {
+    let empty = NutritionSummary(date: "2026-10-01", totals: .zero, targets: previewNutritionSummary.targets,
+                                 remaining: nil, bySlot: [:], entries: 0)
+    NarrowPreview(dynamicType: .xxLarge) {
+        previewToday(NutritionDay(summary: empty, meals: [], plan: nil, water: previewWater))
+    }
+}
+
+#Preview("Siguiente · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        Card {
+            NextMealLine(meal: DietPlanForDay.Meal(slot: .desayuno, name: nil, items: [
+                DietPlanItem(id: "p", name: "Pan integral", quantity: 60, unit: .g, kcal: 150, protein: 6, carbs: 28, fat: 2, fiber: 4),
+                DietPlanItem(id: "h", name: "Huevos enteros", quantity: 2, unit: .serving, kcal: 156, protein: 13, carbs: 1, fat: 11, fiber: 0),
+            ], change: "scaled")) {}
+        }
         MealTimeline(meals: previewMeals) { _ in }
     }
 }
