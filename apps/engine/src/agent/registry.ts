@@ -5,7 +5,8 @@
  */
 import type { tool } from "@anthropic-ai/claude-agent-sdk";
 import { workoutTools } from "../workouts-tools";
+import { profileTools } from "./tools";
 
 export type PulsoTool = ReturnType<typeof tool<any>>;
 
-export const TOOLS: PulsoTool[] = [...workoutTools];
+export const TOOLS: PulsoTool[] = [...workoutTools, ...profileTools];
