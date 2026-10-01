@@ -44,9 +44,26 @@ export type PlanSlot = {
   entryIds: string[];
   /** What was eaten instead, when replaced (entry names). */
   replacedBy: string | null;
+  /** What was actually eaten for this meal (the entries tied to it), when anything was: Planeado → Real. */
+  real: RealMeal | null;
+  /** Still pending well after its time (or on a past day) with nothing logged: «sin registrar», a soft state, not a skip. */
+  missed: boolean;
   /** Minutes of cooking that day: the recipe's prep time; 0 for a batch portion or eating out; null when unknown. */
   cookMinutes: number | null;
   note: string | null;
+};
+
+/** The entries tied to a meal, as one meal: "Tortitas de carne de res, queso amarillo y arroz blanco · 965 kcal". */
+export type RealMeal = {
+  /** Entry names in one line, or the person's own words when they gave them. */
+  label: string;
+  entryIds: string[];
+  /** Totals of those entries: kcal and grams. */
+  macros: Macros;
+  /** When the first of them was eaten, epoch ms. */
+  eatenAt: number;
+  /** True when it is exactly what the plan had (its items, ticked or logged as planned). */
+  asPlanned: boolean;
 };
 
 export type DietDay = {
@@ -56,6 +73,12 @@ export type DietDay = {
   slots: PlanSlot[];
   /** What the day's planned slots add up to now (eaten + still planned). */
   planned: Macros;
+  /** Everything the plan had for the day as written (every slot, whatever happened to it): the «Planeado» total. */
+  asPlanned: Macros;
+  /** Everything logged that day, meals and extras: the «Real» total. */
+  real: Macros;
+  /** Entries logged that day that no meal holds (snacks, drinks): the day's «Extras», oldest first. */
+  extraIds: string[];
   /** kcal moved onto this day by spreading a deviation (negative = lighter day). */
   shiftKcal: number;
   /** The day's kcal goal: targets (or the plan day's total) plus the shift. */
@@ -135,7 +158,7 @@ export type DietHorizon = {
 export type PlanRevision = {
   id: string;
   planId: string;
-  /** The operation: skip, replace, rebalance, spread, ingredient_unavailable, no_time_to_cook, move, swap_days, fill, schedule_prep, prep_cooked, use_leftover, undo. */
+  /** The operation: log (a meal tied to its slot), skip, replace, ate_out, place, rebalance, spread, ingredient_unavailable, no_time_to_cook, move, swap_days, fill, schedule_prep, prep_cooked, use_leftover. */
   op: string;
   /** What changed, in Spanish: "Cambié salmón por atún en 2 comidas (mar, jue)." */
   summary: string;

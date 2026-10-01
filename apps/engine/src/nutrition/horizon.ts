@@ -1,13 +1,14 @@
 /** Reading the dated plan: slots with their status, days, prep batches and the horizon the UIs draw. */
-import type { DietDay, DietHorizon, DietPlan, PlanItem, PlanSlot, PrepBatch, SlotStatus } from "@pulso/contract";
+import type { DietDay, DietHorizon, DietPlan, Macros, PlanItem, PlanSlot, PrepBatch, RealMeal, SlotStatus } from "@pulso/contract";
 import { db } from "../db";
 import type { Line } from "../shopping/aggregate";
 import { addDays, localDate } from "./dates";
-import { sum } from "./macros";
+import { pick, sum } from "./macros";
+import { eatenWords, mealClock, minuteOfDay, MISSED_AFTER_MIN, repairOnce } from "./reconcile";
 import { findRecipe, ingredientLines, prepRows, type PrepRow } from "./recipes";
 import { lastRevision } from "./revisions";
 import { dayRow, horizonDays, itemsOf, linksOf, materializeRange, slotRows, type LinkRow, type SlotRow } from "./slots";
-import { activePlan, getAdjustment, getTargets } from "./store";
+import { activePlan, getAdjustment, getTargets, listMeals } from "./store";
 
 export class PlanError extends Error {}
 
@@ -22,17 +23,40 @@ export function statusOf(row: SlotRow, links: LinkRow[]): SlotStatus {
   return links.some((l) => l.slot_id === row.id && l.role === "planned") ? "eaten" : "planned";
 }
 
-/** Slot rows as the UIs and the Coach see them. */
-export function slotViews(rows: SlotRow[]): PlanSlot[] {
+type LinkedEntry = Macros & { id: string; name: string; eaten_at: number };
+
+/** The entries tied to a slot, as one real meal. */
+function realMeal(own: LinkRow[], entries: Map<string, LinkedEntry>): RealMeal | null {
+  const eaten = own.map((l) => entries.get(l.entry_id)).filter((e): e is LinkedEntry => !!e).sort((a, b) => a.eaten_at - b.eaten_at);
+  if (!eaten.length) return null;
+  return {
+    label: eatenWords(eaten.map((e) => e.name)),
+    entryIds: eaten.map((e) => e.id),
+    macros: sum(eaten.map(pick)),
+    eatenAt: eaten[0]!.eaten_at,
+    asPlanned: own.every((l) => l.role === "planned"),
+  };
+}
+
+/** Slot rows as the UIs and the Coach see them. `now` decides which pending meals read «sin registrar». */
+export function slotViews(rows: SlotRow[], now = Date.now()): PlanSlot[] {
   const links = linksOf(rows.map((r) => r.id));
-  const names = new Map(
+  const entries = new Map(
     links.length
       ? db()
-          .query<{ id: string; name: string }, string[]>(`SELECT id, name FROM meal_entries WHERE id IN (${links.map(() => "?").join(",")})`)
+          .query<LinkedEntry, string[]>(`SELECT id, name, eaten_at, kcal, protein, carbs, fat, fiber FROM meal_entries WHERE id IN (${links.map(() => "?").join(",")})`)
           .all(...links.map((l) => l.entry_id))
-          .map((e) => [e.id, e.name])
+          .map((e) => [e.id, e])
       : [],
   );
+  const today = localDate(now);
+  const clocks = new Map<string, ReturnType<typeof mealClock>>();
+  const missed = (row: SlotRow) => {
+    if (row.date > today) return false;
+    if (row.date < today) return true;
+    if (!clocks.has(row.date)) clocks.set(row.date, mealClock(row.date));
+    return minuteOfDay(now) >= clocks.get(row.date)![row.slot] + MISSED_AFTER_MIN;
+  };
   const adjustments = new Map<string, ReturnType<typeof getAdjustment>>();
   return rows.map((row) => {
     if (!adjustments.has(row.date)) adjustments.set(row.date, getAdjustment(row.date, row.plan_id));
@@ -41,7 +65,7 @@ export function slotViews(rows: SlotRow[]): PlanSlot[] {
     const items = itemsOf(row);
     const meal = status === "planned" ? adjustments.get(row.date)?.meals.find((m) => m.slot === row.slot && m.change !== "same") : undefined;
     const adjusted: PlanItem[] | null = meal?.items ?? null;
-    const replacedBy = own.filter((l) => l.role === "replacement").map((l) => names.get(l.entry_id)).filter(Boolean);
+    const replacedBy = own.filter((l) => l.role === "replacement").map((l) => entries.get(l.entry_id)?.name).filter(Boolean);
     const recipe = row.kind === "recipe" && row.recipe_id ? findRecipe(row.recipe_id) : null;
     return {
       id: row.id,
@@ -59,6 +83,8 @@ export function slotViews(rows: SlotRow[]): PlanSlot[] {
       status,
       entryIds: own.map((l) => l.entry_id),
       replacedBy: replacedBy.length ? replacedBy.join(", ") : null,
+      real: realMeal(own, entries),
+      missed: status === "planned" && missed(row),
       cookMinutes: row.kind === "prep" || row.kind === "eat_out" ? 0 : recipe ? recipe.prepMinutes : null,
       note: row.note,
     };
@@ -66,17 +92,22 @@ export function slotViews(rows: SlotRow[]): PlanSlot[] {
 }
 
 export function dietDay(plan: DietPlan, date: string): DietDay {
+  repairOnce();
   materializeRange(plan, date, date);
   const slots = slotViews(slotRows(plan.id, date));
   const marker = dayRow(plan.id, date)!;
   const counted = slots.filter((s) => s.status === "planned" || s.status === "eaten");
   const planned = sum(counted.map((s) => s.macros));
   const goal = getTargets()?.kcal ?? sum(slots.filter((s) => s.status !== "replaced").flatMap((s) => s.items)).kcal;
+  const logged = listMeals(date);
   return {
     date,
     label: marker.label,
     slots,
     planned,
+    asPlanned: sum(slots.flatMap((s) => s.items)),
+    real: sum(logged.map(pick)),
+    extraIds: logged.filter((e) => !e.slotId).map((e) => e.id),
     shiftKcal: marker.shift_kcal,
     goalKcal: Math.round(goal + marker.shift_kcal),
     adjustment: getAdjustment(date, plan.id),

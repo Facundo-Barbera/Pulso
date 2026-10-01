@@ -16,6 +16,7 @@ import { PlanError, prepView, requirePlan, slotViews, statusOf } from "./horizon
 import { MACRO_KEYS, round, sum } from "./macros";
 import type { Fill, OpInput } from "./plan-inputs";
 import { createRecipe, dishItem, getPrepRow, getRecipe, ingredientLines, insertPrep, updatePrep } from "./recipes";
+import { tie, untie } from "./reconcile";
 import { revise, undoRevision } from "./revisions";
 import {
   dayRow,
@@ -210,9 +211,9 @@ export function replaceSlot(input: OpInput<"replace">): PlanChange {
   const out = revise({ planId: plan.id, op: "replace", dates }, () => {
     const planned = slotKcal(row);
     const eaten = sum(entries).kcal;
-    for (const e of entries) {
-      db().query("INSERT OR REPLACE INTO meal_slot_links (entry_id, slot_id, role) VALUES (?, ?, 'replacement')").run(e.id, row.id);
-    }
+    // Entries reconciling tied elsewhere move here; the meal they leave settles.
+    untie(entries.map((e) => e.id));
+    tie(entries, row, true);
     const what = input.what ?? (entries.length ? listWords(entries.map((e) => e.name)) : "otra cosa");
     updateSlot(row.id, { status: "replaced", note: input.what ?? row.note });
     const deviation = entries.length ? eaten - planned : 0;
@@ -222,6 +223,73 @@ export function replaceSlot(input: OpInput<"replace">): PlanChange {
     return { summary, compensation };
   });
   return change(plan, dates, out.summary, out.revision, out.compensation);
+}
+
+/** Restaurants serve more than a home plate: with no estimate, eating out counts as the planned meal plus this. */
+const EAT_OUT_FACTOR = 1.3;
+
+/**
+ * «Comí fuera»: logs an estimate of what was eaten out (given, else the
+ * planned meal × 1.3) as the real meal of that slot. Undo deletes the estimate.
+ */
+export function ateOut(input: OpInput<"ate_out">): PlanChange {
+  const plan = requirePlan();
+  const row = resolveSlot(plan, input, true);
+  if (linksOf([row.id]).length) throw new PlanError(`The ${row.slot} of ${row.date} already has what was eaten: delete it or use place first.`);
+  const dates = [row.date, ...compensationDates(row.date, input)];
+  materializeRange(plan, dates[0]!, dates.at(-1)!);
+  const planned = sum(itemsOf(row));
+  const given = input.kcal !== undefined;
+  const macros = given
+    ? round({ kcal: input.kcal!, protein: input.protein ?? 0, carbs: input.carbs ?? 0, fat: input.fat ?? 0, fiber: input.fiber ?? 0 })
+    : round(Object.fromEntries(MACRO_KEYS.map((k) => [k, planned[k] * EAT_OUT_FACTOR])) as typeof planned);
+  const name = input.name?.trim() || "Comida fuera";
+  const out = revise({ planId: plan.id, op: "ate_out", dates }, () => {
+    const at = input.eatenAt ?? (row.date === localDate() ? Date.now() : Date.parse(`${row.date}T12:00:00`));
+    const id = randomUUID();
+    db()
+      .query(
+        `INSERT INTO meal_entries (id, date, eaten_at, slot, name, quantity, unit, kcal, protein, carbs, fat, fiber, source, barcode, plan_item_id)
+         VALUES (?, ?, ?, ?, ?, 1, 'serving', ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+      )
+      .run(id, row.date, Math.round(at), row.slot, name, macros.kcal, macros.protein, macros.carbs, macros.fat, macros.fiber, "manual");
+    db().query("INSERT INTO meal_entry_context (entry_id, off_plan, note) VALUES (?, 1, ?)").run(id, input.note ?? (given ? null : "Estimación"));
+    db().query("INSERT INTO meal_slot_links (entry_id, slot_id, role) VALUES (?, ?, 'replacement')").run(id, row.id);
+    updateSlot(row.id, { status: "replaced" });
+    const deviation = macros.kcal - planned.kcal;
+    const compensation = compensateFor(plan, row.date, deviation, input);
+    const estimate = given ? "" : ", estimado";
+    const summary = `${capitalize(where(row))}: comiste fuera en vez de ${contents(row)} (${n(macros.kcal)} kcal${estimate}, ${signed(deviation)} kcal).${compensation.summary ? ` ${compensation.summary}` : ""}`;
+    return { summary, compensation, logged: [id] };
+  });
+  return change(plan, dates, out.summary, out.revision, out.compensation);
+}
+
+/**
+ * «Eso fue mi desayuno» / «eso fue un snack»: ties logged entries to another
+ * meal, or makes them extras that reconciling leaves alone.
+ */
+export function placeEntries(input: OpInput<"place">): PlanChange {
+  const plan = requirePlan();
+  const found = input.entryIds.map((id) => db().query<{ date: string }, [string]>("SELECT date FROM meal_entries WHERE id = ?").get(id));
+  if (found.some((f) => !f)) throw new PlanError("Some entryIds are not logged.");
+  const date = found[0]!.date;
+  const entries = listMeals(date).filter((e) => input.entryIds.includes(e.id));
+  if (entries.length !== input.entryIds.length) throw new PlanError("Place entries of one day at a time.");
+  const target = input.extra ? null : resolveSlot(plan, { date, slot: input.slot, slotId: input.slotId }, true);
+  if (!input.extra && !target) throw new PlanError("Say which meal (slot or slotId), or extra: true.");
+  const out = revise({ planId: plan.id, op: "place", dates: [date] }, () => {
+    const what = lower(listWords(entries.map((e) => e.name)));
+    untie(entries.map((e) => e.id));
+    if (!target) {
+      for (const e of entries) db().query("INSERT OR REPLACE INTO meal_entry_pins (entry_id, pin) VALUES (?, 'extra')").run(e.id);
+      return { summary: `${capitalize(what)} queda como extra del ${dayLabel(date)}.` };
+    }
+    tie(entries, target);
+    const article = target.slot === "desayuno" || target.slot === "snack" ? "el" : "la";
+    return { summary: `${capitalize(what)} pasa a ser ${article} ${where(target)} (en vez de ${contents(target)}).` };
+  });
+  return change(plan, [date], out.summary, out.revision);
 }
 
 export function rebalanceDay(input: OpInput<"rebalance">): PlanChange & { adjustment: AdjustResult } {
@@ -547,6 +615,8 @@ export function undo(id?: string): PlanChange {
 export const OPS = {
   skip: skipSlot,
   replace: replaceSlot,
+  ate_out: ateOut,
+  place: placeEntries,
   rebalance: rebalanceDay,
   spread,
   ingredient_unavailable: ingredientUnavailable,

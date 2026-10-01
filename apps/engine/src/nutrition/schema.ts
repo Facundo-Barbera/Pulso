@@ -117,6 +117,16 @@ export const NUTRITION_SCHEMA = `
     role TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS meal_slot_links_slot ON meal_slot_links (slot_id);
+  -- Entries the person or the Coach said are extras ("eso fue un snack"): reconciling never ties them to a meal.
+  CREATE TABLE IF NOT EXISTS meal_entry_pins (
+    entry_id TEXT PRIMARY KEY REFERENCES meal_entries (id) ON DELETE CASCADE,
+    pin TEXT NOT NULL
+  );
+  -- One-off data repairs that already ran (e.g. tying meals logged before reconciling existed).
+  CREATE TABLE IF NOT EXISTS nutrition_repairs (
+    name TEXT PRIMARY KEY,
+    ran_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS recipes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

@@ -149,7 +149,7 @@ export function Timeline({ day, className, delay }: { day: DietaDay; className?:
         <ol>
           {day.moments.map((moment, i) => {
             const Icon = momentIcon(moment);
-            const tint = moment.offPlan ? "var(--domain-carbs)" : ENERGY;
+            const tint = ENERGY;
             const last = i === day.moments.length - 1;
             return (
               <li key={moment.id} className="flex gap-3.5">
@@ -164,7 +164,6 @@ export function Timeline({ day, className, delay }: { day: DietaDay; className?:
                     <p className="text-[15px] font-semibold">{moment.title}</p>
                     <p className="text-muted-foreground text-[12px] tabular">
                       {moment.time}
-                      {moment.offPlan && <span className="text-carbs"> · Fuera del plan</span>}
                     </p>
                     <p className="text-muted-foreground ml-auto text-[13px] font-medium tabular">{fmtNumber(moment.kcal)} kcal</p>
                   </div>

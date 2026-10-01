@@ -45,7 +45,6 @@ export type Moment = {
   title: string;
   drink: boolean;
   time: string;
-  offPlan: boolean;
   note: string | null;
   kcal: number;
   entries: DietaEntry[];
@@ -115,7 +114,6 @@ export function moments(meals: MealEntry[]): Moment[] {
       title: slot === "snack" && drink ? "Bebida" : SLOT_LABELS[slot],
       drink,
       time: timeOf(entries[0]!.eatenAt),
-      offPlan: entries.some((e) => e.offPlan),
       note: entries.find((e) => e.note)?.note ?? null,
       kcal: kcalOf(entries),
       entries: entries.map((e) => ({ ...e, time: timeOf(e.eatenAt) })),
@@ -245,8 +243,10 @@ export function mealById(id: string): MealEntry | undefined {
 
 /**
  * Rewrites an entry with what the person corrected (name, amount, macros, slot,
- * time). Where it came from — source, plan item, barcode, off-plan mark, note —
- * stays. The entry gets a new id. Undefined when it does not exist.
+ * time). Where it came from — source, plan item, barcode, note — stays, and so
+ * does the meal it was tied to while it stays the same meal on the same day;
+ * otherwise it is reconciled again. The entry gets a new id. Undefined when it
+ * does not exist.
  */
 export function replaceMeal(id: string, input: MealInput): MealEntry | undefined {
   return db().transaction(() => {
@@ -257,6 +257,7 @@ export function replaceMeal(id: string, input: MealInput): MealEntry | undefined
       ...input,
       barcode: old.barcode,
       planItemId: old.planItemId,
+      slotId: old.slotId && input.slot === old.slot && (input.date ?? old.date) === old.date ? old.slotId : null,
       offPlan: old.offPlan,
       note: input.note === undefined ? old.note : input.note,
     }, old.source);

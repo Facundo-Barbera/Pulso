@@ -55,6 +55,24 @@ export const opShapes = {
     what: z.string().trim().max(200).optional().describe("What was eaten instead, in the person's words, when not logged"),
     ...compensate,
   },
+  ate_out: {
+    ...where,
+    name: z.string().trim().max(120).optional().describe("What and where, in the person's words, e.g. 'Tacos al pastor con amigos'"),
+    kcal: z.number().min(0).max(5000).optional().describe("Estimated kcal of what they ate; omit to estimate as the planned meal × 1.3"),
+    protein: z.number().min(0).max(500).optional().describe("Grams, with kcal"),
+    carbs: z.number().min(0).max(800).optional().describe("Grams, with kcal"),
+    fat: z.number().min(0).max(400).optional().describe("Grams, with kcal"),
+    fiber: z.number().min(0).max(150).optional().describe("Grams, with kcal"),
+    eatenAt: z.number().int().optional().describe("Epoch ms; default now (or midday for another day)"),
+    note: z.string().trim().max(200).optional(),
+    ...compensate,
+  },
+  place: {
+    entryIds: z.array(z.string()).min(1).max(20).describe("Logged entries of one day (list_meals ids)"),
+    slot: slot.optional().describe("The meal they were, on their day (desayuno, comida…)"),
+    slotId: z.string().optional().describe("Exact slot id from get_diet_horizon"),
+    extra: z.boolean().optional().describe("true: they were a snack or extra, not any planned meal"),
+  },
   rebalance: {
     date: where.date,
     swaps: z

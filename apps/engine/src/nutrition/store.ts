@@ -19,7 +19,8 @@ import type {
 import { db } from "../db";
 import { addDays, DAY_MS, daysBetween, localDate } from "./dates";
 import { add, MACRO_KEYS, round, zero } from "./macros";
-import { dayRow, itemsOf, linkEntry, materialize, planDayIndex, slotRows } from "./slots";
+import { reconcileGroup, repairOnce, untie } from "./reconcile";
+import { dayRow, itemsOf, materialize, planDayIndex, slotRows } from "./slots";
 import { waterDay } from "./water";
 
 export { add, addDays, localDate, MACRO_KEYS, planDayIndex, round, zero };
@@ -43,7 +44,7 @@ type MealRow = {
   barcode: string | null;
   plan_item_id: string | null;
   slot_id: string | null;
-  off_plan: number | null;
+  role: "planned" | "replacement" | null;
   note: string | null;
   measure_amount: number | null;
   measure_unit: Measure["unit"] | null;
@@ -72,7 +73,8 @@ const toEntry = (r: MealRow): MealEntry => ({
   barcode: r.barcode,
   planItemId: r.plan_item_id,
   slotId: r.slot_id,
-  offPlan: r.off_plan === 1,
+  // Derived: it was eaten instead of a planned meal.
+  offPlan: r.role === "replacement",
   note: r.note,
   measure: measureOf(r),
   caffeineMg: r.caffeine_mg,
@@ -80,11 +82,11 @@ const toEntry = (r: MealRow): MealEntry => ({
 });
 
 // Every meal_entries read joins its side tables.
-const ENTRY_SELECT = `SELECT m.*, c.off_plan, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g, l.slot_id
+const ENTRY_SELECT = `SELECT m.*, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g, l.slot_id, l.role
   FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id LEFT JOIN meal_entry_detail d ON d.entry_id = m.id
   LEFT JOIN meal_slot_links l ON l.entry_id = m.id`;
 
-export function logMeal(input: MealInput, source: MealSource = input.source ?? "manual"): MealEntry {
+function insertMeal(input: MealInput, source: MealSource): MealEntry {
   const eatenAt = Math.round(input.eatenAt ?? Date.now());
   const entry: MealEntry = {
     id: randomUUID(),
@@ -126,16 +128,45 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
       .query("INSERT INTO meal_entry_detail (entry_id, measure_amount, measure_unit, measure_size, caffeine_mg, alcohol_g) VALUES (?, ?, ?, ?, ?, ?)")
       .run(entry.id, entry.measure?.amount ?? null, entry.measure?.unit ?? null, entry.measure?.size ?? null, entry.caffeineMg, entry.alcoholG);
   }
-  entry.slotId = linkEntry({ ...entry, slotId: input.slotId });
   return entry;
 }
 
-export function logMeals(inputs: MealInput[], source?: MealSource): MealEntry[] {
-  return db().transaction(() => inputs.map((input) => logMeal(input, source)))();
+export function logMeal(input: MealInput, source: MealSource = input.source ?? "manual"): MealEntry {
+  return logMeals([input], source)[0]!;
 }
 
+/**
+ * Logs entries and ties each meal of them (items logged together) to the plan
+ * slot it belongs to — the slot given, else the one reconcile.ts infers — or
+ * leaves it as an extra. `offPlan` with a slot ties it as eaten instead.
+ */
+export function logMeals(inputs: MealInput[], source?: MealSource): MealEntry[] {
+  return db().transaction(() => {
+    const entries = inputs.map((input) => insertMeal(input, source ?? input.source ?? "manual"));
+    const plan = activePlan();
+    if (plan) for (const date of new Set(entries.map((e) => e.date))) if (date >= localDate()) materialize(plan, date);
+    const given = new Map(entries.map((e, i) => [e.id, inputs[i]!] as const));
+    const meals = new Map<string, MealEntry[]>();
+    for (const e of entries) {
+      const key = `${e.date}|${e.eatenAt}|${e.slot}|${given.get(e.id)!.slotId ?? ""}`;
+      meals.set(key, [...(meals.get(key) ?? []), e]);
+    }
+    for (const meal of meals.values()) {
+      const input = given.get(meal[0]!.id)!;
+      reconcileGroup(meal, input.slotId ?? null, input.offPlan ?? false);
+    }
+    const dates = entries.map((e) => e.date).sort();
+    const stored = new Map(listMeals(dates[0]!, dates.at(-1)!).map((e) => [e.id, e]));
+    return entries.map((e) => stored.get(e.id) ?? e);
+  })();
+}
+
+/** Deletes an entry; the meal it was tied to goes back to pending when nothing else is tied to it. */
 export function deleteMeal(id: string): boolean {
-  return db().query("DELETE FROM meal_entries WHERE id = ?").run(id).changes > 0;
+  return db().transaction(() => {
+    untie([id]);
+    return db().query("DELETE FROM meal_entries WHERE id = ?").run(id).changes > 0;
+  })();
 }
 
 /** Entries from `from` to `to` inclusive (YYYY-MM-DD), in eating order. */
@@ -343,6 +374,7 @@ export function clearAdjustment(date: string): boolean {
 }
 
 export function nutritionDay(date: string): NutritionDay {
+  repairOnce();
   const meals = listMeals(date);
   return { summary: summarize(date, meals, getTargets()), meals, plan: planForDay(date, meals), water: waterDay(date) };
 }

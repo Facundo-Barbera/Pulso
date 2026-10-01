@@ -12,6 +12,12 @@ import type { PrepRow } from "./recipes";
 import type { DayRow, LinkRow, SlotRow } from "./slots";
 
 type AdjustmentRow = { date: string; plan_id: string; adjustment_json: string; created_at: number };
+type PinRow = { entry_id: string; pin: string };
+
+const pinsOn = (dates: string[]) =>
+  dates.length
+    ? db().query<PinRow, string[]>(`SELECT p.* FROM meal_entry_pins p JOIN meal_entries m ON m.id = p.entry_id WHERE m.date IN (${marks(dates.length)})`).all(...dates)
+    : [];
 
 type Snapshot = {
   dates: string[];
@@ -22,6 +28,10 @@ type Snapshot = {
   adjustments: AdjustmentRow[];
   preps: PrepRow[];
   pantry: ReturnType<typeof pantrySnapshot> | null;
+  /** «Extra» marks on the dates' log entries (older snapshots have none). */
+  pins?: PinRow[];
+  /** Log entries the change itself created (an estimate for eating out): undo deletes them. */
+  logged?: string[];
 };
 
 type RevisionRow = {
@@ -76,6 +86,7 @@ function capture(planId: string, dates: string[], prepIds: string[], pantry: boo
       : [],
     preps: prepIds.length ? db().query<PrepRow, string[]>(`SELECT * FROM prep_batches WHERE id IN (${marks(prepIds.length)})`).all(...prepIds) : [],
     pantry: pantry ? pantrySnapshot() : null,
+    pins: pinsOn(allDates),
   };
 }
 
@@ -112,18 +123,25 @@ function restore(planId: string, snap: Snapshot): void {
       .run(p.id, p.plan_id, p.recipe_id, p.cook_date, p.portions, p.status, p.cooked_at, p.created_at);
   }
   if (snap.pantry) restorePantry(snap.pantry);
+  if (snap.pins) {
+    for (const p of pinsOn(snap.dates)) db().query("DELETE FROM meal_entry_pins WHERE entry_id = ?").run(p.entry_id);
+    for (const p of snap.pins) db().query("INSERT OR IGNORE INTO meal_entry_pins (entry_id, pin) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM meal_entries WHERE id = ?)").run(p.entry_id, p.pin, p.entry_id);
+  }
+  if (snap.logged?.length) db().query(`DELETE FROM meal_entries WHERE id IN (${marks(snap.logged.length)})`).run(...snap.logged);
 }
 
 export type Scope = { planId: string; op: string; dates: string[]; prepIds?: string[]; pantry?: boolean };
 
 /**
  * Runs a change in one transaction and records it. `run` returns the Spanish
- * summary (and anything else the caller needs back).
+ * summary (and anything else the caller needs back); `logged` lists entries it
+ * created, which undo deletes.
  */
-export function revise<T extends { summary: string }>(scope: Scope, run: () => T): T & { revision: PlanRevision } {
+export function revise<T extends { summary: string; logged?: string[] }>(scope: Scope, run: () => T): T & { revision: PlanRevision } {
   return db().transaction(() => {
     const before = capture(scope.planId, scope.dates, scope.prepIds ?? [], scope.pantry ?? false);
     const result = run();
+    if (result.logged?.length) before.logged = result.logged;
     const row: RevisionRow = {
       id: randomUUID(),
       plan_id: scope.planId,

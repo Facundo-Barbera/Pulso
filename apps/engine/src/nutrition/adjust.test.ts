@@ -99,7 +99,7 @@ test("adjusting stores the remaining meals over the plan without changing it", (
 
   const today = nutritionDay("2034-01-05");
   expect(today.plan?.adjustment?.note).toBe("Comida fuera del plan");
-  expect(today.plan?.day.meals[3]?.items[0]?.quantity).toBe(200); // the plan is untouched
+  expect(today.plan?.day.meals.find((x) => x.slot === "cena")?.items[0]?.quantity).toBe(200); // the plan is untouched
   expect(planForDay("2034-01-06")?.adjustment).toBeNull(); // other days too
 
   // Ticking a scaled item logs the adjusted portion.

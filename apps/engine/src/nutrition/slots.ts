@@ -8,7 +8,6 @@
 import { randomUUID } from "node:crypto";
 import { MEAL_SLOTS, type DietPlan, type MealEntry, type MealSlot, type PlanItem, type SlotKind } from "@pulso/contract";
 import { db } from "../db";
-import { consume } from "../shopping/pantry";
 import type { Line } from "../shopping/aggregate";
 import { addDays, daysBetween } from "./dates";
 import { findRecipe, ingredientLines } from "./recipes";
@@ -140,24 +139,9 @@ export function slotWithItem(date: string, itemId: string): SlotRow | null {
 }
 
 /** What eating `entry` as planned from `slot` uses up: the item itself, or its share of a recipe cooked that day. Batch portions were used up when cooked. */
-function eatenLines(entry: Pick<MealEntry, "name" | "quantity" | "unit">, slot: SlotRow): Line[] {
+export function eatenLines(entry: Pick<MealEntry, "name" | "quantity" | "unit">, slot: SlotRow): Line[] {
   if (slot.kind === "items") return [{ name: entry.name, quantity: entry.quantity, unit: entry.unit }];
   if (slot.kind !== "recipe" || !slot.recipe_id) return [];
   const recipe = findRecipe(slot.recipe_id);
   return recipe ? ingredientLines(recipe, entry.unit === "serving" ? entry.quantity : (slot.portions ?? 1)) : [];
-}
-
-/**
- * Ties a logged entry to its slot: the one given, or the one holding its plan
- * item. Off-plan entries replace the slot; on-plan ones eat it and use up the
- * pantry. Returns the slot id, or null when there is none to tie to.
- */
-export function linkEntry(entry: Pick<MealEntry, "id" | "date" | "name" | "quantity" | "unit" | "planItemId" | "offPlan"> & { slotId?: string | null }): string | null {
-  const slot = entry.slotId ? findSlotRow(entry.slotId) : entry.planItemId ? slotWithItem(entry.date, entry.planItemId) : null;
-  if (!slot) return null;
-  const role: LinkRow["role"] = entry.offPlan ? "replacement" : "planned";
-  db().query("INSERT OR REPLACE INTO meal_slot_links (entry_id, slot_id, role) VALUES (?, ?, ?)").run(entry.id, slot.id, role);
-  if (role === "replacement") updateSlot(slot.id, { status: "replaced" });
-  else consume(eatenLines(entry, slot));
-  return slot.id;
 }

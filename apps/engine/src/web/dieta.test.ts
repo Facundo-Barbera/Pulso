@@ -19,14 +19,13 @@ test("moments group a slot together and split snacks more than 45 minutes apart;
     logMeal(food("Avena", "desayuno", 300, { eatenAt: at(d, 8) })),
     logMeal(food("Café", "snack", 5, { eatenAt: at(d, 10), unit: "ml", quantity: 60 })),
     logMeal(food("Galleta", "snack", 80, { eatenAt: at(d, 10, 30) })),
-    logMeal(food("Cerveza", "snack", 140, { eatenAt: at(d, 21), unit: "ml", quantity: 330, offPlan: true })),
+    logMeal(food("Cerveza", "snack", 140, { eatenAt: at(d, 21), unit: "ml", quantity: 330 })),
     logMeal(food("Plátano", "desayuno", 90, { eatenAt: at(d, 8, 10) })),
   ];
   const result = moments(entries);
   expect(result.map((m) => [m.title, m.entries.length])).toEqual([["Desayuno", 2], ["Snack", 2], ["Bebida", 1]]);
   expect(result[0]!.kcal).toBe(390);
   expect(result[0]!.time).toBe("08:00");
-  expect(result[2]!.offPlan).toBe(true);
 });
 
 test("the day carries the plan with the adjustment laid over it, eaten marks and the next meal", () => {
@@ -83,7 +82,7 @@ test("replacing an entry keeps where it came from and changes what was corrected
   const original = logMeal(food("Yogur", "merienda", 120, { date: d, eatenAt: at(d, 17), offPlan: true, note: "Del súper" }), "barcode");
   const updated = replaceMeal(original.id, food("Yogur griego", "snack", 150, { date: d, eatenAt: at(d, 18), quantity: 125 }))!;
   expect(updated.name).toBe("Yogur griego");
-  expect([updated.slot, updated.kcal, updated.quantity, updated.source, updated.offPlan, updated.note]).toEqual(["snack", 150, 125, "barcode", true, "Del súper"]);
+  expect([updated.slot, updated.kcal, updated.quantity, updated.source, updated.note]).toEqual(["snack", 150, 125, "barcode", "Del súper"]);
   expect(listMeals(d).map((m) => m.id)).toEqual([updated.id]);
   expect(replaceMeal("missing", food("X", "snack", 1))).toBeUndefined();
 });
