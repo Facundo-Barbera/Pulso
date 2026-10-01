@@ -8,6 +8,8 @@ export const MIN_BASELINE = 5;
 export const SLEEP_TARGET = 480;
 
 const WEIGHTS = { hrv: 0.4, resting_hr: 0.3, sleep: 0.3 } as const;
+/** An estimated resting heart rate (from raw heart-rate samples) counts for a bit less than one Health measured. */
+export const ESTIMATE_WEIGHT = 0.7;
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -20,7 +22,7 @@ const sd = (xs: number[]) => {
 const fromZ = (z: number) => clamp(70 + 20 * z);
 
 function hrvFactor(value: number | null, history: number[]): ReadinessFactor {
-  const base = { key: "hrv", label: "VFC", value } as const;
+  const base = { key: "hrv", label: "VFC", value, estimated: false } as const;
   if (history.length < MIN_BASELINE) return { ...base, baseline: null, score: null, detail: `Armando tu media (${history.length}/${MIN_BASELINE} días)` };
   const baseline = mean(history);
   if (value === null) return { ...base, baseline, score: null, detail: "Sin medición de anoche" };
@@ -32,8 +34,8 @@ function hrvFactor(value: number | null, history: number[]): ReadinessFactor {
   return { ...base, baseline, score: fromZ(z), detail };
 }
 
-function restingFactor(value: number | null, history: number[]): ReadinessFactor {
-  const base = { key: "resting_hr", label: "Pulso en reposo", value } as const;
+function restingFactor(value: number | null, history: number[], estimated: boolean): ReadinessFactor {
+  const base = { key: "resting_hr", label: "Pulso en reposo", value, estimated: value !== null && estimated } as const;
   if (history.length < MIN_BASELINE) return { ...base, baseline: null, score: null, detail: `Armando tu media (${history.length}/${MIN_BASELINE} días)` };
   const baseline = mean(history);
   if (value === null) return { ...base, baseline, score: null, detail: "Sin medición de hoy" };
@@ -41,7 +43,7 @@ function restingFactor(value: number | null, history: number[]): ReadinessFactor
   const z = (baseline - value) / Math.max(sd(history), 1);
   const diff = Math.round(value - baseline);
   const detail = diff === 0 ? "En tu media" : `${Math.abs(diff)} lpm ${diff > 0 ? "por encima" : "por debajo"} de tu media`;
-  return { ...base, baseline, score: fromZ(z), detail };
+  return { ...base, baseline, score: fromZ(z), detail: base.estimated ? `${detail} (estimado)` : detail };
 }
 
 const hoursMinutes = (minutes: number) => {
@@ -51,7 +53,7 @@ const hoursMinutes = (minutes: number) => {
 };
 
 function sleepFactor(minutes: number | null): ReadinessFactor {
-  const base = { key: "sleep", label: "Sueño", value: minutes, baseline: SLEEP_TARGET } as const;
+  const base = { key: "sleep", label: "Sueño", value: minutes, baseline: SLEEP_TARGET, estimated: false } as const;
   if (minutes === null) return { ...base, score: null, detail: "Sin datos de sueño anoche" };
   // Full marks at the target, 20 points off per hour short.
   const score = clamp(100 - (Math.max(0, SLEEP_TARGET - minutes) / 60) * 20);
@@ -88,12 +90,13 @@ export function computeReadiness(date: DateString, today: DailyMetrics | undefin
 
   const factors = [
     hrvFactor(today?.hrv ?? null, hrvHistory),
-    restingFactor(today?.restingHeartRate ?? null, restingHistory),
+    restingFactor(today?.restingHeartRate ?? null, restingHistory, today?.restingHeartRateEstimated ?? false),
     sleepFactor(today?.sleepMinutes ?? null),
   ];
   const scored = factors.filter((f) => f.score !== null);
-  const weight = scored.reduce((a, f) => a + WEIGHTS[f.key], 0);
-  const score = scored.length ? clamp(scored.reduce((a, f) => a + f.score! * WEIGHTS[f.key], 0) / weight) : null;
+  const weightOf = (f: ReadinessFactor) => WEIGHTS[f.key] * (f.estimated ? ESTIMATE_WEIGHT : 1);
+  const weight = scored.reduce((a, f) => a + weightOf(f), 0);
+  const score = scored.length ? clamp(scored.reduce((a, f) => a + f.score! * weightOf(f), 0) / weight) : null;
   const level = score === null ? "unknown" : score >= 75 ? "high" : score >= 50 ? "medium" : "low";
   const baselineDays = window.filter((d) => d.hrv !== null || d.restingHeartRate !== null).length;
   return { date, score, level, factors, explanation: explain(level, scored), baselineDays };
