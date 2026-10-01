@@ -14,7 +14,7 @@ app/
     loading.tsx           skeleton shown while a section's server data loads
     page.tsx              Hoy  (/)
     _hoy/                 Hoy's own components
-    coach/ entreno/ dieta/ cuerpo/ sueno/ medicacion/   placeholders → replace page.tsx
+    coach/ entreno/ dieta/ calendario/ cuerpo/ sueno/ medicacion/
     ajustes/              pairing, devices, appearance
       _components/
   pair/route.ts           the no-JS pair form for unpaired browsers
@@ -31,7 +31,7 @@ src/web/                  view assemblers: one function per page that reads the 
 2. **Section components:** `app/(app)/<section>/_components/*.tsx` (the `_` keeps them out of routing). Client components only where there is interaction; everything else renders on the server.
 3. **Data:** read the feature stores directly from the server component — `src/<feature>/store.ts` — or, when a page needs several, add an assembler in `src/web/<section>.ts` that returns one typed object (see `src/web/today.ts`) and test it. **Never call `/api/mobile/*` from the web.**
 4. **Writes / client refresh:** add routes under `app/api/web/<section>/…`. Reads need the `view` scope and writes `edit`; the gate applies that by path, so there is nothing to register. Return JSON with `json()` from `app/api/web/http.ts`. Anything the Mac alone may do goes under `app/api/web/admin/` and also calls `loopbackOnly(request)`.
-5. **Navigation:** sections are listed once in `app/_ui/sections.ts` (sidebar order = ⌘1…⌘8; `tab: true` puts it in the phone's bottom bar, the rest go under «Más»).
+5. **Navigation:** sections are listed once in `app/_ui/sections.ts` (sidebar order = ⌘1…⌘9, so nine at most; `tab: true` puts it in the phone's bottom bar, the rest go under «Más»).
 
 ## Shared components (`app/_ui/`)
 
@@ -44,6 +44,9 @@ src/web/                  view assemblers: one function per page that reads the 
 | `Sparkline` | Line (soft area) or bars, no axes, hover/touch readout, gaps for nulls, optional dashed `target`. Client component: pass preformatted `label`s, `unit`, `decimals` (no functions). |
 | `EmptyState` | Designed empty: tinted symbol, title, one line, one action. `compact` inside cards. Never a bare «Todavía nada». |
 | `Skeleton` | Shimmering placeholder (still for reduced motion). Size it like the content so nothing shifts. |
+| `Sheet` (`sheet.tsx`) | The editing modal: a native `<dialog>`, title, scrolling body. Its body mounts only while open, so drafts start fresh. |
+| `fields.tsx` | Form pieces for editors: `inputClass`, `Field`, `FieldGroup`, `Segmented`, `WeekdayPicker`, `Toggle`, `Button`. A client module: don't import its constants into server components. |
+| `send` (`send.ts`) | A JSON write to `/api/web/*` from a client component; throws the engine's message. Follow it with `router.refresh()`. |
 | `Markdown` | Minimal, safe renderer for Coach text (paragraphs, lists, bold/italic). |
 | `ComingSoon` | The placeholder a section shows until it is built. |
 | `PulsoMark` | The app icon as a mark. |
@@ -59,7 +62,7 @@ src/web/                  view assemblers: one function per page that reads the 
 - Numbers: `tabular` class. Motion: `motion-safe:` only. Touch targets ≥ 44px on the phone (`min-h-11`). Focus: `focus-visible:ring-2 focus-visible:ring-ring`.
 - **Appearance** (`_ui/appearance.ts`): theme, accent (default rose), depth, typeface and Mac-window translucency, per browser in localStorage, applied pre-paint.
 - **Mac window:** `data-telar-shell="macos"` is set inside Electron. The sidebar is an `app-ground` (vibrancy shows through when translucent); content stays opaque. Interactive things in the top 48px band need `app-no-drag`.
-- **Keyboard:** ⌘1–⌘8 sections, ⌘K command palette (add actions in `command-palette.tsx`), ⌘\ folds the sidebar.
+- **Keyboard:** ⌘1–⌘9 sections, ⌘K command palette (add actions in `command-palette.tsx`), ⌘\ folds the sidebar.
 
 ## Security
 
