@@ -79,6 +79,7 @@ export const planShape = {
   notes: z.string().max(4000).nullish().describe("Free-text guidance shown with the plan: rules, swaps, hydration"),
   startsOn: dateString.optional().describe("Day the plan's first day applies (YYYY-MM-DD). Defaults to today"),
   activate: z.boolean().default(true).describe("Make this the active plan (the previous one is deactivated)"),
+  horizonDays: z.number().int().min(3).max(28).optional().describe("Days the plan is laid out ahead as dated meals (and the shopping list's default), usually 7 or 14. Default 14"),
   days: z
     .array(
       z.object({
