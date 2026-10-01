@@ -142,3 +142,69 @@ export type ExerciseHistory = {
   bestE1rm: number | null;
   heaviestKg: number | null;
 };
+
+/** Fine-grained muscles for the body map (front and back views). */
+export type Muscle =
+  | "chest"
+  | "front_delts"
+  | "side_delts"
+  | "rear_delts"
+  | "traps"
+  | "upper_back"
+  | "lats"
+  | "lower_back"
+  | "biceps"
+  | "triceps"
+  | "forearms"
+  | "abs"
+  | "obliques"
+  | "glutes"
+  | "quads"
+  | "hamstrings"
+  | "adductors"
+  | "abductors"
+  | "calves"
+  | "neck";
+
+/**
+ * Demonstration media, downloaded once by the engine and served to the phone.
+ * URLs are engine-relative and bearer-protected (`/api/mobile/training/media/...`).
+ */
+export type ExerciseMedia = {
+  /** Looping demonstration (GIF). */
+  animation: string | null;
+  /** A still frame for lists and thumbnails. */
+  thumbnail: string | null;
+  source: "exercisedb" | null;
+  /** Credit the source requires, shown under the media. */
+  attribution: string | null;
+};
+
+/** A curated technique video; played in YouTube's own embedded player, never cached. */
+export type ExerciseVideo = { youtubeId: string; title: string; channel: string; lang: "es" | "en" };
+
+/** `GET /api/mobile/training/exercises/:id` — everything the exercise screen shows. */
+export type ExerciseDetail = Exercise & {
+  nameEn: string | null;
+  primaryMuscles: Muscle[];
+  secondaryMuscles: Muscle[];
+  /** Spanish, one step per item. */
+  instructions: string[];
+  /** Short Spanish cues ("Junta las escápulas"). */
+  tips: string[];
+  media: ExerciseMedia;
+  videos: ExerciseVideo[];
+  /** The person's own notes; `PUT /api/mobile/training/exercises/:id/notes` `{ notes }`. */
+  notes: string | null;
+};
+
+/** `GET /api/mobile/training/exercises/:id/performance` — the Rendimiento view. */
+export type ExercisePerformance = {
+  exerciseId: string;
+  maxWeight: { kg: number; reps: number; at: number } | null;
+  bestE1rm: { kg: number; at: number } | null;
+  /** Most volume (kg × reps) in one session. */
+  maxVolume: { kg: number; at: number } | null;
+  /** Oldest first, one point per session. */
+  history: { at: number; topWeightKg: number; e1rm: number; volumeKg: number }[];
+};
