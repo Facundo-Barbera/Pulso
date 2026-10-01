@@ -18,6 +18,8 @@ struct ProgramExercise: Codable, Identifiable, Hashable {
     var kind: String? = nil
     var modality: String? = nil
     var cardio: CardioTarget? = nil
+    /// A load set by hand for the next session, kg; nil = the engine suggests it.
+    var weightKg: Double? = nil
 
     var isCardio: Bool { kind == "cardio" }
 
@@ -34,7 +36,7 @@ struct ProgramExercise: Codable, Identifiable, Hashable {
 
     /// The same prescription as an edit input, keeping this exercise's id.
     var input: DayExerciseInput {
-        DayExerciseInput(id: id, exerciseId: exerciseId, sets: sets, repMin: repMin, repMax: repMax, targetRpe: targetRpe, targetRir: targetRir, restSeconds: restSeconds, notes: notes, cardio: cardio)
+        DayExerciseInput(id: id, exerciseId: exerciseId, sets: sets, repMin: repMin, repMax: repMax, targetRpe: targetRpe, targetRir: targetRir, restSeconds: restSeconds, notes: notes, cardio: cardio, weightKg: weightKg)
     }
 }
 
@@ -192,6 +194,7 @@ struct DayExerciseInput: Codable, Hashable {
     var restSeconds: Int?
     var notes: String?
     var cardio: CardioTarget?
+    var weightKg: Double?
 }
 
 struct DayEdit: Codable {

@@ -113,6 +113,11 @@ export type ProgramExercise = {
   restSeconds: number;
   notes: string | null;
   cardio: CardioTarget | null;
+  /**
+   * A load the person set by hand, kg. It is the suggestion until the exercise is
+   * next logged; then double progression takes over again. Null = suggest as usual.
+   */
+  weightKg?: number | null;
 } & ListMedia;
 
 export type ProgramDay = {
@@ -148,6 +153,8 @@ export type ProgramExerciseInput = {
   restSeconds?: number;
   notes?: string | null;
   cardio?: CardioTarget | null;
+  /** Load set by hand for the next time, kg. */
+  weightKg?: number | null;
 };
 export type ProgramDayInput = { name: string; focus?: string | null; weekday?: number | null; exercises: ProgramExerciseInput[] };
 export type ProgramInput = { name: string; goal: string; weeks: number; notes?: string | null; days: ProgramDayInput[] };
