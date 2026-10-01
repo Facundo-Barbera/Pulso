@@ -126,11 +126,12 @@ private struct BodyEmptyState: View {
             .buttonStyle(.glassProminent)
             .controlSize(.large)
             .tint(Theme.body)
-            HStack {
+            AdaptiveStack {
                 Button("Cargar a mano", systemImage: "square.and.pencil", action: manual)
                 Button("Importar CSV", systemImage: "doc.badge.plus", action: importCSV)
             }
             .buttonStyle(.glass)
+            .lineLimit(1)
         }
         .padding(.top, 72)
         .padding(.horizontal, 12)
