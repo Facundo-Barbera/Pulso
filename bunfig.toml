@@ -1,0 +1,3 @@
+# Hoisted so Next and Electron find packages at the root node_modules, as in Delta.
+[install]
+linker = "hoisted"

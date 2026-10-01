@@ -1,0 +1,23 @@
+{
+  "name": "pulso",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "packageManager": "bun@1.3.11",
+  "scripts": {
+    "dev": "bun ./apps/desktop/dev-runner.js",
+    "dev:web": "turbo run dev --filter=@pulso/engine",
+    "tailnet": "bun ./apps/engine/scripts/tailnet-proxy.mjs",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "ios:generate": "cd apps/ios && xcodegen generate",
+    "ios:phone": "bash ./apps/ios/phone.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "turbo": "^2.11.6",
+    "typescript": "^5.9.3"
+  },
+  "trustedDependencies": ["electron"]
+}

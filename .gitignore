@@ -1,0 +1,16 @@
+# Telar — local state, not for sharing
+telar.yaml
+.telar/
+.telar-worktrees/
+
+node_modules/
+.turbo/
+.next/
+next-env.d.ts
+dist/
+data/
+*.log
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*

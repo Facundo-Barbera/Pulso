@@ -1,0 +1,13 @@
+{
+  "name": "@pulso/contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "What crosses between the engine and its apps (desktop window and iPhone).",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
