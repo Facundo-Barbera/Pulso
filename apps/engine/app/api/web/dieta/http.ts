@@ -17,13 +17,16 @@ export function dateParam(request: Request, name = "date"): string | undefined |
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
+// The store speaks English to the agent; the web shows these.
+const SHOPPING_MESSAGES = { not_found: "Eso ya no está en la lista.", no_plan: "No hay un plan de dieta activo del que sacar la lista." };
+
 /** Runs a shopping store call: validation → 400, a missing item → 404, no active plan → 409. */
 export async function shopping(run: () => unknown): Promise<Response> {
   try {
     return json(await run());
   } catch (error) {
     if (error instanceof ZodError) return invalid(error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "));
-    if (error instanceof ShoppingError) return json({ code: error.code, message: error.message }, error.code === "not_found" ? 404 : 409);
+    if (error instanceof ShoppingError) return json({ code: error.code, message: SHOPPING_MESSAGES[error.code] }, error.code === "not_found" ? 404 : 409);
     throw error;
   }
 }
