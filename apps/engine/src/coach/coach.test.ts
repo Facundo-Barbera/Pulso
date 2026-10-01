@@ -160,10 +160,11 @@ test("prompts ask for the right sources, in Spanish, without changing data", () 
 });
 
 test("replying opens a thread whose first message is the brief", () => {
-  const brief = claimBrief("daily", "2026-10-01")!;
+  // A date no other test or the scheduler claims: a brief is claimed once per day.
+  const brief = claimBrief("daily", "2026-08-15")!;
   completeBrief(brief.id, "**Hoy:** Pierna.");
   const thread = threadFromBrief(getBrief(brief.id)!);
-  expect(thread.title).toBe("Resumen del 1 oct");
+  expect(thread.title).toBe("Resumen del 15 ago");
   expect(listMessages(thread.id)).toMatchObject([{ role: "assistant", text: "**Hoy:** Pierna.", status: "done" }]);
 });
 
