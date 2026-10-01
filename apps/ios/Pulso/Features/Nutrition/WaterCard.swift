@@ -233,7 +233,7 @@ struct WaterSettingsSheet: View {
                 } header: {
                     Text("Objetivo diario")
                 } footer: {
-                    Text(automatic ? "35 ml por kg de tu peso más reciente, o 2 L si Pulso aún no lo sabe." : "Equivale a \(settings.format(goal)).")
+                    Text(automatic ? "35 ml por kg de tu peso más reciente, entre 2 y 3,7 L, o 2 L si Pulso aún no lo sabe." : "Equivale a \(settings.format(goal)).")
                 }
             }
             .navigationTitle("Agua")

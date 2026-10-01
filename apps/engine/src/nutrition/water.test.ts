@@ -22,10 +22,13 @@ test("logWater takes the day from the time when no date is given", () => {
   expect(entry.date).toBe("2033-02-03");
 });
 
-test("the goal is the person's own, else 35 ml/kg rounded to 50 ml, else 2 L", () => {
+test("the goal is the person's own, else 35 ml/kg rounded to 50 ml within 2–3.7 L, else 2 L", () => {
   const auto = { goalMl: null, unit: "ml" as const, glassMl: 250, bottleMl: 500 };
   expect(waterGoal({ ...auto, goalMl: 3000 }, 80)).toEqual({ goalMl: 3000, goalSource: "custom" });
+  expect(waterGoal({ ...auto, goalMl: 4500 }, 80)).toEqual({ goalMl: 4500, goalSource: "custom" });
   expect(waterGoal(auto, 78.4)).toEqual({ goalMl: 2750, goalSource: "weight" });
+  expect(waterGoal(auto, 121)).toEqual({ goalMl: 3700, goalSource: "weight" });
+  expect(waterGoal(auto, 45)).toEqual({ goalMl: 2000, goalSource: "weight" });
   expect(waterGoal(auto, null)).toEqual({ goalMl: 2000, goalSource: "default" });
 });
 

@@ -17,7 +17,7 @@ enum WaterUnit: String, Codable, CaseIterable, Identifiable {
 }
 
 struct WaterSettings: Codable, Equatable {
-    /// nil = automatic (35 ml/kg of body weight, or 2 L).
+    /// nil = automatic (35 ml/kg of body weight within 2–3.7 L, or 2 L).
     var goalMl: Double?
     var unit: WaterUnit
     var glassMl: Double

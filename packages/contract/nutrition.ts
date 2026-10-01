@@ -181,7 +181,7 @@ export const WATER_UNITS = ["ml", "vaso", "botella"] as const;
 export type WaterUnit = (typeof WATER_UNITS)[number];
 
 export type WaterSettings = {
-  /** Daily goal in ml; null means derived (35 ml/kg of body weight, or 2000 ml). */
+  /** Daily goal in ml; null means derived (35 ml/kg of body weight kept within 2000–3700 ml, or 2000 ml). */
   goalMl: number | null;
   unit: WaterUnit;
   glassMl: number;

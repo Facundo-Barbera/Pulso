@@ -151,13 +151,13 @@ export const nutritionTools = [
   ),
   tool(
     "get_water",
-    "Water drunk on a local day (default today), in ml: total, goal (the person's own, else 35 ml/kg of body weight, else 2000), each entry, and their settings (preferred unit and glass/bottle sizes in ml). Use it to tell them how much is left in their own unit.",
+    "Water drunk on a local day (default today), in ml: total, goal (the person's own, else 35 ml/kg of body weight kept within 2000–3700, else 2000), each entry, and their settings (preferred unit and glass/bottle sizes in ml). Use it to tell them how much is left in their own unit.",
     { date: dateString.optional() },
     async ({ date }) => json(waterDay(date ?? localDate())),
   ),
   tool(
     "set_water_goal",
-    "Set the person's daily water goal in ml, or null to go back to the automatic one (35 ml per kg of body weight).",
+    "Set the person's daily water goal in ml, or null to go back to the automatic one (35 ml per kg of body weight, kept within 2–3.7 L).",
     { goalMl: z.number().min(250).max(10000).nullable() },
     async ({ goalMl }) => json(setWaterSettings({ ...getWaterSettings(), goalMl })),
   ),
