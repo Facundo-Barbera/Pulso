@@ -52,6 +52,67 @@ final class NutritionTests: XCTestCase {
     }
 }
 
+final class MeasureTests: XCTestCase {
+    func testHouseholdUnitsConvertWithTheirDefaults() {
+        XCTAssertEqual(Measure(amount: 2, unit: .lata).quantity.amount, 710)
+        XCTAssertEqual(Measure(amount: 2, unit: .lata).quantity.unit, .ml)
+        XCTAssertEqual(Measure(amount: 0.5, unit: .taza).quantity.amount, 120)
+        XCTAssertEqual(Measure(amount: 1, unit: .puño).quantity.unit, .g)
+        XCTAssertEqual(Measure(amount: 1, unit: .lata, size: 330).quantity.amount, 330)
+    }
+
+    func testCountsWithoutAWeightAreServings() {
+        XCTAssertEqual(Measure(amount: 2, unit: .unidad).quantity.unit, .serving)
+        XCTAssertEqual(Measure(amount: 2, unit: .unidad, size: 11).quantity.amount, 22)
+        XCTAssertEqual(Measure(amount: 250, unit: .ml).quantity.unit, .ml)
+    }
+
+    func testAmountTextShowsWhatWasSaidAndWhatItCameTo() {
+        XCTAssertEqual(foodAmountText(710, .ml, measure: Measure(amount: 2, unit: .lata)), "2 latas · 710 ml")
+        XCTAssertEqual(foodAmountText(2, .serving, measure: Measure(amount: 2, unit: .unidad)), "2 unidades")
+        XCTAssertEqual(foodAmountText(30, .g, measure: Measure(amount: 30, unit: .g)), "30 g")
+        XCTAssertEqual(foodAmountText(250, .ml, measure: nil), "250 ml")
+    }
+
+    func testMealInputSendsTheMeasure() throws {
+        let input = MealInput(name: "Coca-Cola", slot: .snack, measure: Measure(amount: 1, unit: .lata), macros: .zero, caffeineMg: 34)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: Any]
+        XCTAssertEqual(object?["quantity"] as? Double, 355)
+        XCTAssertEqual(object?["unit"] as? String, "ml")
+        XCTAssertEqual((object?["measure"] as? [String: Any])?["unit"] as? String, "lata")
+        XCTAssertEqual(object?["caffeineMg"] as? Double, 34)
+        XCTAssertNil(object?["alcoholG"])
+    }
+
+    func testDecodesMeasuresAndToleratesUnknownUnits() throws {
+        let json = #"""
+        [{"id":"a","date":"2026-10-01","eatenAt":1,"slot":"snack","name":"Cerveza","quantity":330,"unit":"ml","kcal":140,"protein":1,
+          "carbs":11,"fat":0,"fiber":0,"source":"agent","measure":{"amount":1,"unit":"lata","size":330},"caffeineMg":null,"alcoholG":13},
+         {"id":"b","date":"2026-10-01","eatenAt":2,"slot":"snack","name":"X","quantity":1,"unit":"oz","kcal":1,"protein":0,
+          "carbs":0,"fat":0,"fiber":0,"source":"manual","measure":{"amount":1,"unit":"jarra","size":null}}]
+        """#
+        let meals = try JSONDecoder().decode([MealEntry].self, from: Data(json.utf8))
+        XCTAssertEqual(meals[0].measure, Measure(amount: 1, unit: .lata, size: 330))
+        XCTAssertEqual(meals[0].alcoholG, 13)
+        XCTAssertEqual(meals[1].unit, .g)
+        XCTAssertEqual(meals[1].measure?.unit, .unidad)
+    }
+
+    func testSnacksAnHourApartAreSeparateMoments() {
+        func meal(_ id: String, _ slot: MealSlot, minutes: Double, unit: FoodUnit = .g) -> MealEntry {
+            MealEntry(id: id, date: "2026-10-01", eatenAt: minutes * 60_000, slot: slot, name: id, quantity: 1, unit: unit,
+                      kcal: 10, protein: 0, carbs: 0, fat: 0, fiber: 0, source: "manual")
+        }
+        let moments = MealTimeline.moments([
+            meal("cafe", .snack, minutes: 600, unit: .ml), meal("galleta", .snack, minutes: 610),
+            meal("comida", .comida, minutes: 840), meal("cerveza", .snack, minutes: 1200, unit: .ml),
+        ])
+        XCTAssertEqual(moments.map { $0.meals.map(\.id) }, [["cafe", "galleta"], ["comida"], ["cerveza"]])
+        XCTAssertEqual(moments.last?.title, "Bebida")
+        XCTAssertEqual(moments.first?.title, "Snack")
+    }
+}
+
 final class WaterTests: XCTestCase {
     private let settings = WaterSettings(goalMl: nil, unit: .vaso, glassMl: 250, bottleMl: 750)
 

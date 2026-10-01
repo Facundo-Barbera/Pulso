@@ -31,7 +31,7 @@ struct NutritionTodaySection: View {
         if day.meals.isEmpty {
             emptyDay
         } else {
-            MealTimeline(meals: day.meals, bySlot: day.summary.bySlot) { meal in
+            MealTimeline(meals: day.meals) { meal in
                 Task { await store.delete(meal) }
             }
         }
@@ -142,54 +142,101 @@ private struct RemainingCard: View {
 }
 
 /// The day's meals, slot by slot down a timeline. Each slot folds to one line
-/// (time, what, kcal); open it for the foods, swipe one to delete it.
+/// (time, what, kcal); open it for the foods, swipe one to delete it. Snacks
+/// and drinks are their own dots, where they happened, however many a day.
 struct MealTimeline: View {
     let meals: [MealEntry]
-    let bySlot: [String: NutritionMacros]
     let onDelete: (MealEntry) -> Void
 
-    private var slots: [MealSlot] {
-        // In the order they were eaten, so a late snack sits where it happened.
-        var seen: [MealSlot] = []
-        for meal in meals.sorted(by: { $0.eatenAt < $1.eatenAt }) where !seen.contains(meal.slot) { seen.append(meal.slot) }
-        return seen
+    /// One dot: a meal slot, or one snack — snack entries more than 45 min apart are separate groups.
+    struct Moment: Identifiable, Equatable {
+        var slot: MealSlot
+        var meals: [MealEntry]
+        var id: String { "\(slot.rawValue)-\(meals.first?.id ?? "")" }
+        /// Only drinks (counted in ml), e.g. a coffee or a beer on its own.
+        var isDrink: Bool { meals.allSatisfy { $0.unit == .ml } }
+        var title: String { slot == .snack && isDrink ? "Bebida" : slot.title }
+        var systemImage: String { isDrink ? "cup.and.saucer" : slot.systemImage }
     }
+
+    /// In the order they were eaten, so a late snack sits where it happened.
+    static func moments(_ meals: [MealEntry]) -> [Moment] {
+        var groups: [Moment] = []
+        for meal in meals.sorted(by: { $0.eatenAt < $1.eatenAt }) {
+            if let i = groups.lastIndex(where: { $0.slot == meal.slot }),
+               meal.slot != .snack || meal.eatenAt - (groups[i].meals.last?.eatenAt ?? 0) <= 45 * 60_000 {
+                groups[i].meals.append(meal)
+            } else {
+                groups.append(Moment(slot: meal.slot, meals: [meal]))
+            }
+        }
+        return groups
+    }
+
+    private var groups: [Moment] { Self.moments(meals) }
+    private var caffeineMg: Double { meals.reduce(0) { $0 + ($1.caffeineMg ?? 0) } }
+    private var alcoholG: Double { meals.reduce(0) { $0 + ($1.alcoholG ?? 0) } }
 
     var body: some View {
         Card {
-            CardTitle(text: "Comidas", systemImage: "clock")
+            HStack(spacing: 8) {
+                CardTitle(text: "Comidas", systemImage: "clock")
+                Spacer(minLength: 4)
+                if caffeineMg > 0 { StimulantBadge(text: "\(Int(caffeineMg)) mg cafeína", systemImage: "bolt.fill", tint: .brown) }
+                if alcoholG > 0 {
+                    StimulantBadge(text: "\(alcoholG.formatted(.number.precision(.fractionLength(0...1)))) g alcohol", systemImage: "wineglass.fill",
+                                   tint: Theme.training)
+                }
+            }
             VStack(spacing: 0) {
-                ForEach(slots) { slot in
-                    SlotRow(slot: slot, meals: meals.filter { $0.slot == slot }, totals: bySlot[slot.rawValue],
-                            isLast: slot == slots.last, onDelete: onDelete)
+                ForEach(groups) { group in
+                    SlotRow(group: group, isLast: group.id == groups.last?.id, onDelete: onDelete)
                 }
             }
         }
     }
 }
 
+/// A modest day total for caffeine or alcohol, next to the Comidas title.
+private struct StimulantBadge: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        Label(text, systemImage: systemImage)
+            .font(.caption2.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: .capsule)
+            .contentTransition(.numericText())
+    }
+}
+
 private struct SlotRow: View {
-    let slot: MealSlot
-    let meals: [MealEntry]
-    let totals: NutritionMacros?
+    let group: MealTimeline.Moment
     let isLast: Bool
     let onDelete: (MealEntry) -> Void
     @State private var expanded = false
 
+    private var slot: MealSlot { group.slot }
+    private var meals: [MealEntry] { group.meals }
     private var offPlan: Bool { meals.contains { $0.offPlan == true } }
     private var time: Date { Date(timeIntervalSince1970: (meals.map(\.eatenAt).min() ?? 0) / 1000) }
     private var note: String? { meals.compactMap(\.note).first }
-    private var kcal: Double { totals?.kcal ?? meals.reduce(0) { $0 + $1.kcal } }
+    private var kcal: Double { meals.reduce(0) { $0 + $1.kcal } }
+    private var tint: Color { offPlan ? Theme.carbs : Theme.energy }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // The timeline: a dot per slot joined by a line.
             VStack(spacing: 0) {
-                Image(systemName: slot.systemImage)
+                Image(systemName: group.systemImage)
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(offPlan ? Theme.carbs : Theme.energy)
+                    .foregroundStyle(tint)
                     .frame(width: 32, height: 32)
-                    .background((offPlan ? Theme.carbs : Theme.energy).opacity(0.15), in: .circle)
+                    .background(tint.opacity(0.15), in: .circle)
                 if !isLast {
                     Rectangle().fill(.quaternary).frame(width: 2).frame(maxHeight: .infinity)
                 }
@@ -217,7 +264,7 @@ private struct SlotRow: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(slot.title).font(.headline)
+                Text(group.title).font(.headline)
                 HStack(spacing: 4) {
                     Text(time, format: .dateTime.hour().minute())
                     if offPlan {
@@ -259,9 +306,13 @@ struct MealRow: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    Text(foodQuantityText(meal.quantity, meal.unit))
+                    Text(foodAmountText(meal.quantity, meal.unit, measure: meal.measure))
                     Text("·")
                     Text(Date(timeIntervalSince1970: meal.eatenAt / 1000), format: .dateTime.hour().minute())
+                    if let stimulants {
+                        Text("·")
+                        Text(stimulants)
+                    }
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -277,6 +328,14 @@ struct MealRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+    }
+
+    /// "80 mg cafeína", "13 g alcohol", when the entry has them.
+    private var stimulants: String? {
+        var parts: [String] = []
+        if let mg = meal.caffeineMg, mg > 0 { parts.append("\(Int(mg)) mg cafeína") }
+        if let g = meal.alcoholG, g > 0 { parts.append("\(g.formatted(.number.precision(.fractionLength(0...1)))) g alcohol") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var sourceIcon: String? {
@@ -340,6 +399,12 @@ private let previewMeals = [
     MealEntry(id: "3", date: "2026-10-01", eatenAt: 1_790_848_800_000, slot: .comida, name: "Papas fritas medianas (McDonald's)",
               quantity: 111, unit: .g, kcal: 320, protein: 4, carbs: 43, fat: 15, fiber: 4, source: "agent",
               offPlan: true, note: "Big Mac y papas medianas"),
+    MealEntry(id: "4", date: "2026-10-01", eatenAt: 1_790_859_600_000, slot: .snack, name: "Café con leche",
+              quantity: 240, unit: .ml, kcal: 90, protein: 5, carbs: 7, fat: 4, fiber: 0, source: "manual",
+              measure: Measure(amount: 1, unit: .taza), caffeineMg: 80),
+    MealEntry(id: "5", date: "2026-10-01", eatenAt: 1_790_877_600_000, slot: .snack, name: "Almendras",
+              quantity: 30, unit: .g, kcal: 174, protein: 6, carbs: 7, fat: 15, fiber: 4, source: "agent",
+              measure: Measure(amount: 1, unit: .puño)),
 ]
 
 #Preview("Hoy · 375 pt · XXL") {
@@ -349,12 +414,12 @@ private let previewMeals = [
                           DietPlanItem(id: "y", name: "Yogur griego", quantity: 255, unit: .g, kcal: 240, protein: 22, carbs: 9, fat: 12, fiber: 0),
                       ], change: "scaled"),
                       adjusted: true) {}
-        MealTimeline(meals: previewMeals, bySlot: [:]) { _ in }
+        MealTimeline(meals: previewMeals) { _ in }
     }
 }
 
 #Preview("Hoy · 375 pt") {
     NarrowPreview {
-        MealTimeline(meals: previewMeals, bySlot: [:]) { _ in }
+        MealTimeline(meals: previewMeals) { _ in }
     }
 }

@@ -33,7 +33,7 @@ struct QuickAddView: View {
                                     Button { Task { await logFrequent(food) } } label: {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(food.name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                            Text("\(foodQuantityText(food.quantity, food.unit)) · \(Int(food.kcal)) kcal")
+                                            Text("\(food.amountText) · \(Int(food.kcal)) kcal")
                                                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                         }
                                     }
@@ -109,9 +109,7 @@ struct QuickAddView: View {
     private func logFrequent(_ food: FrequentFood) async {
         saving = true
         defer { saving = false }
-        let input = MealInput(name: food.name, slot: slot, quantity: food.quantity, unit: food.unit, macros: food.macros,
-                              source: food.barcode == nil ? "manual" : "barcode", barcode: food.barcode)
-        if await store.log(input) { dismiss() }
+        if await store.log(food.input(slot: slot)) { dismiss() }
     }
 }
 
