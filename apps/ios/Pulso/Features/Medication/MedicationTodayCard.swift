@@ -7,6 +7,7 @@ struct MedicationTodayCard: View {
     let model: PulsoModel
     @State private var store = MedicationStore.shared
     @State private var adding = false
+    @State private var editing: Medication?
 
     var body: some View {
         Card {
@@ -37,6 +38,7 @@ struct MedicationTodayCard: View {
             await store.refresh()
         }
         .sheet(isPresented: $adding) { MedicationEditor(store: store, medication: nil) }
+        .sheet(item: $editing) { MedicationEditor(store: store, medication: $0) }
     }
 
     @ViewBuilder private var content: some View {
@@ -74,6 +76,10 @@ struct MedicationTodayCard: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Theme.body)
             }
+            LowStockNote(medications: store.lowStock)
+            AsNeededRows(store: store, editing: $editing)
+        } else if !store.asNeeded.isEmpty {
+            AsNeededRows(store: store, editing: $editing)
             LowStockNote(medications: store.lowStock)
         } else {
             Label("Hoy no hay tomas programadas.", systemImage: "moon.zzz")
@@ -193,5 +199,48 @@ struct LowStockNote: View {
             return "Quedan \(Int(med.stock ?? 0)) dosis de \(med.name)"
         }
         return "Poco stock: " + medications.map(\.name).formatted(.list(type: .and))
+    }
+}
+
+/// Medications without a schedule: each with today's count and a one-tap
+/// "Tomé una". Ones imported from Apple Health arrive like this, so the row
+/// also offers to give them a schedule (and reminders).
+private struct AsNeededRows: View {
+    let store: MedicationStore
+    @Binding var editing: Medication?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(store.asNeeded) { med in
+                let count = store.day?.asNeeded.count { $0.medicationId == med.id } ?? 0
+                HStack(spacing: 12) {
+                    Image(systemName: count > 0 ? "checkmark.circle.fill" : "pills")
+                        .font(.title2)
+                        .foregroundStyle(count > 0 ? Theme.body : .secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 34, height: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(med.name).font(.body.weight(.medium)).lineLimit(1)
+                        Button {
+                            editing = med
+                        } label: {
+                            Text(count > 0 ? "\(med.doseText) · tomada \(count == 1 ? "hoy" : "\(count) veces hoy")" : "Sin horario · Programar")
+                                .font(.caption)
+                                .foregroundStyle(count > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+                                .contentTransition(.numericText())
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Tomé una", systemImage: "plus") { Task { await store.takeNow(med) } }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .sensoryFeedback(.success, trigger: count)
+                }
+            }
+        }
     }
 }
