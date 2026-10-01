@@ -98,6 +98,8 @@ final class MedicationTests: XCTestCase {
         let decoded = try JSONDecoder().decode(MedicationSchedule.self, from: Data(full.utf8))
         XCTAssertEqual(decoded.meals, [.desayuno, .cena])
         XCTAssertTrue(decoded.bedtime)
+        XCTAssertTrue(decoded.isMixed)
+        XCTAssertEqual(decoded.type, .meal)
     }
 
     func testUpcomingDecodes() throws {
@@ -105,6 +107,26 @@ final class MedicationTests: XCTestCase {
         let upcoming = try JSONDecoder().decode(MedicationUpcoming.self, from: Data(body.utf8))
         XCTAssertEqual(upcoming.slots.map(\.slot), ["desayuno"])
         XCTAssertEqual(upcoming.slots.first?.moment, .desayuno)
+    }
+
+    func testSwitchingScheduleTypeKeepsDaysAndStartsWithADefault() {
+        var schedule = MedicationSchedule(asNeeded: false, times: ["08:00"], days: [1, 2])
+        schedule.become(.training)
+        XCTAssertEqual(schedule, MedicationSchedule(asNeeded: false, times: [], days: [1, 2], training: TrainingRule(withinMinutes: 60, restDayTime: "09:00")))
+        schedule.become(.meal)
+        XCTAssertEqual(schedule.meals, [.desayuno])
+        XCTAssertNil(schedule.training)
+        schedule.become(.asNeeded)
+        XCTAssertEqual(schedule, .asNeededOnly)
+    }
+
+    func testCreatinePresetIsAfterTrainingWithARestDayTime() {
+        var draft = MedicationDraft()
+        SupplementPreset.all.first { $0.name == "Creatina" }!.apply(to: &draft)
+        XCTAssertEqual(draft.kind, .suplemento)
+        XCTAssertEqual("\(draft.dose.formatted()) \(draft.unit)", "5 g")
+        XCTAssertEqual(draft.schedule.training, TrainingRule(withinMinutes: 60, restDayTime: "09:00"))
+        XCTAssertTrue(draft.schedule.hasSlots)
     }
 
     func testTrainingStatusLines() {

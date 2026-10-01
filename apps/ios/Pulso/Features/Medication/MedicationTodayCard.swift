@@ -15,7 +15,7 @@ struct MedicationTodayCard: View {
                 MedicationView(model: model)
             } label: {
                 HStack {
-                    CardTitle(text: "Medicación", systemImage: "pills.fill")
+                    CardTitle(text: "Medicación y suplementos", systemImage: "pills.fill")
                     Spacer()
                     if let day = store.day, !day.slots.isEmpty {
                         Text("\(day.taken)/\(day.slots.count)")
@@ -51,8 +51,8 @@ struct MedicationTodayCard: View {
                     .foregroundStyle(Color.accentColor.gradient)
                     .symbolEffect(.bounce, options: .nonRepeating)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Anota lo que tomas y te avisamos.").font(.subheadline).foregroundStyle(.secondary)
-                    Button("Añadir medicación", systemImage: "plus") { adding = true }
+                    Text("Anota tus medicamentos y suplementos y te avisamos.").font(.subheadline).foregroundStyle(.secondary)
+                    Button("Añadir", systemImage: "plus") { adding = true }
                         .buttonStyle(.glass)
                         .controlSize(.small)
                 }

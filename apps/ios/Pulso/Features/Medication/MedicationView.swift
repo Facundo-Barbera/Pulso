@@ -9,11 +9,13 @@ struct MedicationView: View {
     @State private var importing = false
 
     private enum EditTarget: Identifiable {
-        case new
+        case new(MedicationKind)
         case existing(Medication)
         var id: String {
-            if case let .existing(med) = self { return med.id }
-            return "new"
+            switch self {
+            case let .new(kind): "new-\(kind.rawValue)"
+            case let .existing(med): med.id
+            }
         }
     }
 
@@ -36,6 +38,7 @@ struct MedicationView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Medicación")
+        .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -45,8 +48,13 @@ struct MedicationView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Añadir", systemImage: "plus") { editing = .new }
-                    .buttonStyle(.glassProminent)
+                Menu {
+                    Button("Medicamento", systemImage: MedicationKind.medicamento.symbol) { editing = .new(.medicamento) }
+                    Button("Suplemento", systemImage: MedicationKind.suplemento.symbol) { editing = .new(.suplemento) }
+                } label: {
+                    Label("Añadir", systemImage: "plus")
+                }
+                .buttonStyle(.glassProminent)
             }
         }
         .refreshable { await store.refresh() }
@@ -58,7 +66,7 @@ struct MedicationView: View {
         .animation(.snappy, value: store.medications)
         .sheet(item: $editing) { target in
             switch target {
-            case .new: MedicationEditor(store: store, medication: nil)
+            case let .new(kind): MedicationEditor(store: store, medication: nil, kind: kind)
             case let .existing(med): MedicationEditor(store: store, medication: med)
             }
         }
@@ -158,16 +166,33 @@ struct MedicationView: View {
         }
     }
 
-    private var medicationsCard: some View {
-        Card {
-            CardTitle(text: "Lo que tomas", systemImage: "list.bullet")
-            LowStockNote(medications: store.lowStock)
-            ForEach(store.medications) { med in
-                Button { editing = .existing(med) } label: { MedicationRow(medication: med) }
-                    .buttonStyle(.plain)
-                if med.id != store.medications.last?.id { Divider().padding(.leading, 46) }
+    /// "Medicamentos" and "Suplementos", each in its own card.
+    @ViewBuilder private var medicationsCard: some View {
+        ForEach(MedicationKind.allCases) { kind in
+            let meds = store.medications.filter { $0.kind == kind }
+            if !meds.isEmpty {
+                Card {
+                    CardTitle(text: kind == .medicamento ? "Medicamentos" : "Suplementos", systemImage: kind.symbol)
+                    LowStockNote(medications: store.lowStock.filter { $0.kind == kind })
+                    ForEach(meds) { med in
+                        Button { editing = .existing(med) } label: { MedicationRow(medication: med) }
+                            .buttonStyle(.plain)
+                        if med.id != meds.last?.id { Divider().padding(.leading, 46) }
+                    }
+                }
             }
         }
+    }
+
+    /// "2 medicamentos · 3 suplementos"
+    private var subtitle: String {
+        let meds = store.medications.count { $0.kind == .medicamento && $0.active }
+        let supplements = store.medications.count { $0.kind == .suplemento && $0.active }
+        let parts = [
+            meds > 0 ? "\(meds) \(meds == 1 ? "medicamento" : "medicamentos")" : nil,
+            supplements > 0 ? "\(supplements) \(supplements == 1 ? "suplemento" : "suplementos")" : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? "y suplementos" : parts.joined(separator: " · ")
     }
 
     private var emptyState: some View {
@@ -183,8 +208,11 @@ struct MedicationView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Añadir medicación", systemImage: "plus") { editing = .new }
+            Button("Añadir medicamento", systemImage: MedicationKind.medicamento.symbol) { editing = .new(.medicamento) }
                 .buttonStyle(.glassProminent)
+                .controlSize(.large)
+            Button("Añadir suplemento", systemImage: MedicationKind.suplemento.symbol) { editing = .new(.suplemento) }
+                .buttonStyle(.glass)
                 .controlSize(.large)
             Button("Importar desde Salud", systemImage: "heart.text.square") { importing = true }
                 .buttonStyle(.glass)
