@@ -1,9 +1,16 @@
 import SwiftUI
 
-/// A fresh conversation, optionally opened by a starter prompt.
+/// A fresh conversation, optionally opened by a starter prompt (sent at once) or a draft (left in the composer).
 struct NewChat: Identifiable, Hashable {
     let id = UUID()
     var starter: String?
+    var draft: String?
+}
+
+/// An existing conversation opened from elsewhere (e.g. "Responder" on a brief).
+struct OpenedThread: Identifiable, Hashable {
+    let id = UUID()
+    var thread: AgentThread
 }
 
 /// The Coach tab: conversations, newest first.
@@ -11,7 +18,9 @@ struct CoachView: View {
     let model: PulsoModel
     @State private var store = CoachStore()
     @State private var newChat: NewChat?
+    @State private var opened: OpenedThread?
     @State private var pendingDelete: AgentThread?
+    private let launcher = CoachLauncher.shared
 
     var body: some View {
         ScrollView {
@@ -43,7 +52,10 @@ struct CoachView: View {
             CoachChatView(threadId: thread.id, title: thread.title)
         }
         .navigationDestination(item: $newChat) { chat in
-            CoachChatView(threadId: nil, title: nil, starter: chat.starter)
+            CoachChatView(threadId: nil, title: nil, starter: chat.starter, draft: chat.draft)
+        }
+        .navigationDestination(item: $opened) { opened in
+            CoachChatView(threadId: opened.thread.id, title: opened.thread.title, focus: true)
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -64,6 +76,20 @@ struct CoachView: View {
         // Also runs when coming back from a chat, so titles and previews are fresh.
         .onAppear { Task { await store.refresh() } }
         .refreshable { await store.refresh() }
+        .onChange(of: launcher.pending?.id, initial: true) { _, id in
+            if id != nil { launch() }
+        }
+    }
+
+    /// Shows what another tab asked the Coach for (CoachLauncher).
+    private func launch() {
+        guard let launch = launcher.take() else { return }
+        switch launch.request {
+        case let .prompt(text, send):
+            newChat = send ? NewChat(starter: text) : NewChat(draft: text)
+        case let .thread(thread):
+            opened = OpenedThread(thread: thread)
+        }
     }
 }
 

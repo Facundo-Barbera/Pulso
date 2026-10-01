@@ -5,6 +5,7 @@
  */
 import type { tool } from "@anthropic-ai/claude-agent-sdk";
 import { bodyTools } from "../body/tools";
+import { coachTools } from "../coach/tools";
 import { dailyTools } from "../daily/tools";
 import { medicationTools } from "../medication/tools";
 import { nutritionTools } from "../nutrition/tools";
@@ -24,4 +25,5 @@ export const TOOLS: PulsoTool[] = [
   ...dailyTools,
   ...sleepTools,
   ...medicationTools,
+  ...coachTools,
 ];

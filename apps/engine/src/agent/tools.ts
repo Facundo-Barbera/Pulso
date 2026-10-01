@@ -18,7 +18,7 @@ export const profileTools = [
   ),
   tool(
     "update_profile",
-    "Save what you learn about the person so future conversations remember it. Pass only the fields that changed; the rest are kept. Pass null to clear a field. Text fields replace the old value, so include what should stay. Use it whenever the person tells you something durable (a goal, an injury, their schedule, a food they avoid).",
+    "The person's long-term memory: the profile is all a new conversation knows about them. Call it in the same turn, without asking, whenever they mention something durable — a goal or deadline (goals), an injury, pain or condition (injuries), days and time available (schedule), equipment, training history (experience), allergies, foods they like or avoid (foodPreferences), how they like to be coached or anything else lasting (notes). Pass only the fields that changed; the rest are kept. Text fields replace the old value, so merge in what should stay. Pass null to clear a field. Not for one-off facts (today's meal, today's mood). Returns the saved profile.",
     patchShape,
     async (patch) => json(updateProfile(patch)),
   ),
