@@ -40,7 +40,8 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee tus entrenamientos de Salud para guardarlos en tu Mac.
-        INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso no escribe en Salud por ahora.
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso guarda en Salud tus sesiones de fuerza como entrenamientos.
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         CODE_SIGN_ENTITLEMENTS: Config/Pulso.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -50,6 +51,25 @@ targets:
       configs:
         Debug:
           INFOPLIST_KEY_CFBundleDisplayName: Pulso Dev
+    dependencies:
+      - target: PulsoActivity
+  # Live Activity (lock screen + Dynamic Island) for a strength session. It
+  # shares TrainingActivityAttributes with the app; embedded by the dependency above.
+  PulsoActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: PulsoActivity
+      - path: Pulso/Features/Training/TrainingActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PULSO_APP_BUNDLE_ID).activity
+        INFOPLIST_FILE: Config/PulsoActivity.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Pulso
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
   PulsoTests:
     type: bundle.unit-test
     platform: iOS
