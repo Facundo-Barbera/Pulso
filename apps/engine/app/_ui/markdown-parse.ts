@@ -219,6 +219,7 @@ export function linkLabel(url: string, max = 48): string {
 export function plainText(markdown: string): string {
   return markdown
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/:?-{2,}:?/g, " ")
     .replace(/[*_`#>|~]+/g, "")
     .replace(/\s+/g, " ")
     .trim();

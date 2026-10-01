@@ -65,4 +65,5 @@ test("labels and plain text", () => {
   expect(linkLabel("https://www.who.int/")).toBe("who.int");
   expect(linkLabel("https://pubmed.ncbi.nlm.nih.gov/123456789/some-very-long-article-slug-here")).toHaveLength(48);
   expect(plainText("## Hola\n**bien** [OMS](https://who.int)")).toBe("Hola bien OMS");
+  expect(plainText("| a | b |\n|:--|---:|\n| 1 | 2 |")).toBe("a b 1 2");
 });
