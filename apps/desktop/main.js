@@ -19,14 +19,23 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 
 function createWindow() {
+  const mac = process.platform === "darwin";
   win = new BrowserWindow({
-    width: 1100,
-    height: 760,
-    minWidth: 640,
-    minHeight: 480,
+    width: 1280,
+    height: 820,
+    // Wide enough that the window always gets the sidebar layout, never the phone's tab bar (md = 768px).
+    minWidth: 800,
+    minHeight: 560,
     title: "Pulso",
-    backgroundColor: "#0a0a0a",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    /* macOS's own material behind the page. It shows only where the page paints
+       alpha: the sidebar, when Ajustes › Ventana translúcida is on (the copied
+       Telar CSS gates that on `data-telar-shell`, which the page sets inside
+       this window). Content stays opaque. Transparent background so the
+       material is not painted over; elsewhere, the dark canvas. */
+    ...(mac ? { vibrancy: "sidebar", visualEffectState: "active", backgroundColor: "#00000000" } : { backgroundColor: "#0a0a0a" }),
+    titleBarStyle: mac ? "hiddenInset" : "default",
+    // Centred in the web app's 48px header (--titlebar-height in globals.css): 18 + 12/2 = 24.
+    ...(mac ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });

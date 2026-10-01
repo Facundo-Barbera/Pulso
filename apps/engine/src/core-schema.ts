@@ -5,11 +5,14 @@ export const CORE_SCHEMA = `
     name TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     paired_at INTEGER NOT NULL,
-    last_seen_at INTEGER
+    last_seen_at INTEGER,
+    kind TEXT NOT NULL DEFAULT 'phone',
+    scopes TEXT
   );
   CREATE TABLE IF NOT EXISTS pairing_codes (
     code TEXT PRIMARY KEY,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'phone'
   );
   CREATE TABLE IF NOT EXISTS workouts (
     id TEXT PRIMARY KEY,

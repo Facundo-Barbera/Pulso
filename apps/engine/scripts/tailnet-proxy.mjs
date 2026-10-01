@@ -3,11 +3,13 @@
  * never 0.0.0.0, so physical interfaces stay closed. Same shape as Delta's.
  *
  * HTTP rather than a TCP pipe so every forwarded request can be stamped with
- * `x-pulso-via: tailnet` (and any client-sent copy stripped). `proxy.ts` uses
- * it to tell tailnet traffic from loopback: loopback is trusted, the tailnet
- * only reaches pairing and the bearer-checked phone routes.
+ * `x-pulso-via: tailnet` (and any client-sent copy stripped), plus the Host the
+ * browser wrote as `x-pulso-host`. `proxy.ts` uses them to tell tailnet traffic
+ * from loopback: loopback is trusted, the tailnet reaches pairing, the
+ * bearer-checked phone routes and — for a paired browser — the web app.
  */
 import { createServer, request as httpRequest } from "node:http";
+import { forwardHeaders } from "./tailnet-headers.mjs";
 import { tailnetIp } from "./tailnet-ip.mjs";
 
 const TARGET_PORT = Number(process.env.PULSO_PORT ?? 3230);
@@ -20,7 +22,7 @@ if (!host) {
 }
 
 const server = createServer((from, to) => {
-  const headers = { ...from.headers, "x-pulso-via": "tailnet", host: `127.0.0.1:${TARGET_PORT}` };
+  const headers = forwardHeaders(from.headers, TARGET_PORT);
   const upstream = httpRequest({ host: "127.0.0.1", port: TARGET_PORT, method: from.method, path: from.url, headers }, (answer) => {
     to.writeHead(answer.statusCode ?? 502, answer.headers);
     answer.pipe(to);
