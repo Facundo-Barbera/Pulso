@@ -1,10 +1,10 @@
 "use client";
 
-import { ChevronRight, Clock, Flame, Play, Trophy, Zap } from "lucide-react";
+import { Check, Clock, Flame, Play, RotateCcw, Trophy, Zap } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import type { PlanDay, PlanExercise } from "@/src/web/entreno";
-import { setsDone, setsTotal } from "@/src/web/entreno-live";
 import { Card } from "../../../_ui/card";
 import { cn } from "../../../_ui/cn";
 import { MuscleBadge } from "./body-map";
@@ -13,17 +13,36 @@ import { useLive } from "./live-store";
 import { Thumb } from "./thumb";
 
 /**
- * The page's hero: the program's days as tabs ("Día 2 · Pierna"), the selected
- * day below (the next one by default), and one action: start it, or go back to
- * the session in progress. ← → move between days when the tabs have focus.
+ * The program's days as tabs ("Día 2 · Pierna") and the selected one's
+ * exercises (the next by default; `#dia-<id>` selects one). A day done this
+ * week shows as done, with "Repetir" behind a confirm; another not yet done can
+ * be started from here (the next one starts from the hero). ← → move between
+ * days when the tabs have focus.
  */
-export function Plan({ days, nextDayId, canEdit }: { days: PlanDay[]; nextDayId: string | null; canEdit: boolean }) {
+export function Plan({ days, nextDayId, doneIds, canEdit }: { days: PlanDay[]; nextDayId: string | null; doneIds: string[]; canEdit: boolean }) {
+  const router = useRouter();
   const [selectedId, setSelectedId] = useState(nextDayId ?? days[0]?.id);
+  const section = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const follow = () => {
+      const id = decodeURIComponent(location.hash.replace(/^#dia-/, ""));
+      if (!days.some((d) => d.id === id)) return;
+      setSelectedId(id);
+      section.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    follow();
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, [days]);
   const [open, setOpen] = useState<PlanExercise | null>(null);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const [live] = useLive();
   const index = Math.max(0, days.findIndex((d) => d.id === selectedId));
   const day = days[index]!;
+  const done = doneIds.includes(day.id);
+  const repeat = () => {
+    if (confirm(`¿Repetir ${day.name}? Ya lo hiciste esta semana: se guarda como otra sesión del mismo día.`)) router.push(`/entreno/sesion?dia=${encodeURIComponent(day.id)}`);
+  };
 
   const onKey = (e: React.KeyboardEvent) => {
     const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
@@ -36,27 +55,8 @@ export function Plan({ days, nextDayId, canEdit }: { days: PlanDay[]; nextDayId:
 
   return (
     <>
-      {live && (
-        <Link
-          href="/entreno/sesion"
-          className="bg-training/12 hover:bg-training/18 focus-visible:ring-ring mb-5 flex min-h-14 items-center gap-4 rounded-[18px] px-5 py-3 outline-none focus-visible:ring-2 motion-safe:animate-[pulso-rise_420ms_cubic-bezier(.2,.7,.2,1)_both]"
-        >
-          <span className="bg-training relative grid size-9 place-items-center rounded-full text-white">
-            <span className="bg-training absolute inset-0 rounded-full opacity-50 motion-safe:animate-ping" aria-hidden />
-            <Zap className="relative size-4" fill="currentColor" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[15px] font-semibold">Sesión en curso</span>
-            <span className="text-muted-foreground block truncate text-[13px]">
-              {live.name} · {setsDone(live)}/{setsTotal(live)} series · en este navegador
-            </span>
-          </span>
-          <span className="text-training flex items-center gap-1 text-[14px] font-semibold">
-            Continuar <ChevronRight className="size-4" />
-          </span>
-        </Link>
-      )}
 
+      <div ref={section} className="scroll-mt-6" />
       <div role="tablist" aria-label="Días del programa" onKeyDown={onKey} className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {days.map((d, i) => {
           const selected = d.id === day.id;
@@ -75,6 +75,7 @@ export function Plan({ days, nextDayId, canEdit }: { days: PlanDay[]; nextDayId:
                 selected ? "bg-training shadow-1 text-white" : "bg-card shadow-1 hover:bg-muted",
               )}
             >
+              {doneIds.includes(d.id) && <Check className="mr-1 inline size-3.5" strokeWidth={3} />}
               Día {d.number} · {d.name}
             </button>
           );
@@ -94,7 +95,19 @@ export function Plan({ days, nextDayId, canEdit }: { days: PlanDay[]; nextDayId:
               {day.kcal !== null && <Stat icon={Flame} color="var(--domain-energy)" value={`~${day.kcal}`} unit="kcal" />}
             </div>
           </div>
-          {canEdit && !live && day.exercises.length > 0 && (
+          {done && (
+            <div className="flex items-center gap-2">
+              <span className="bg-training/15 text-training inline-flex min-h-10 items-center gap-1.5 rounded-full px-4 text-[14px] font-semibold">
+                <Check className="size-4" strokeWidth={3} /> Hecho esta semana
+              </span>
+              {canEdit && !live && (
+                <button onClick={repeat} className="bg-muted/70 hover:bg-muted focus-visible:ring-ring inline-flex min-h-10 items-center gap-1.5 rounded-full px-4 text-[14px] font-semibold outline-none focus-visible:ring-2">
+                  <RotateCcw className="size-3.5" /> Repetir
+                </button>
+              )}
+            </div>
+          )}
+          {canEdit && !live && !done && day.id !== nextDayId && day.exercises.length > 0 && (
             <Link
               href={`/entreno/sesion?dia=${encodeURIComponent(day.id)}`}
               className="bg-training shadow-2 focus-visible:ring-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-full px-6 text-[16px] font-semibold text-white outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-offset-2"

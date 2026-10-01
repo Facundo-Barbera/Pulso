@@ -26,6 +26,10 @@ final class TrainingStore {
 
     private(set) var program: TrainingProgram?
     private(set) var nextDayId: String?
+    /// Every block, oldest first, the active one last.
+    private(set) var blocks: [TrainingBlock] = []
+    /// The Coach's review of the next day, when there is one.
+    private(set) var adjustment: NextAdjustment?
     private(set) var suggestions: [String: LoadSuggestion] = [:]
     private(set) var hrZones: [HrZoneRange]?
     /// Kept on disk too: the gym may have no signal, and the units must still be right.
@@ -43,7 +47,22 @@ final class TrainingStore {
     /// so the summary sheet never races the dismissal.
     var finishRequested = false
 
-    var nextDay: ProgramDay? { program?.days.first { $0.id == nextDayId } ?? program?.days.first }
+    /// The next day not done this week; nil with no program or the week complete.
+    var nextDay: ProgramDay? {
+        guard let program else { return nil }
+        // An older engine sends no blocks and may send no next day: its first, as before.
+        if blocks.isEmpty { return program.days.first { $0.id == nextDayId } ?? program.days.first }
+        return program.days.first { $0.id == nextDayId }
+    }
+
+    /// The active program's block.
+    var activeBlock: TrainingBlock? { blocks.first { $0.programId == program?.id } }
+
+    /// What starting `day` uses: the Coach's adjusted copy of it when one applies.
+    private func dayToStart(_ day: ProgramDay) -> (ProgramDay, [String: LoadSuggestion]) {
+        if let adjustment, adjustment.dayId == day.id, adjustment.applies { return (adjustment.day, adjustment.suggestions) }
+        return (day, suggestions)
+    }
 
     func load() async {
         guard let api = PulsoModel.shared.api else { return }
@@ -69,6 +88,8 @@ final class TrainingStore {
         program = response.program
         nextDayId = response.nextDayId
         suggestions = response.suggestions
+        blocks = response.blocks ?? []
+        adjustment = response.adjustment
         hrZones = response.hrZones
         if let fresh = response.settings { adopt(fresh) }
     }
@@ -142,9 +163,57 @@ final class TrainingStore {
         live?.snapOpenSets { new.unit(for: $0) != old.unit(for: $0) ? new.unit(for: $0) : nil }
     }
 
-    /// Opens the live session for `day` and hands it to the engine, where the Coach can change it.
+    // MARK: Weeks, blocks and the Coach's review
+
+    /// "Empezar la semana ya".
+    func startNextWeek() async {
+        guard let api = PulsoModel.shared.api else { return }
+        do { apply(try await api.startNextWeek()) } catch { PulsoModel.shared.handle(error) }
+    }
+
+    /// "Retomar" an earlier block.
+    func resume(_ block: TrainingBlock) async {
+        guard let api = PulsoModel.shared.api else { return }
+        do { apply(try await api.resumeBlock(block.programId)) } catch { PulsoModel.shared.handle(error) }
+    }
+
+    /// "Entrenar normal" (true) or back to the Coach's plan (false). Shown at once.
+    func setAdjustmentDismissed(_ dismissed: Bool) async {
+        guard let api = PulsoModel.shared.api, let current = adjustment else { return }
+        adjustment?.dismissed = dismissed
+        do { apply(try await api.setAdjustmentDismissed(current.id, dismissed)) } catch {
+            adjustment?.dismissed = current.dismissed
+            PulsoModel.shared.handle(error)
+        }
+    }
+
+    /// "Ver por qué": opens the review in a Coach thread.
+    func discussAdjustment() async {
+        guard let api = PulsoModel.shared.api, let adjustment else { return }
+        do {
+            let threadId = try await api.adjustmentThread(adjustment.id)
+            let detail = try await api.agentThread(threadId)
+            CoachLauncher.shared.open(detail.thread)
+        } catch {
+            PulsoModel.shared.handle(error)
+        }
+    }
+
+    /// A logged session by id: from the recent list, else from the Mac.
+    func session(_ id: String) async -> TrainingSession? {
+        if let known = sessions.first(where: { $0.id == id }) { return known }
+        guard let api = PulsoModel.shared.api else { return nil }
+        do { return try await api.trainingSession(id) } catch {
+            PulsoModel.shared.handle(error)
+            return nil
+        }
+    }
+
+    /// Opens the live session for `day` (the Coach's adjusted copy of it when one applies)
+    /// and hands it to the engine, where the Coach can change it.
     func start(_ day: ProgramDay) {
         guard live == nil else { return }
+        let (day, suggestions) = dayToStart(day)
         let session = LiveSession(state: LiveSessionState(day: day, programId: program?.id, suggestions: suggestions))
         session.begin()
         live = session

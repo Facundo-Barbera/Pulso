@@ -10,6 +10,9 @@ import { POST as liveCoachPOST } from "@/app/api/mobile/training/live/coach/rout
 import { DELETE as liveDELETE, GET as liveGET, PUT as livePUT } from "@/app/api/mobile/training/live/route";
 import { DELETE as dayDELETE, PUT as dayPUT } from "@/app/api/mobile/training/program/days/[dayId]/route";
 import { GET as programGET } from "@/app/api/mobile/training/program/route";
+import { POST as resumePOST } from "@/app/api/mobile/training/program/blocks/[id]/resume/route";
+import { POST as weekNextPOST } from "@/app/api/mobile/training/program/weeks/next/route";
+import { GET as sessionGET } from "@/app/api/mobile/training/sessions/[id]/route";
 import { POST as sessionsPOST } from "@/app/api/mobile/training/sessions/route";
 import { GET as settingsGET, PUT as settingsPUT } from "@/app/api/mobile/training/settings/route";
 import { PUT as unitPUT } from "@/app/api/mobile/training/exercises/[id]/unit/route";
@@ -286,4 +289,32 @@ test("the list and the active program carry thumbnail URLs", async () => {
   createProgram({ name: "P", goal: "G", weeks: 4, days: [{ name: "D", exercises: [{ exerciseId: "press-banca", sets: 3, repMin: 5, repMax: 8, restSeconds: 120 }] }] });
   const view = (await (await programGET(req())).json()) as ActiveProgramResponse;
   expect(view.program?.days[0]?.exercises[0]?.animation).toBe("/api/mobile/training/media/exercises/press-banca/animation.gif");
+});
+
+test("the program route carries the blocks; the next week starts early only once this one is complete", async () => {
+  const p = createProgram({ name: "Semanas", goal: "x", weeks: 4, days: [{ name: "Único", exercises: [{ exerciseId: "press-banca", sets: 1, repMin: 5, repMax: 5, restSeconds: 60 }] }] });
+  const early = await weekNextPOST(req({ method: "POST" }));
+  expect(early.status).toBe(409);
+  // Today, real time, with no sets: other files' hand-set loads read any later press-banca set as spent.
+  const now = Date.now();
+  await sessionsPOST(req({ method: "POST", body: JSON.stringify({ id: "weeks-route-1", programId: p.id, dayId: p.days[0]!.id, name: "Único", startedAt: now, endedAt: now + 1000, sets: [] }) }));
+  const view = (await (await programGET(req())).json()) as ActiveProgramResponse;
+  expect(view.blocks!.at(-1)).toMatchObject({ programId: p.id, weekComplete: true, canStartNextWeek: true });
+  expect(view.nextDayId).toBeNull();
+  const started = (await (await weekNextPOST(req({ method: "POST" }))).json()) as ActiveProgramResponse;
+  expect(started.blocks!.at(-1)!.currentWeek).toBe(2);
+  expect(started.nextDayId).toBe(p.days[0]!.id);
+  const one = await sessionGET(req(), id("weeks-route-1"));
+  expect(((await one.json()) as { id: string }).id).toBe("weeks-route-1");
+  expect((await sessionGET(req(), id("nope"))).status).toBe(404);
+  expect((await weekNextPOST(req({ method: "POST" }, false))).status).toBe(401);
+});
+
+test("Retomar a block over HTTP", async () => {
+  const old = createProgram({ name: "Viejo", goal: "x", weeks: 4, days: [{ name: "Día", exercises: [{ exerciseId: "press-banca", sets: 3, repMin: 5, repMax: 8, restSeconds: 60 }] }] });
+  createProgram({ name: "Nuevo", goal: "y", weeks: 4, days: [{ name: "Día", exercises: [{ exerciseId: "press-militar", sets: 3, repMin: 5, repMax: 8, restSeconds: 60 }] }] });
+  const resumed = (await (await resumePOST(req({ method: "POST" }), id(old.id))).json()) as ActiveProgramResponse;
+  expect(resumed.program).toMatchObject({ name: "Viejo" });
+  expect(resumed.blocks!.at(-1)!.resumedFrom).toBe(old.id);
+  expect((await resumePOST(req({ method: "POST" }), id("missing"))).status).toBe(400);
 });

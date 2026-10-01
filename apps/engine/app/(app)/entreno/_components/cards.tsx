@@ -40,24 +40,7 @@ export function HistoryCard({ history, delay, className }: { history: HistoryEnt
                     {h.source && ` · ${h.source}`}
                   </p>
                   {h.kind === "session" ? (
-                    h.exercises.length === 0 ? (
-                      <p className="text-muted-foreground text-[13px]">Sin series registradas.</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {h.exercises.map((e) => (
-                          <li key={e.exerciseId} className="text-[13px]">
-                            <span className="flex items-center gap-1.5 font-medium">
-                              {e.name}
-                              {e.record && <Trophy className="text-carbs size-3" aria-label="Récord" />}
-                              {e.sets.some((s) => s.weightKg > 0) && <span className="text-muted-foreground text-[11px] font-normal">{e.unit}</span>}
-                            </span>
-                            <span className="text-muted-foreground tabular">
-                              {e.sets.map((s) => (s.weightKg > 0 ? `${fmtNumber(shown(s.weightKg, e.unit), 2)} × ${s.reps}` : `${s.reps} reps`) + (s.rpe ? ` @${fmtNumber(s.rpe, 1)}` : "")).join(" · ")}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )
+                    <SessionDetail entry={h} />
                   ) : (
                     <dl className="tabular grid grid-cols-3 gap-3 text-[13px]">
                       <Fact label="Duración" value={fmtMinutes((h.endedAt - h.startedAt) / 60_000)} />
@@ -72,6 +55,28 @@ export function HistoryCard({ history, delay, className }: { history: HistoryEnt
         </ul>
       )}
     </Card>
+  );
+}
+
+/** What was lifted in a logged session, exercise by exercise, in the order it was done. */
+export function SessionDetail({ entry: h }: { entry: HistoryEntry }) {
+  return h.exercises.length === 0 ? (
+    <p className="text-muted-foreground text-[13px]">Sin series registradas.</p>
+  ) : (
+    <ul className="space-y-2">
+      {h.exercises.map((e) => (
+        <li key={e.exerciseId} className="text-[13px]">
+          <span className="flex items-center gap-1.5 font-medium">
+            {e.name}
+            {e.record && <Trophy className="text-carbs size-3" aria-label="Récord" />}
+            {e.sets.some((s) => s.weightKg > 0) && <span className="text-muted-foreground text-[11px] font-normal">{e.unit}</span>}
+          </span>
+          <span className="text-muted-foreground tabular">
+            {e.sets.map((s) => (s.weightKg > 0 ? `${fmtNumber(shown(s.weightKg, e.unit), 2)} × ${s.reps}` : `${s.reps} reps`) + (s.rpe ? ` @${fmtNumber(s.rpe, 1)}` : "")).join(" · ")}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

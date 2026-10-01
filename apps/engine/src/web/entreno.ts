@@ -3,13 +3,12 @@
  * body stores. The page, `GET /api/web/entreno` and the session logger share
  * these shapes. The numbers match the iPhone's plan screen (TrainingPlan.swift).
  */
-import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, Program, ProgramDay, ProgramExercise, TrainingSession, WeightUnit } from "@pulso/contract";
+import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
 import { listScans } from "../body/store";
-import { localDate } from "../daily/dates";
 import { ANATOMY } from "../training/anatomy";
 import { e1rm } from "../training/math";
 import { idsWithMedia, MEDIA_ROUTE, type MediaKind } from "../training/media";
-import { activeProgramView, exerciseDetail, exercisePerformance, getExercise, listSessions, trainingSettings, unitOf } from "../training/store";
+import { activeProgramView, exerciseDetail, exercisePerformance, getExercise, getSession, listSessions, trainingSettings, unitOf } from "../training/store";
 import { formatWeight, toUnit } from "../training/units";
 import { listWorkouts } from "../workouts";
 import { activityLabel } from "./today";
@@ -22,29 +21,8 @@ const WORK_SECONDS = 45;
 const STRENGTH_MET = 5;
 const DAY_MS = 86_400_000;
 
-/** 1-based week since the program was created, clamped to its length. Calendar days on the Mac's clock. */
-export function programWeek(program: Pick<Program, "createdAt" | "weeks">, now = new Date()): number {
-  const days = Math.round((Date.parse(localDate(now)) - Date.parse(localDate(new Date(program.createdAt)))) / DAY_MS);
-  return Math.min(Math.max(Math.floor(days / 7) + 1, 1), Math.max(program.weeks, 1));
-}
-
-/**
- * True when a sentence of the notes that mentions a deload names this week:
- * "semana 4 de descarga", "descarga cada 4 semanas", "última semana: descarga".
- */
-export function isDeload(week: number, weeks: number, notes: string | null): boolean {
-  if (!notes) return false;
-  return notes
-    .toLowerCase()
-    .split(/[.;\n]/)
-    .some((sentence) => {
-      if (!sentence.includes("descarga") && !sentence.includes("deload")) return false;
-      const numbers = (sentence.match(/\d+/g) ?? []).map(Number);
-      if (sentence.includes("cada") || sentence.includes("every")) return numbers[0] !== undefined && numbers[0] > 0 && week % numbers[0] === 0;
-      if (week === weeks && ["última", "ultima", "last", "final"].some((w) => sentence.includes(w))) return true;
-      return numbers.includes(week);
-    });
-}
+import { isDeload } from "../training/weeks";
+export { isDeload };
 
 /** Sets × (rest + work), rounded to 5 minutes, never under 10. */
 export function dayMinutes(day: Pick<ProgramDay, "exercises">): number {
@@ -158,9 +136,18 @@ export type EntrenoOverview = {
   /** for totals, and exercises without a unit of their own */
   defaultUnit: WeightUnit;
   program: ProgramHeader | null;
+  /** null when there is no program or this week is complete */
   nextDayId: string | null;
   days: PlanDay[];
   history: HistoryEntry[];
+  /** every block, oldest first, the active one last */
+  blocks: TrainingBlock[];
+  /** each session a block's week refers to, by id, ready to open */
+  sessions: Record<string, HistoryEntry>;
+  /** the Coach's review of the next day, when there is one */
+  adjustment: NextAdjustment | null;
+  /** the next day as the Coach adjusted it, when that applies: starting it uses this */
+  adjusted: PlanDay | null;
 };
 
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -217,13 +204,24 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
   const view = activeProgramView(now.getTime());
   const program = view.program;
   const { defaultUnit } = units;
-  if (!program) return { defaultUnit, program: null, nextDayId: null, days: [], history };
-
-  const week = programWeek(program, now);
+  const blocks = view.blocks ?? [];
   const records = recentRecords(sessions, now.getTime());
+  const referenced = blocks.flatMap((b) => b.weeks.flatMap((w) => [...w.days.flatMap((d) => d.sessions), ...w.other]));
+  const known = new Map(sessions.map((s) => [s.id, s]));
+  const byId = sessionRecords(sessions);
+  const opened = Object.fromEntries(
+    [...new Set(referenced.map((s) => s.id))].flatMap((id) => {
+      const session = known.get(id) ?? getSession(id);
+      return session ? [[id, sessionEntry(session, byId.get(id) ?? new Set(), units)]] : [];
+    }),
+  );
+  const shared = { history, blocks, sessions: opened, adjustment: view.adjustment ?? null };
+  if (!program) return { defaultUnit, program: null, nextDayId: null, days: [], adjusted: null, ...shared };
+
+  const week = blocks.find((b) => b.programId === program.id)?.currentWeek ?? 1;
   const media = idsWithMedia();
   const weightKg = bodyWeight();
-  const days = program.days.map((day, i): PlanDay => ({
+  const planDay = (day: ProgramDay, i: number, suggestions: Record<string, LoadSuggestion>): PlanDay => ({
     id: day.id,
     name: day.name,
     focus: day.focus,
@@ -233,7 +231,7 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
     minutes: dayMinutes(day),
     kcal: dayKcal(day, weightKg),
     exercises: day.exercises.map((ex) => {
-      const suggestion = view.suggestions[ex.id] ?? null;
+      const suggestion = suggestions[ex.id] ?? null;
       const unit = unitIn(units, ex.exerciseId);
       return {
         ...ex,
@@ -246,13 +244,18 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
         unit,
       };
     }),
-  }));
+  });
+  const days = program.days.map((day, i) => planDay(day, i, view.suggestions));
+  const adjustment = view.adjustment ?? null;
+  const applies = adjustment && adjustment.status === "ready" && !adjustment.noChange && !adjustment.dismissed && adjustment.changes.length > 0;
+  const adjusted = applies ? planDay(adjustment.day, program.days.findIndex((d) => d.id === adjustment.dayId), adjustment.suggestions) : null;
   return {
     defaultUnit,
     program: { id: program.id, name: program.name, goal: program.goal, weeks: program.weeks, notes: program.notes, week, deload: isDeload(week, program.weeks, program.notes) },
     nextDayId: view.nextDayId,
     days,
-    history,
+    adjusted,
+    ...shared,
   };
 }
 

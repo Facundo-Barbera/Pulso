@@ -1,21 +1,25 @@
 import SwiftUI
 
-/// Entreno: the program's days as tabs, the selected day's exercises below and
-/// recent sessions after them. The floating "Empezar" opens the live session full screen.
+/// Entreno: one hero (this week's progress and the next workout with its big
+/// "Empezar"), then the weeks of every block with what happened each day, then
+/// recent sessions and the program's notes. A day opens as a sheet with its
+/// exercises; edits, preferences, units and the Coach live in the menu.
 struct TrainingView: View {
     let model: PulsoModel
     @State private var store = TrainingStore.shared
     @State private var showLive = false
-    /// nil follows the day the engine says is next.
-    @State private var selectedDayId: String?
+    @State private var previewing: DayRoute?
+    /// Set by the day sheet's "Empezar"; started once the sheet is gone.
+    @State private var pendingStart: ProgramDay?
+    @State private var openedSession: TrainingSession?
+    @State private var repeating: ProgramDay?
+    @State private var confirmNextWeek = false
+    @State private var resuming: TrainingBlock?
     @State private var editingDay: ProgramDay?
-    @State private var swapping: SwapRequest?
-    @State private var resetting: ProgramDay?
     @State private var showPreferences = false
-    /// Bumped when a quick swap lands, for the haptic.
-    @State private var swapped = 0
-
-    private var selectedDay: ProgramDay? { store.program?.day(selectedDayId ?? store.nextDay?.id) }
+    /// nil follows the current week.
+    @State private var selectedWeek: WeekRef?
+    @Environment(\.askCoach) private var askCoach
 
     /// For exercises without their own unit, and for totals. Each machine can still say otherwise.
     private var defaultUnit: Binding<WeightUnit> {
@@ -29,25 +33,36 @@ struct TrainingView: View {
                     ResumeCard(live: live) { showLive = true }
                 }
                 if let program = store.program {
-                    ProgramPlan(
+                    NextWorkoutHero(
                         program: program,
-                        nextDayId: store.nextDay?.id,
-                        suggestions: store.suggestions,
-                        records: TrainingPlan.recentRecords(store.sessions),
+                        block: store.activeBlock,
+                        showBlock: store.blocks.count > 1,
+                        day: store.nextDay,
+                        adjustment: store.adjustment,
                         weightKg: store.bodyWeightKg,
-                        selectedId: $selectedDayId,
-                        actions: DayActions(
-                            edit: { editingDay = $0 },
-                            swap: { day, exercise in
-                                // Today's day (or one already changed for today) swaps for today; others for good.
-                                let today = day.overridden == true || day.id == store.nextDay?.id
-                                swapping = SwapRequest(dayId: day.id, exercise: exercise, initialScope: today ? .today : .always)
-                            },
-                            reset: { resetting = $0 }
+                        running: store.live != nil,
+                        actions: HeroActions(
+                            start: start,
+                            preview: { day in preview(day) },
+                            startNextWeek: { confirmNextWeek = true },
+                            askCoach: { askCoach($0, send: false) }
                         )
                     )
+                    if !store.blocks.isEmpty {
+                        WeekBrowser(
+                            blocks: store.blocks,
+                            nextDayId: store.nextDayId,
+                            selection: $selectedWeek,
+                            actions: WeekActions(
+                                openSession: { open($0.id) },
+                                preview: { block, week, day in previewing = DayRoute(programId: block.programId, dayId: day.dayId, week: week.number) },
+                                repeatDay: { day in repeating = program.days.first { $0.id == day.dayId } },
+                                resume: { resuming = $0 }
+                            )
+                        )
+                    }
                     if !store.sessions.isEmpty {
-                        RecentSessions(sessions: store.sessions)
+                        RecentSessions(sessions: store.sessions) { open($0.id) }
                     }
                     ProgramNotes(program: program)
                 } else if store.loaded {
@@ -59,31 +74,13 @@ struct TrainingView: View {
             .padding(.horizontal, Theme.padding)
             .padding(.bottom, 32)
             .animation(.snappy, value: store.program)
-        }
-        .safeAreaInset(edge: .bottom) {
-            if let program = store.program, let day = selectedDay, store.live == nil {
-                StartButton(number: (program.days.firstIndex(of: day) ?? 0) + 1) { start(day) }
-            }
+            .animation(.snappy, value: store.adjustment)
         }
         .navigationTitle("Entreno")
         .navigationDestination(for: ExerciseRoute.self) { ExerciseDetailView(exerciseId: $0.exerciseId, name: $0.name) }
         .toolbar {
             if store.program != nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu("Opciones", systemImage: "gearshape") {
-                        if let day = selectedDay {
-                            Button("Editar \(day.name)", systemImage: "slider.horizontal.3") { editingDay = day }
-                        }
-                        Button("Equipo preferido", systemImage: "gearshape.2") { showPreferences = true }
-                        Picker(selection: defaultUnit) {
-                            ForEach(WeightUnit.allCases) { Text($0 == .kg ? "Kilos (kg)" : "Libras (lb)").tag($0) }
-                        } label: {
-                            Label("Unidad por defecto", systemImage: "scalemass")
-                            Text(store.defaultUnit.rawValue)
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
+                ToolbarItem(placement: .topBarTrailing) { menu }
             }
         }
         .refreshable { await load() }
@@ -95,40 +92,65 @@ struct TrainingView: View {
         }
         // Reads the store, not the closure's value: records arrive after the sheet opens.
         .sheet(item: $store.summary) { opened in SessionSummaryView(summary: store.summary ?? opened) }
+        .sheet(item: $openedSession) { session in SessionSummaryView(summary: SessionSummary(session: session, uploaded: true)) }
+        .sheet(item: $previewing, onDismiss: startPending) { route in
+            DayDetailView(route: route) { pendingStart = $0 }
+        }
         .sheet(item: $editingDay) { day in
             DayEditorView(day: day, suggestions: store.suggestions, hrZones: store.hrZones)
         }
-        .sheet(item: $swapping) { request in
-            SwapExerciseSheet(exerciseId: request.exercise.exerciseId, name: request.exercise.exerciseName, initialScope: request.initialScope) { library, scope in
-                swap(request, to: library, scope: scope)
-            }
-        }
         .sheet(isPresented: $showPreferences) { TrainingPreferencesView() }
-        .confirmationDialog(
-            "¿Volver al día del programa?",
-            isPresented: Binding(get: { resetting != nil }, set: { if !$0 { resetting = nil } }),
-            titleVisibility: .visible,
-            presenting: resetting
-        ) { day in
-            Button("Restablecer \(day.name)", role: .destructive) { Task { await store.resetDay(day.id) } }
+        .confirmationDialog("¿Repetir \(repeating?.name ?? "este día")?", isPresented: Binding(get: { repeating != nil }, set: { if !$0 { repeating = nil } }), titleVisibility: .visible, presenting: repeating) { day in
+            Button("Repetir \(day.name)") { start(day) }
         } message: { _ in
-            Text("Se quitan los cambios de hoy y vuelve la rutina del programa.")
+            Text("Ya lo hiciste esta semana. Se guarda como otra sesión del mismo día y no cambia cuál toca después.")
         }
-        .sensoryFeedback(.success, trigger: swapped)
+        .confirmationDialog("¿Empezar la semana \((store.activeBlock?.currentWeek ?? 0) + 1) ya?", isPresented: $confirmNextWeek, titleVisibility: .visible) {
+            Button("Empezar ya") {
+                selectedWeek = nil
+                Task { await store.startNextWeek() }
+            }
+        } message: {
+            Text("Esta semana queda cerrada con lo que hiciste y la siguiente empieza hoy.")
+        }
+        .confirmationDialog("¿Retomar \(resuming?.name ?? "el bloque")?", isPresented: Binding(get: { resuming != nil }, set: { if !$0 { resuming = nil } }), titleVisibility: .visible, presenting: resuming) { block in
+            Button("Retomar \(block.name)") {
+                selectedWeek = nil
+                Task { await store.resume(block) }
+            }
+        } message: { block in
+            Text("Empieza un bloque nuevo con sus días, desde la semana 1. Lo que hiciste en \(store.activeBlock?.name ?? "este bloque") se queda en tu historial.")
+        }
     }
 
-    /// The quick "Cambiar" on a plan row: the day as it is, with that one exercise replaced.
-    private func swap(_ request: SwapRequest, to library: LibraryExercise, scope: EditScope) {
-        guard let day = store.program?.days.first(where: { $0.id == request.dayId }) else { return }
-        let list = day.exercises.map { $0.id == request.exercise.id ? $0.swapped(to: library) : $0 }
-        Task {
-            do {
-                try await store.saveDay(day.id, scope: scope, exercises: list.map(\.editInput))
-                swapped += 1
-            } catch {
-                model.handle(error)
+    private var menu: some View {
+        Menu("Opciones", systemImage: "ellipsis") {
+            if let day = store.nextDay {
+                Button("Editar \(day.name)", systemImage: "slider.horizontal.3") { editingDay = day }
+            }
+            Button("Equipo preferido", systemImage: "gearshape.2") { showPreferences = true }
+            Picker(selection: defaultUnit) {
+                ForEach(WeightUnit.allCases) { Text($0 == .kg ? "Kilos (kg)" : "Libras (lb)").tag($0) }
+            } label: {
+                Label("Unidad por defecto", systemImage: "scalemass")
+                Text(store.defaultUnit.rawValue)
+            }
+            .pickerStyle(.menu)
+            Divider()
+            Button("Preguntar al Coach", systemImage: "sparkles") { askCoach("¿Cómo voy con mi programa esta semana?", send: false) }
+            Button("Cambiar de programa", systemImage: "arrow.triangle.branch") {
+                askCoach("Quiero cambiar de programa, sin perder lo que ya hice: ", send: false)
             }
         }
+    }
+
+    private func preview(_ day: ProgramDay) {
+        guard let block = store.activeBlock else { return }
+        previewing = DayRoute(programId: block.programId, dayId: day.id, week: block.currentWeek)
+    }
+
+    private func open(_ sessionId: String) {
+        Task { openedSession = await store.session(sessionId) }
     }
 
     /// The program, then each exercise's guide and thumbnail (and the next day's
@@ -145,9 +167,15 @@ struct TrainingView: View {
         Task { await store.finish() }
     }
 
+    private func startPending() {
+        guard let day = pendingStart else { return }
+        pendingStart = nil
+        start(day)
+    }
+
     private func start(_ day: ProgramDay) {
         store.start(day)
-        showLive = true
+        showLive = store.live != nil
     }
 }
 
@@ -157,356 +185,270 @@ struct ExerciseRoute: Hashable {
     var name: String
 }
 
-private extension TrainingProgram {
-    func day(_ id: String?) -> ProgramDay? { days.first { $0.id == id } ?? days.first }
+// MARK: - Hero
+
+struct HeroActions {
+    var start: (ProgramDay) -> Void = { _ in }
+    var preview: (ProgramDay) -> Void = { _ in }
+    var startNextWeek: () -> Void = {}
+    var askCoach: (String) -> Void = { _ in }
 }
 
-/// A plan row's quick "Cambiar".
-private struct SwapRequest: Identifiable {
-    var dayId: String
-    var exercise: ProgramExercise
-    var initialScope: EditScope
-
-    var id: String { exercise.id }
-}
-
-/// What the selected day offers: edit it, swap one exercise, drop today's changes.
-private struct DayActions {
-    var edit: (ProgramDay) -> Void = { _ in }
-    var swap: (ProgramDay, ProgramExercise) -> Void = { _, _ in }
-    var reset: (ProgramDay) -> Void = { _ in }
-}
-
-// MARK: - Plan
-
-/// Header, the day tabs and the selected day. Swiping the day sideways moves to the next or previous one.
-private struct ProgramPlan: View {
+/// The screen's one hero: this week's ring ("1 de 4 días hechos") and the next
+/// workout with its big "Empezar", the Coach's note on it when there is one.
+/// With the week complete: "Semana completa" and the way to start the next one early.
+private struct NextWorkoutHero: View {
     let program: TrainingProgram
-    let nextDayId: String?
-    let suggestions: [String: LoadSuggestion]
-    let records: Set<String>
+    let block: TrainingBlock?
+    let showBlock: Bool
+    let day: ProgramDay?
+    let adjustment: NextAdjustment?
     let weightKg: Double?
-    @Binding var selectedId: String?
-    var actions = DayActions()
-    @State private var edge: Edge = .trailing
+    let running: Bool
+    let actions: HeroActions
 
-    private var selected: ProgramDay? { program.day(selectedId ?? nextDayId) }
-    private var index: Int { selected.flatMap(program.days.firstIndex(of:)) ?? 0 }
+    private var week: ProgramWeek? { block?.current }
+    private var done: Int { week?.done ?? 0 }
+    private var total: Int { program.days.count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PlanHeader(program: program)
-            DayTabs(days: program.days, selectedId: selected?.id, select: select)
-            if let day = selected {
-                DayPlan(day: day, isNext: day.id == nextDayId, suggestions: suggestions, records: records, weightKg: weightKg, actions: actions)
-                    .id(day.id)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: edge).combined(with: .opacity),
-                        removal: .move(edge: edge == .trailing ? .leading : .trailing).combined(with: .opacity)
-                    ))
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
-                        let dx = value.translation.width
-                        guard abs(dx) > max(60, abs(value.translation.height) * 1.5) else { return }
-                        step(dx < 0 ? 1 : -1)
-                    })
-            }
-        }
-        .sensoryFeedback(.selection, trigger: selected?.id)
-    }
-
-    private func select(_ id: String) {
-        let target = program.days.firstIndex { $0.id == id } ?? 0
-        guard target != index else { return }
-        edge = target > index ? .trailing : .leading
-        withAnimation(.snappy) { selectedId = id }
-    }
-
-    private func step(_ delta: Int) {
-        let target = index + delta
-        guard program.days.indices.contains(target) else { return }
-        select(program.days[target].id)
-    }
-}
-
-private struct PlanHeader: View {
-    let program: TrainingProgram
-
-    private var week: Int { TrainingPlan.week(of: program) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(program.name)
-                .font(.title2.bold())
-                .fontDesign(.rounded)
-                .lineLimit(2)
-            HStack(spacing: 8) {
-                Text("Semana \(week) de \(program.weeks)")
-                    .font(.subheadline.weight(.semibold))
-                    .fontDesign(.rounded)
-                    .foregroundStyle(Theme.training)
-                    .contentTransition(.numericText())
-                if TrainingPlan.isDeload(week: week, weeks: program.weeks, notes: program.notes) {
-                    GlassChip("Descarga", systemImage: "arrow.down.right", tint: Theme.training)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// "Día 1 · Torso A" pills on glass, the selected one filled. Scrolls to keep it in view.
-private struct DayTabs: View {
-    let days: [ProgramDay]
-    let selectedId: String?
-    let select: (String) -> Void
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                GlassEffectContainer(spacing: 8) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(days.enumerated()), id: \.element.id) { i, day in
-                            let selected = day.id == selectedId
-                            Button { select(day.id) } label: {
-                                Text("Día \(i + 1) · \(day.name)")
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                                    .frame(maxWidth: 220)
-                                    .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 9)
-                                    .contentShape(.capsule)
-                            }
-                            .buttonStyle(.plain)
-                            .glassEffect(selected ? .regular.tint(Theme.training).interactive() : .regular.interactive(), in: .capsule)
-                            .accessibilityAddTraits(selected ? .isSelected : [])
-                            .id(day.id)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-            .scrollIndicators(.hidden)
-            .contentMargins(.horizontal, Theme.padding, for: .scrollContent)
-            .padding(.horizontal, -Theme.padding)
-            .onAppear { proxy.scrollTo(selectedId, anchor: .center) }
-            .onChange(of: selectedId) { _, id in withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) } }
-        }
-    }
-}
-
-private struct DayPlan: View {
-    let day: ProgramDay
-    let isNext: Bool
-    let suggestions: [String: LoadSuggestion]
-    let records: Set<String>
-    let weightKg: Double?
-    let actions: DayActions
-
-    /// 1 = Monday … 7 = Sunday, like `ProgramDay.weekday`.
-    private var isoWeekdayToday: Int { (Calendar.current.component(.weekday, from: .now) + 5) % 7 + 1 }
-
-    private var tagline: String? {
-        let next = isNext ? (day.weekday == isoWeekdayToday ? "Hoy toca" : "Siguiente") : nil
-        let weekday = day.weekday.map { Calendar.current.weekdaySymbols[$0 % 7].capitalized }
-        let parts = [next, weekday].compactMap(\.self)
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                if let tagline {
-                    Text(tagline).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.training)
-                }
-                Text(day.name)
-                    .font(.largeTitle.bold())
-                    .fontDesign(.rounded)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-                if let focus = day.focus, !focus.isEmpty {
-                    Text(focus).font(.title3).foregroundStyle(.secondary)
-                }
-            }
-
-            if day.overridden == true {
-                TodayChangesBar { actions.reset(day) }
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
-            }
-
-            DayStats(day: day, weightKg: weightKg)
-
-            if day.exercises.isEmpty {
-                Card {
-                    Label("Día sin ejercicios", systemImage: "figure.cooldown")
-                        .foregroundStyle(.secondary)
-                    Button("Añadir ejercicios", systemImage: "plus") { actions.edit(day) }
-                        .buttonStyle(.glass)
-                        .tint(Theme.training)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        CardTitle(text: "Ejercicios", systemImage: "list.bullet")
-                        Spacer(minLength: 8)
-                        Button("Editar", systemImage: "slider.horizontal.3") { actions.edit(day) }
-                            .font(.subheadline.weight(.semibold))
-                            .buttonStyle(.glass)
-                            .controlSize(.small)
-                            .tint(Theme.training)
-                    }
-                    Card {
-                        VStack(spacing: 0) {
-                            ForEach(day.exercises) { ex in
-                                PlanExerciseRow(exercise: ex, suggestion: suggestions[ex.id], record: records.contains(ex.exerciseId))
-                                    .contextMenu {
-                                        Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") { actions.swap(day, ex) }
-                                        Button("Editar día", systemImage: "slider.horizontal.3") { actions.edit(day) }
-                                    }
-                                if ex.id != day.exercises.last?.id { Divider().padding(.leading, 68) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.snappy, value: day.overridden)
-    }
-}
-
-/// "Cambios solo para hoy" with the way back to the program's own day.
-private struct TodayChangesBar: View {
-    let reset: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            GlassChip("Cambios solo para hoy", systemImage: "clock.arrow.circlepath", tint: Theme.training)
-            Button("Restablecer", action: reset)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.training)
-                .buttonStyle(.borderless)
-        }
-    }
-}
-
-/// "⚡ 5 ejercicios · ⏱ ~40 min · 🔥 ~310 kcal"; kcal only with a known body weight.
-private struct DayStats: View {
-    let day: ProgramDay
-    let weightKg: Double?
-
-    var body: some View {
-        AdaptiveStack(horizontalAlignment: .leading, spacing: 16) {
-            stat("\(day.exercises.count)", day.exercises.count == 1 ? "ejercicio" : "ejercicios", "bolt.fill", Theme.training)
-            stat("~\(TrainingPlan.minutes(day))", "min", "timer", Theme.fat)
-            if let kcal = TrainingPlan.kcal(day, weightKg: weightKg) {
-                stat("~\(kcal)", "kcal", "flame.fill", Theme.energy)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func stat(_ value: String, _ unit: String, _ symbol: String, _ tint: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).foregroundStyle(tint)
-            Text(value).fontWeight(.semibold).fontDesign(.rounded).contentTransition(.numericText())
-            Text(unit).foregroundStyle(.secondary)
-        }
-        .font(.subheadline)
-        .lineLimit(1)
-        .fixedSize()
-    }
-}
-
-/// One prescribed exercise: its demonstration still, name and "series × reps × kg",
-/// a trophy after a recent record, and the primary muscle on a small figure. Opens the exercise screen.
-private struct PlanExerciseRow: View {
-    let exercise: ProgramExercise
-    let suggestion: LoadSuggestion?
-    let record: Bool
-
-    private var detail: ExerciseDetail? { ExerciseCatalog.shared.details[exercise.exerciseId] }
-
-    var body: some View {
-        NavigationLink(value: ExerciseRoute(exerciseId: exercise.exerciseId, name: exercise.exerciseName)) {
-            HStack(spacing: 12) {
-                ExerciseMediaView(path: detail?.media.thumbnail, cornerRadius: 12)
-                    .frame(width: 56, height: 56)
+            HStack(spacing: 16) {
+                WeekRing(done: done, total: total)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(exercise.exerciseName)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                        if record {
-                            Image(systemName: "trophy.fill")
-                                .font(.caption)
-                                .foregroundStyle(Theme.carbs)
-                                .accessibilityLabel("Récord reciente")
-                        }
-                    }
-                    // A load set by hand wins over the suggestion; cardio shows its target.
-                    Text(exercise.isCardio ? exercise.prescription : TrainingPlan.prescription(exercise, weightKg: exercise.weightKg ?? suggestion?.weightKg, unit: TrainingStore.shared.unit(for: exercise.exerciseId)))
+                    Text(showBlock ? "Bloque \(block?.number ?? 1) · \(program.name)" : program.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text("Semana \(block?.currentWeek ?? 1) de \(program.weeks)")
+                        .font(.title2.bold())
+                        .fontDesign(.rounded)
+                        .contentTransition(.numericText())
+                    Text("\(done) de \(total) días hechos")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .contentTransition(.numericText())
+                    if week?.deload == true {
+                        GlassChip("Descarga", systemImage: "arrow.down.right", tint: Theme.training).padding(.top, 2)
+                    }
                 }
-                Spacer(minLength: 4)
-                if let primary = detail?.primaryMuscles, !primary.isEmpty {
-                    MuscleBadge(primary: primary)
-                }
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+            if block?.weekComplete == true {
+                WeekCompleteContent(block: block!, program: program, actions: actions)
+            } else if let day {
+                if block?.finished == true {
+                    Label("Terminaste las \(program.weeks) semanas. Puedes seguir, o pedirle al Coach el siguiente bloque.", systemImage: "flag.checkered")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                NextDayContent(day: day, adjustment: adjustment, weightKg: weightKg, running: running, actions: actions)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(Theme.padding + 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.corner + 6, style: .continuous)
+                .fill(.background.secondary)
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.corner + 6, style: .continuous)
+                        .fill(LinearGradient(colors: [Theme.training.opacity(0.2), Theme.training.opacity(0.02)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                }
+        }
+        .animation(.snappy, value: done)
     }
 }
 
-/// The figure (front, or back when the muscle only shows there) with the primary muscles lit.
-struct MuscleBadge: View {
-    let primary: [Muscle]
+/// "1/4" inside a ring that fills with the week; a check when it's full.
+private struct WeekRing: View {
+    let done: Int
+    let total: Int
 
-    private var polygons: [BodyPolygon] {
-        guard let first = primary.first, !BodyMapData.views(of: first).front else { return BodyMapData.front }
-        return BodyMapData.back
-    }
+    private var share: Double { total == 0 ? 0 : min(1, Double(done) / Double(total)) }
 
     var body: some View {
         ZStack {
-            BodyShape(polygons: polygons) { _ in true }
-                .fill(Color.secondary.opacity(0.35))
-            BodyShape(polygons: polygons) { $0.map(primary.contains) ?? false }
-                .fill(MuscleMapView.primaryColor.gradient)
+            Circle().stroke(Theme.training.opacity(0.15), lineWidth: 9)
+            Circle()
+                .trim(from: 0, to: share)
+                .stroke(Theme.training.gradient, style: StrokeStyle(lineWidth: 9, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            if share >= 1 {
+                Image(systemName: "checkmark")
+                    .font(.title2.bold())
+                    .foregroundStyle(Theme.training)
+                    .symbolEffect(.bounce, options: .nonRepeating)
+                    .transition(.scale.combined(with: .opacity))
+            } else {
+                Text("\(done)/\(total)")
+                    .font(.headline)
+                    .fontDesign(.rounded)
+                    .contentTransition(.numericText())
+            }
         }
-        .aspectRatio(BodyMapData.size, contentMode: .fit)
-        .frame(height: 32)
-        .frame(width: 40, height: 40)
-        .background(.fill.tertiary, in: .circle)
+        .frame(width: 72, height: 72)
+        .animation(.snappy, value: share)
         .accessibilityElement()
-        .accessibilityLabel(primary.map(\.label).formatted(.list(type: .and)))
+        .accessibilityLabel("\(done) de \(total) días hechos esta semana")
     }
 }
 
-private struct StartButton: View {
-    let number: Int
-    let start: () -> Void
+private struct NextDayContent: View {
+    let day: ProgramDay
+    let adjustment: NextAdjustment?
+    let weightKg: Double?
+    let running: Bool
+    let actions: HeroActions
+
+    private var isoWeekdayToday: Int { (Calendar.current.component(.weekday, from: .now) + 5) % 7 + 1 }
+
+    /// "Pecho, espalda y hombros", from the exercises' guides (cached), else the day's focus.
+    private var muscles: String? {
+        var seen: [Muscle] = []
+        for ex in day.exercises {
+            for muscle in ExerciseCatalog.shared.details[ex.exerciseId]?.primaryMuscles ?? [] where !seen.contains(muscle) {
+                seen.append(muscle)
+            }
+        }
+        guard !seen.isEmpty else { return day.focus }
+        return seen.prefix(3).map(\.label).formatted(.list(type: .and)).capitalizedFirst
+    }
 
     var body: some View {
-        Button(action: start) {
-            Label("Empezar día \(number)", systemImage: "play.fill")
-                .font(.title3.bold())
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .contentTransition(.numericText())
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            Button { actions.preview(day) } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(day.weekday == isoWeekdayToday ? "Hoy toca" : "Siguiente")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.training)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(day.name)
+                            .font(.title.bold())
+                            .fontDesign(.rounded)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.7)
+                        Image(systemName: "chevron.right").font(.headline).foregroundStyle(.tertiary)
+                    }
+                    if let muscles {
+                        Text(muscles).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Muestra los ejercicios")
+            DayStats(day: adjustment?.applies == true ? adjustment!.day : day, weightKg: weightKg)
+            if let adjustment { AdjustmentNote(adjustment: adjustment) }
+            if !running {
+                Button { actions.start(day) } label: {
+                    Label("Empezar \(day.name)", systemImage: "play.fill")
+                        .font(.title3.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Theme.training)
+                .sensoryFeedback(.impact, trigger: running)
+            }
         }
-        .buttonStyle(.glassProminent)
-        .tint(Theme.training)
-        .sensoryFeedback(.impact, trigger: number)
-        .padding(.horizontal, Theme.padding)
-        .padding(.bottom, 8)
+    }
+}
+
+private struct WeekCompleteContent: View {
+    let block: TrainingBlock
+    let program: TrainingProgram
+    let actions: HeroActions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            Label(block.canStartNextWeek ? "Semana completa" : "Programa completado", systemImage: "checkmark.seal.fill")
+                .font(.title3.bold())
+                .foregroundStyle(Theme.training)
+                .symbolEffect(.bounce, options: .nonRepeating)
+            if block.canStartNextWeek {
+                Text("Buen trabajo. La semana \(block.currentWeek + 1) empieza el lunes\(program.days.first.map { " con \($0.name)" } ?? "").")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Empezar la semana \(block.currentWeek + 1) ya", systemImage: "forward.end.fill", action: actions.startNextWeek)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.glass)
+                    .tint(Theme.training)
+            } else {
+                Text("Hiciste las \(program.weeks) semanas. Pídele al Coach el siguiente bloque: tu historial y tus cargas siguen contigo.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Pedir el siguiente bloque", systemImage: "sparkles") {
+                    actions.askCoach("Terminé \(program.name). Diseña mi siguiente bloque a partir de lo que hice: ")
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Theme.training)
+            }
+        }
+    }
+}
+
+/// The Coach's word on the next session: still reviewing, or its one sentence
+/// with "Ver por qué" (a Coach thread) and "Entrenar normal".
+struct AdjustmentNote: View {
+    let adjustment: NextAdjustment
+    @State private var opening = false
+
+    private var store: TrainingStore { TrainingStore.shared }
+    /// A review that kept the plan with nothing noticed says nothing.
+    private var silent: Bool { adjustment.noChange && adjustment.signals.isEmpty }
+
+    var body: some View {
+        if adjustment.reviewing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("El Coach está revisando tu próxima sesión…")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        } else if let rationale = adjustment.rationale, !silent {
+            VStack(alignment: .leading, spacing: 10) {
+                Label {
+                    Text(rationale).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: adjustment.decidedBy == "fallback" ? "gearshape" : "sparkles").foregroundStyle(Theme.training)
+                }
+                .font(.subheadline)
+                .opacity(adjustment.dismissed ? 0.6 : 1)
+                if adjustment.dismissed {
+                    Text("Hoy entrenas el plan normal.").font(.caption).foregroundStyle(.secondary)
+                }
+                AdaptiveStack(horizontalAlignment: .leading, spacing: 8) {
+                    Button {
+                        opening = true
+                        Task {
+                            await store.discussAdjustment()
+                            opening = false
+                        }
+                    } label: {
+                        if opening { ProgressView().controlSize(.mini) } else { Text("Ver por qué") }
+                    }
+                    if !adjustment.noChange {
+                        Button(adjustment.dismissed ? "Usar el ajuste" : "Entrenar normal") {
+                            Task { await store.setAdjustmentDismissed(!adjustment.dismissed) }
+                        }
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .tint(Theme.training)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.training.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .sensoryFeedback(.selection, trigger: adjustment.dismissed)
+            .animation(.snappy, value: adjustment.dismissed)
+        }
     }
 }
 
@@ -536,25 +478,30 @@ private struct ProgramNotes: View {
 
 private struct RecentSessions: View {
     let sessions: [TrainingSession]
+    let open: (TrainingSession) -> Void
 
     var body: some View {
         Card {
             CardTitle(text: "Últimas sesiones", systemImage: "clock.arrow.circlepath")
             ForEach(sessions.prefix(5)) { session in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.name).font(.body.weight(.medium))
-                        Text(session.start.formatted(.dateTime.weekday(.wide).day().month()))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                Button { open(session) } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.name).font(.body.weight(.medium)).foregroundStyle(.primary)
+                            Text(session.start.formatted(.dateTime.weekday(.wide).day().month()))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(TrainingStore.shared.defaultUnit.formatTotal(session.volumeKg)).font(.subheadline.weight(.semibold)).fontDesign(.rounded)
+                            Text("\(session.sets.count) series · \(Int(session.duration / 60)) min").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(TrainingStore.shared.defaultUnit.formatTotal(session.volumeKg)).font(.subheadline.weight(.semibold)).fontDesign(.rounded)
-                        Text("\(session.sets.count) series · \(Int(session.duration / 60)) min").font(.caption).foregroundStyle(.secondary)
-                    }
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
                 }
-                .padding(.vertical, 4)
+                .buttonStyle(.plain)
             }
         }
     }
@@ -618,68 +565,89 @@ private struct EmptyProgram: View {
     }
 }
 
+private extension String {
+    /// "pecho, espalda" → "Pecho, espalda".
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
 
 #if DEBUG
 #Preview("Entreno · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
     NavigationStack { TrainingView(model: .shared) }
 }
 
-private struct PlanPreview: View {
-    var weightKg: Double? = 78
-    @State private var selected: String?
+private struct HeroPreview: View {
+    var complete = false
+    var adjustment: NextAdjustment?
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                ProgramPlan(
-                    program: .preview,
-                    nextDayId: "d2",
-                    suggestions: ["pe1": LoadSuggestion(exerciseId: "press-banca-inclinado", weightKg: 32.5, reps: 8, reason: "", lastSessionAt: nil)],
-                    records: ["press-banca-inclinado"],
-                    weightKg: weightKg,
-                    selectedId: $selected
-                )
-                .padding(.horizontal, Theme.padding)
-            }
-            .safeAreaInset(edge: .bottom) { StartButton(number: 2) {} }
-            .navigationTitle("Entreno")
+        let block = TrainingBlock.preview(complete: complete)
+        NarrowPreview {
+            NextWorkoutHero(program: .preview, block: block, showBlock: true, day: complete ? nil : TrainingProgram.preview.days[1], adjustment: adjustment, weightKg: 78, running: false, actions: HeroActions())
+            WeekBrowser(blocks: [block], nextDayId: "d2", selection: .constant(nil))
         }
     }
 }
 
-#Preview("Plan · 375 pt, nombres largos", traits: .fixedLayout(width: 375, height: 900)) {
-    PlanPreview()
+#Preview("Hero · siguiente, con ajuste") {
+    HeroPreview(adjustment: NextAdjustment(
+        id: "a", programId: "p", dayId: "d2", status: "ready", decidedBy: "coach", noChange: false,
+        rationale: "Llevas 9 días sin entrenar y dormiste poco: hoy 2 series por ejercicio y un 10 % menos de peso.",
+        signals: [AdjustmentSignal(kind: "inactivity", level: "moderate", days: 9, detail: "Llevas 9 días sin entrenar")],
+        changes: [ExerciseChange(action: "adjust", programExerciseId: "pe1", loadPercent: -10, sets: 2)],
+        dismissed: false, threadId: nil, day: TrainingProgram.preview.days[1], suggestions: [:]
+    ))
 }
 
-#Preview("Plan · 375 pt, XXL, sin peso", traits: .fixedLayout(width: 375, height: 900)) {
-    PlanPreview(weightKg: nil).dynamicTypeSize(.xxLarge)
+#Preview("Hero · semana completa, claro") {
+    HeroPreview(complete: true).preferredColorScheme(.light)
 }
 
-#Preview("Plan · 440 pt, claro", traits: .fixedLayout(width: 440, height: 956)) {
-    PlanPreview().preferredColorScheme(.light)
-}
-
-private extension TrainingProgram {
+extension TrainingProgram {
     static let preview: TrainingProgram = {
         func ex(_ id: String, _ exerciseId: String, _ name: String, _ sets: Int, _ min: Int, _ max: Int, rest: Int = 120) -> ProgramExercise {
             ProgramExercise(id: id, exerciseId: exerciseId, exerciseName: name, equipment: "barbell", sets: sets, repMin: min, repMax: max, targetRpe: nil, targetRir: 2, restSeconds: rest, notes: nil)
         }
         return TrainingProgram(
-            id: "p", name: "Hipertrofia torso-pierna con énfasis en la cadena posterior", goal: "Ganar músculo manteniendo la fuerza",
-            weeks: 6, notes: "Semana 6 de descarga: mitad de series.", active: true,
-            createdAt: (Date.now.timeIntervalSince1970 - 16 * 86_400) * 1000,
+            id: "p", name: "Torso / Pierna", goal: "Ganar músculo manteniendo la fuerza",
+            weeks: 6, notes: "Semana 4 de descarga: mitad de series.", active: true,
+            createdAt: (Date.now.timeIntervalSince1970 - 3 * 86_400) * 1000,
             days: [
-                ProgramDay(id: "d1", name: "Torso A", focus: "Empuje horizontal", weekday: 1, exercises: [ex("pa", "press-banca", "Press de banca", 4, 6, 8)]),
-                ProgramDay(id: "d2", name: "Pierna con énfasis en isquiotibiales y glúteos", focus: "Bisagra de cadera y cadena posterior", weekday: 3, exercises: [
-                    ex("pe1", "press-banca-inclinado", "Press inclinado con mancuernas en banco a 30 grados", 4, 6, 8),
+                ProgramDay(id: "d1", name: "Torso A", focus: "Empuje horizontal", weekday: nil, exercises: [ex("pa", "press-banca", "Press de banca", 4, 6, 8)]),
+                ProgramDay(id: "d2", name: "Pierna A", focus: "Sentadilla", weekday: nil, exercises: [
+                    ex("pe1", "sentadilla-hack", "Sentadilla hack", 4, 6, 10),
                     ex("pe2", "peso-muerto-rumano", "Peso muerto rumano", 3, 8, 10, rest: 150),
-                    ex("pe3", "curl-femoral", "Curl femoral tumbado", 3, 10, 12, rest: 90),
-                    ex("pe4", "elevacion-gemelos", "Elevación de gemelos de pie en máquina", 4, 12, 12, rest: 60),
-                ], overridden: true),
-                ProgramDay(id: "d3", name: "Torso B", focus: nil, weekday: 5, exercises: [ex("pc", "dominadas", "Dominadas lastradas", 4, 5, 7)]),
-                ProgramDay(id: "d4", name: "Pierna B", focus: "Sentadilla", weekday: nil, exercises: []),
+                ]),
+                ProgramDay(id: "d3", name: "Torso B", focus: nil, weekday: nil, exercises: [ex("pc", "dominadas", "Dominadas", 4, 5, 7)]),
+                ProgramDay(id: "d4", name: "Pierna B", focus: nil, weekday: nil, exercises: [ex("pd", "prensa", "Prensa", 3, 10, 12)]),
             ]
         )
     }()
+}
+
+extension TrainingBlock {
+    static func preview(complete: Bool) -> TrainingBlock {
+        let monday = Calendar.current.dateInterval(of: .weekOfYear, for: .now)!.start.timeIntervalSince1970 * 1000
+        let week = 7 * 86_400_000.0
+        let session = { (day: String, offset: Double) in
+            WeekSession(id: "s\(day)", dayId: day, name: day, startedAt: monday + offset * 86_400_000 + 64_800_000, endedAt: monday + offset * 86_400_000 + 67_260_000, sets: 10, cardioMinutes: 0)
+        }
+        let days = TrainingProgram.preview.days
+        let weeks = (1...6).map { n in
+            let current = n == 1
+            let statuses: [WeekDayStatus] = current ? (complete ? [.done, .done, .partial, .done] : [.done, .planned, .planned, .planned]) : [.planned, .planned, .planned, .planned]
+            let weekDays = zip(days, statuses).enumerated().map { i, pair in
+                WeekDay(dayId: pair.0.id, name: pair.0.name, status: pair.1, sessions: pair.1.isDone ? [session(pair.0.id, Double(i))] : [])
+            }
+            return ProgramWeek(
+                number: n, startsAt: monday + Double(n - 1) * week, endsAt: monday + Double(n) * week, state: current ? "current" : "future",
+                startedEarly: false, deload: n == 4, note: n == 4 ? "Semana 4 de descarga: mitad de series." : nil,
+                days: weekDays, done: weekDays.filter(\.status.isDone).count, other: []
+            )
+        }
+        return TrainingBlock(
+            programId: "p", number: 2, name: "Torso / Pierna", goal: "", startedAt: monday, endedAt: nil, endReason: nil, active: true, resumedFrom: nil,
+            days: days, currentWeek: 1, weekComplete: complete, canStartNextWeek: complete, finished: false, weeks: weeks
+        )
+    }
 }
 #endif

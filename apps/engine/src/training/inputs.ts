@@ -56,6 +56,7 @@ export const programShape = {
   weeks: z.number().int().min(1).max(52).describe("Planned length in weeks."),
   notes: z.string().max(1000).nullish().describe("Progression rules, deload plan, anything the person should know."),
   days: z.array(programDayShape).min(1).max(7).describe("Training days in rotation order."),
+  reason: z.string().max(200).nullish().describe('Why the current block ends, in Spanish ("Cambio a CrossFit"), when this program replaces it.'),
 };
 
 /**
