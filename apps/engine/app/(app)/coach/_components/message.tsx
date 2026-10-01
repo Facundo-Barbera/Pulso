@@ -8,6 +8,7 @@ import { cn } from "../../../_ui/cn";
 import { Markdown } from "../../../_ui/markdown";
 import { CoachAvatar, copyText, ThinkingDots } from "./bits";
 import { photoSrc } from "./photos";
+import { ProductCard } from "./product-card";
 import { RESULT_PLACES, toolLook } from "./tools";
 
 export function MessageRow({ message, last }: { message: AgentMessage; last: boolean }) {
@@ -18,6 +19,16 @@ function UserBubble({ message }: { message: AgentMessage }) {
   return (
     <div className="flex flex-col items-end gap-1.5 pl-10 motion-safe:animate-[pulso-rise_280ms_ease-out_both] md:pl-20">
       {message.attachments.length > 0 && <Photos threadId={message.threadId} photos={message.attachments} />}
+      {/* `?.`: messages saved before products existed may come without the field. */}
+      {message.products?.length > 0 && (
+        <ul className="flex w-[min(280px,100%)] flex-col gap-1.5" aria-label={message.products.length === 1 ? "Producto" : `${message.products.length} productos`}>
+          {message.products.map((p) => (
+            <li key={p.barcode}>
+              <ProductCard item={p} />
+            </li>
+          ))}
+        </ul>
+      )}
       {message.text && (
         <div className="group flex items-end justify-end gap-1">
           <Actions text={message.text} className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 max-md:hidden" />

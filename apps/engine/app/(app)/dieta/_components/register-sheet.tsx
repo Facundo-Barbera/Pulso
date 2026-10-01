@@ -1,7 +1,7 @@
 "use client";
 
-import { HOUSEHOLD_SIZES, type FoodProduct, type FrequentFood, type Macros, type MealEntry, type MealSlot, type MeasureUnit } from "@pulso/contract";
-import { Plus, ScanBarcode, Search } from "lucide-react";
+import { HOUSEHOLD_SIZES, type FoodProduct, type FrequentFood, type Macros, type MealEntry, type MealSlot, type MeasureUnit, type PortionEstimate } from "@pulso/contract";
+import { Plus, ScanBarcode, Search, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
 import type { SlotView } from "@/src/web/dieta-plan";
@@ -56,7 +56,8 @@ function fromLogged(f: Logged) {
  * «Registrar»: one sheet for meals, snacks and drinks. The name field searches
  * the frequent foods (pick one to fill everything, or + to log it as it was);
  * the amount takes any measure a person says — g, ml, taza, lata, puño…; macros
- * are entered per 100 g/ml or per one unit and scaled. A barcode can be typed.
+ * are entered per 100 g/ml or per one unit and scaled. A barcode can be typed;
+ * with a product, «Cuánto comiste» in words («una cucharada») fills the amount.
  * With `entry`, the same form corrects a logged entry. With `replacing`, it logs
  * what was eaten instead of a planned meal and ties it to that slot (a plan
  * change with «Deshacer»).
@@ -81,6 +82,8 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
   const [barcode, setBarcode] = useState<string | null>(entry?.barcode ?? null);
   const [searching, setSearching] = useState(!entry);
   const [scan, setScan] = useState<{ code: string; status: "idle" | "looking" | "missing" } | null>(null);
+  const [said, setSaid] = useState("");
+  const [portion, setPortion] = useState<{ busy: boolean; assumption: string | null; error: string | null }>({ busy: false, assumption: null, error: null });
 
   const close = () => {
     setOpen(false);
@@ -115,6 +118,7 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     setSize(filled.size);
     setPer(filled.per);
     setBarcode(f.barcode);
+    resetPortion();
     if (f.slot === "snack") setSlot("snack");
     setSearching(false);
   }
@@ -175,9 +179,31 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     setSize("");
     setPer({ ...EMPTY_PER, ...Object.fromEntries(Object.entries(product.per100g).map(([k, v]) => [k, str(v)])) });
     setBarcode(product.barcode);
+    resetPortion();
     setScan(null);
     setSearching(false);
   }
+
+  /** The Mac turns «la mitad del paquete» into an amount of this product; the form takes it as if logged that way. */
+  async function estimatePortion() {
+    if (!barcode || !said.trim() || portion.busy) return;
+    setPortion({ busy: true, assumption: null, error: null });
+    const result = await send("portion", "POST", { barcode, amount: said.trim() });
+    if (!result.ok) return setPortion({ busy: false, assumption: null, error: result.message });
+    const { estimate } = result.data as { estimate: PortionEstimate };
+    const filled = fromLogged({ ...estimate.macros, name, quantity: estimate.quantity, unit: estimate.unit, measure: estimate.measure, slot, barcode, caffeineMg: null, alcoholG: null });
+    setUnit(filled.unit);
+    setAmount(filled.amount);
+    setSize(filled.size);
+    setPer(filled.per);
+    setPortion({ busy: false, assumption: estimate.assumption, error: null });
+  }
+  const resetPortion = () => {
+    setSaid("");
+    setPortion({ busy: false, assumption: null, error: null });
+  };
+  /** A hand-made change makes the assumption line stale. */
+  const clearAssumption = () => portion.assumption && setPortion({ ...portion, assumption: null });
 
   async function save() {
     if (!name.trim()) return setError("Falta el nombre.");
@@ -318,13 +344,60 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
 
         <div>
           <span className="mb-1.5 block text-[13px] font-medium">Cuánto</span>
+          {barcode && scan?.status !== "missing" && (
+            <div className="mb-2">
+              <div className="flex gap-2">
+                <input
+                  value={said}
+                  onChange={(e) => {
+                    setSaid(e.target.value);
+                    if (portion.error) setPortion({ ...portion, error: null });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      estimatePortion();
+                    }
+                  }}
+                  autoComplete="off"
+                  enterKeyHint="done"
+                  placeholder="Cuánto comiste: «una cucharada», «la mitad»…"
+                  className={cn(field, "flex-1")}
+                  aria-label="Cuánto comiste, en palabras"
+                  aria-invalid={portion.error ? true : undefined}
+                />
+                <button type="button" onClick={estimatePortion} disabled={portion.busy || !said.trim()} className={buttonSoft}>
+                  {portion.busy ? "Calculando…" : "Calcular"}
+                </button>
+              </div>
+              <div aria-live="polite">
+                {portion.assumption && (
+                  <p className="text-muted-foreground mt-1.5 flex items-start gap-1.5 text-[12.5px] leading-snug tabular">
+                    <Sparkles className="text-primary mt-px size-3.5 shrink-0" />
+                    {portion.assumption}
+                  </p>
+                )}
+                {portion.error && <p className="text-destructive mt-1.5 text-[12.5px]">{portion.error}</p>}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
-            <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={cn(field, "w-24 flex-none tabular")} aria-label="Cantidad" />
+            <input
+              value={amount}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                clearAssumption();
+              }}
+              inputMode="decimal"
+              className={cn(field, "w-24 flex-none tabular")}
+              aria-label="Cantidad"
+            />
             <select
               value={unit}
               onChange={(e) => {
                 setUnit(e.target.value as MeasureUnit);
                 setSize("");
+                clearAssumption();
                 if (perHundred(e.target.value as MeasureUnit) !== perHundred(unit)) setAmount(perHundred(e.target.value as MeasureUnit) ? "100" : "1");
               }}
               className={cn(field, "flex-1")}

@@ -24,7 +24,7 @@ test("events split across chunks arrive whole, in order", async () => {
 });
 
 test("a turn's events build the reply", () => {
-  const start: AgentMessage = { id: "a", threadId: "t", role: "assistant", text: "", attachments: [], tools: [], status: "streaming", error: null, createdAt: 0 };
+  const start: AgentMessage = { id: "a", threadId: "t", role: "assistant", text: "", attachments: [], products: [], tools: [], status: "streaming", error: null, createdAt: 0 };
   const result = { title: "Comida registrada", detail: "Avena · 350 kcal", tab: "dieta" as const };
   const events: AgentStreamEvent[] = [
     { type: "tool", name: "list_meals", status: "running" },

@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentMessage, AgentThread, CoachBrief } from "@pulso/contract";
+import type { AgentMessage, AgentProduct, AgentThread, CoachBrief } from "@pulso/contract";
 import { useSyncExternalStore } from "react";
 import type { CoachThreadView } from "@/src/web/coach";
 import { rememberLocal, type Photo } from "./photos";
@@ -40,11 +40,14 @@ async function problem(response: Response): Promise<string> {
 
 const localId = () => `local-${crypto.randomUUID()}`;
 
-function photoForm(text: string, photos: Photo[]): FormData {
+/** Multipart only when there are photos; otherwise JSON, with the scanned barcodes when there are any. */
+function messageBody(text: string, photos: Photo[], barcodes: string[]): RequestInit {
+  if (!photos.length) return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(barcodes.length ? { text, barcodes } : { text }) };
   const form = new FormData();
   form.set("text", text);
   photos.forEach((p, i) => form.append("image", p.blob, `foto-${i + 1}.jpg`));
-  return form;
+  for (const code of barcodes) form.append("barcode", code);
+  return { method: "POST", body: form };
 }
 
 export class Chat {
@@ -60,7 +63,7 @@ export class Chat {
     this.state = {
       threadId,
       title: null,
-      messages: replyTo ? [{ id: localId(), threadId: "", role: "assistant", text: replyTo.text, attachments: [], tools: [], status: "done", error: null, createdAt: replyTo.updatedAt }] : [],
+      messages: replyTo ? [{ id: localId(), threadId: "", role: "assistant", text: replyTo.text, attachments: [], products: [], tools: [], status: "done", error: null, createdAt: replyTo.updatedAt }] : [],
       streaming: false,
       loaded: threadId === null,
       error: null,
@@ -123,18 +126,18 @@ export class Chat {
     this.set({ title: view.thread.title, messages, loaded: true, streaming: attach }, silent);
   }
 
-  /** False when nothing was sent (the composer gives the text and photos back). */
-  async send(raw: string, photos: Photo[] = []): Promise<boolean> {
+  /** False when nothing was sent (the composer gives the text, photos and products back). */
+  async send(raw: string, photos: Photo[] = [], products: AgentProduct[] = []): Promise<boolean> {
     const text = raw.trim();
-    if ((!text && !photos.length) || this.state.streaming) return false;
+    if ((!text && !photos.length && !products.length) || this.state.streaming) return false;
     const now = Date.now();
     this.set((s) => ({
       error: null,
       streaming: true,
       messages: [
         ...s.messages,
-        { id: localId(), threadId: s.threadId ?? "", role: "user", text, attachments: rememberLocal(photos), tools: [], status: "done", error: null, createdAt: now },
-        { id: localId(), threadId: s.threadId ?? "", role: "assistant", text: "", attachments: [], tools: [], status: "streaming", error: null, createdAt: now },
+        { id: localId(), threadId: s.threadId ?? "", role: "user", text, attachments: rememberLocal(photos), products, tools: [], status: "done", error: null, createdAt: now },
+        { id: localId(), threadId: s.threadId ?? "", role: "assistant", text: "", attachments: [], products: [], tools: [], status: "streaming", error: null, createdAt: now },
       ],
     }));
     if (!this.state.threadId) {
@@ -150,7 +153,7 @@ export class Chat {
       upsertThread(thread);
     }
     const id = this.state.threadId!;
-    void this.follow(() => fetch(`${API}/threads/${id}/messages`, photos.length ? { method: "POST", body: photoForm(text, photos) } : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) }));
+    void this.follow(() => fetch(`${API}/threads/${id}/messages`, messageBody(text, photos, products.map((p) => p.barcode))));
     return true;
   }
 
