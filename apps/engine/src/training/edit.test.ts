@@ -3,6 +3,7 @@ import type { DayExerciseInput, ProgramExercise } from "@pulso/contract";
 import { updateProfile } from "../agent/profile";
 import { parseDailyInputs, upsertDailyMetrics } from "../daily/store";
 import { localDate } from "../daily/dates";
+import { db } from "../db";
 import {
   activeProgramView,
   clearDayOverride,
@@ -133,6 +134,68 @@ test("a hand-set load is the suggestion until the exercise is logged again", () 
   const after = activeProgramView(NOW);
   expect(after.program!.days[0]!.exercises[0]!.weightKg).toBeNull();
   expect(after.suggestions[bench.id]!.weightKg).toBe(65);
+});
+
+const supersets = (exercises: ProgramExercise[]) => exercises.map((e) => e.supersetId);
+
+test("supersets: saved normalized, kept para siempre and solo hoy, cleared when split", () => {
+  const program = fresh();
+  const day = program.days[0]!;
+  expect(supersets(day.exercises)).toEqual([null, null, null, null]);
+  const [bench, row, lateral, elliptical] = day.exercises.map(keep);
+
+  // Bench + row paired; a lone label and a cardio block in a superset are cleared.
+  let view = updateProgramDay(day.id, { scope: "always", exercises: [{ ...bench!, supersetId: "a" }, { ...row!, supersetId: "a" }, { ...lateral!, supersetId: "b" }, { ...elliptical!, supersetId: "b" }] }, NOW);
+  expect(supersets(view.program!.days[0]!.exercises)).toEqual(["a", "a", null, null]);
+  expect(supersets(getActiveProgram()!.days[0]!.exercises)).toEqual(["a", "a", null, null]);
+
+  // Solo hoy carries it in the override; the program keeps its own.
+  const kept = view.program!.days[0]!.exercises.map(keep);
+  view = updateProgramDay(day.id, { scope: "today", exercises: [kept[0]!, kept[1]!, { ...kept[2]!, supersetId: "c" }, { exerciseId: "curl-maquina", sets: 2, repMin: 10, repMax: 12, restSeconds: 60, supersetId: "c" }] }, NOW);
+  expect(view.program!.days[0]!.overridden).toBe(true);
+  expect(supersets(view.program!.days[0]!.exercises)).toEqual(["a", "a", "c", "c"]);
+  expect(supersets(getActiveProgram()!.days[0]!.exercises)).toEqual(["a", "a", null, null]);
+  clearDayOverride(day.id, NOW);
+
+  // Reordering so the pair is no longer adjacent clears both.
+  view = updateProgramDay(day.id, { scope: "always", exercises: [kept[0]!, kept[2]!, kept[1]!] }, NOW);
+  expect(view.program!.days[0]!.exercises.map((e) => [e.exerciseId, e.supersetId])).toEqual([
+    ["press-banca", null],
+    ["elevaciones-laterales", null],
+    ["remo-barra", null],
+  ]);
+});
+
+test("supersets: createProgram normalizes, and overrides saved before supersets read as null", () => {
+  const program = createProgram(
+    {
+      name: "Superseries",
+      goal: "x",
+      weeks: 4,
+      days: [
+        {
+          name: "Brazos",
+          exercises: [
+            { exerciseId: "curl-maquina", sets: 3, repMin: 10, repMax: 12, restSeconds: 60, supersetId: "a" },
+            { exerciseId: "press-pecho-maquina", sets: 3, repMin: 10, repMax: 12, restSeconds: 60, supersetId: "a" },
+            { exerciseId: "remo-barra", sets: 3, repMin: 8, repMax: 10, restSeconds: 90, supersetId: "a" },
+            { exerciseId: "elevaciones-laterales", sets: 3, repMin: 12, repMax: 15, restSeconds: 60 },
+            { exerciseId: "remo-maquina", sets: 3, repMin: 10, repMax: 12, restSeconds: 60, supersetId: "a" },
+          ],
+        },
+      ],
+    },
+    true,
+    NOW,
+  );
+  expect(supersets(program.days[0]!.exercises)).toEqual(["a", "a", "a", null, null]);
+
+  const old = program.days[0]!.exercises.map(({ supersetId: _, ...rest }) => rest);
+  db().run("INSERT INTO program_day_overrides (day_id, date, exercises, updated_at) VALUES (?, ?, ?, ?)", [program.days[0]!.id, localDate(new Date(NOW)), JSON.stringify(old), NOW]);
+  const today = activeProgramView(NOW).program!.days[0]!;
+  expect(today.overridden).toBe(true);
+  expect(supersets(today.exercises)).toEqual([null, null, null, null, null]);
+  clearDayOverride(program.days[0]!.id, NOW);
 });
 
 test("sessions keep cardio blocks and add up their minutes", () => {

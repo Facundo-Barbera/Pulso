@@ -15,7 +15,7 @@ final class TrainingTests: XCTestCase {
         XCTAssertEqual(state.exercises[0].sets.map(\.reps), [7, 7, 7])
         XCTAssertEqual(state.exercises[1].sets.map(\.weightKg), [0, 0])
         XCTAssertEqual(state.exercises[1].sets.map(\.reps), [10, 10])
-        XCTAssertEqual(state.exercises[0].prescription, "3 × 6–8 · RIR 2")
+        XCTAssertEqual(state.exercises[0].prescription, "3 series de 6 a 8 repeticiones")
         XCTAssertEqual(state.exercises[1].weightStep, 1)
         XCTAssertEqual(state.setsTotal, 5)
     }
@@ -77,7 +77,7 @@ final class TrainingTests: XCTestCase {
          "nextDayId":"d","suggestions":{"pe":{"exerciseId":"press-banca","weightKg":null,"reps":5,"reason":"Sin historial","lastSessionAt":null}}}
         """#
         let response = try JSONDecoder().decode(ActiveProgramResponse.self, from: Data(json.utf8))
-        XCTAssertEqual(response.program?.days.first?.exercises.first?.prescription, "3 × 5–8 · RPE 8")
+        XCTAssertEqual(response.program?.days.first?.exercises.first?.prescription, "3 series de 5 a 8 repeticiones")
         XCTAssertNil(response.suggestions["pe"]?.weightKg)
     }
 
@@ -127,12 +127,27 @@ final class TrainingTests: XCTestCase {
     }
 
     func testPrescriptionLine() {
-        XCTAssertEqual(TrainingPlan.prescription(day.exercises[0], weightKg: 80), "3 series × 6–8 reps × 80 kg")
-        XCTAssertEqual(TrainingPlan.prescription(day.exercises[1], weightKg: nil), "2 series × 10–12 reps")
+        XCTAssertEqual(TrainingPlan.prescription(day.exercises[0], weightKg: 80), "3 series de 6 a 8 repeticiones con 80 kg")
+        XCTAssertEqual(TrainingPlan.prescription(day.exercises[1], weightKg: nil), "2 series de 10 a 12 repeticiones")
         var single = day.exercises[1]
         single.sets = 1
         single.repMax = 10
-        XCTAssertEqual(TrainingPlan.prescription(single, weightKg: 0), "1 serie × 10 reps")
+        XCTAssertEqual(TrainingPlan.prescription(single, weightKg: 0), "1 serie de 10 repeticiones")
+    }
+
+    func testPlainSpanishTargets() {
+        XCTAssertEqual(TrainingText.effort(rir: 2, rpe: nil), "Acaba cada serie pudiendo hacer 2 más")
+        XCTAssertEqual(TrainingText.effort(rir: nil, rpe: 8.5), "Acaba cada serie pudiendo hacer 2 más")
+        XCTAssertEqual(TrainingText.effort(rir: 0, rpe: nil), "Lleva cada serie hasta no poder más")
+        XCTAssertNil(TrainingText.effort(rir: nil, rpe: nil))
+        XCTAssertEqual(TrainingText.rest(180), "3 min")
+        XCTAssertEqual(TrainingText.rest(90), "1 min 30 s")
+        XCTAssertEqual(TrainingText.rest(45), "45 s")
+        XCTAssertEqual(TrainingText.load(0, reps: 1), "1 repetición")
+        let state = LiveSessionState(day: day, programId: "p", suggestions: suggestions, now: t0)
+        XCTAssertEqual(state.exercises[0].guidance, "Acaba cada serie pudiendo hacer 2 más. Descansa \(TrainingText.rest(state.exercises[0].restSeconds)).")
+        XCTAssertEqual((1...10).map(EffortLevel.word), ["Fácil", "Fácil", "Fácil", "Moderado", "Moderado", "Moderado", "Difícil", "Difícil", "Máximo", "Máximo"])
+        XCTAssertEqual(CardioTarget(durationMinutes: 20, zone: 2).summary, "20 min · zona 2")
     }
 
     func testRecentRecordsNeedAnEarlierSessionToBeat() {
@@ -150,5 +165,37 @@ final class TrainingTests: XCTestCase {
         // press-banca beat s1 two days ago; sentadilla fell; remo is new; dominadas beat it 20 days ago (too old).
         XCTAssertEqual(TrainingPlan.recentRecords(sessions, now: now), ["press-banca"])
         XCTAssertEqual(TrainingPlan.recentRecords(sessions, now: now, days: 21), ["press-banca", "dominadas"])
+    }
+
+    // MARK: Personalizar lista
+
+    @MainActor
+    func testProgramDraftPairsAppliesChangesAndSendsSupersets() {
+        let draft = ProgramListDraft(day: day, suggestions: suggestions)
+        XCTAssertEqual(draft.scope, .always)
+        XCTAssertFalse(draft.changed)
+        draft.setSupersets(Superset.pair(0, 1, in: [nil, nil], cardio: [false, false])!)
+        XCTAssertNotNil(draft.items[0].supersetId)
+        XCTAssertEqual(draft.items[0].supersetId, draft.items[1].supersetId)
+        XCTAssertEqual(draft.exercises.map(\.editInput.supersetId), draft.exercises.map(\.supersetId))
+        XCTAssertTrue(draft.changed)
+
+        // Only what changed in the sheet is written: the rest set elsewhere stays.
+        let old = draft.customization("pe1")!
+        draft.exercises[0].restSeconds = 200
+        var new = old
+        new.repMin += 1
+        new.repMax += 1
+        draft.apply(new, was: old, to: "pe1")
+        XCTAssertEqual(draft.exercises[0].repMin, 7)
+        XCTAssertEqual(draft.exercises[0].repMax, 9)
+        XCTAssertEqual(draft.exercises[0].restSeconds, 200)
+        XCTAssertEqual(draft.items[0].detail, "3 series de 7 a 9 · 80 kg")
+
+        draft.move(fromOffsets: [0], toOffset: 2)
+        XCTAssertNotNil(draft.exercises[0].supersetId, "Still next to each other")
+        XCTAssertEqual(draft.exercises[0].supersetId, draft.exercises[1].supersetId)
+        draft.remove("pe2")
+        XCTAssertNil(draft.exercises[0].supersetId, "A lone member is no superset")
     }
 }

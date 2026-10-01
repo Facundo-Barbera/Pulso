@@ -218,7 +218,7 @@ private struct CardioTargetCard: View {
             if let level = target.level { row("Nivel", level.formatted(), "dial.medium") }
             if let zone = CardioCue.zone(target.zone, zones: zones) { row("Zona", zone, "heart.fill") }
             if let intervals = target.intervals {
-                row("Intervalos", "\(intervals.rounds) × \(CardioCue.clock(Double(intervals.workSeconds))) / \(CardioCue.clock(Double(intervals.restSeconds)))", "repeat")
+                row("Intervalos", "\(intervals.rounds) rondas · \(CardioCue.clock(Double(intervals.workSeconds))) y \(CardioCue.clock(Double(intervals.restSeconds))) de pausa", "repeat")
                 IntervalStrip(intervals: intervals)
             }
         }

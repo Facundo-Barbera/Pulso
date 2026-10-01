@@ -453,7 +453,7 @@ private struct PlanExerciseRow: View {
 }
 
 /// The figure (front, or back when the muscle only shows there) with the primary muscles lit.
-private struct MuscleBadge: View {
+struct MuscleBadge: View {
     let primary: [Muscle]
 
     private var polygons: [BodyPolygon] {

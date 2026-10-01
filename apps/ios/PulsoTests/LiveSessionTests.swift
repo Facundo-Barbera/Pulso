@@ -30,7 +30,7 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(s.setsTotal, 5)
         XCTAssertEqual(s.focus, 0)
         XCTAssertEqual(s.version, 0)
-        XCTAssertEqual(s.exercises[0].target, "3 series × 6–8 reps × 80 kg")
+        XCTAssertEqual(s.exercises[0].target, "3 series de 6 a 8 repeticiones con 80 kg")
     }
 
     func testHandSetLoadPrefillsWithoutASuggestion() {
@@ -45,7 +45,7 @@ final class LiveSessionTests: XCTestCase {
     func testEncodesExactlyTheContractShape() throws {
         var s = state()
         s.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(60))
-        s.setRpe(exercise: 0, set: 0, to: 8.5)
+        s.setEffort(exercise: 0, to: 8)
         s.logCardio(2, CardioLog(exerciseId: "cinta", durationSeconds: 480, distanceKm: 1.6, doneAt: 1_500_000))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
 
@@ -59,7 +59,7 @@ final class LiveSessionTests: XCTestCase {
 
         let exercises = try XCTUnwrap(json["exercises"] as? [[String: Any]])
         XCTAssertEqual(Set(exercises[0].keys), ["id", "exerciseId", "name", "equipment", "kind", "modality", "repMin", "repMax", "targetRpe", "targetRir",
-                                               "restSeconds", "notes", "hint", "sets", "cardio", "cardioLog", "skipped"])
+                                               "restSeconds", "notes", "hint", "sets", "cardio", "cardioLog", "skipped", "supersetId"])
         XCTAssertEqual(exercises[0]["id"] as? String, "pe1")
         XCTAssertEqual(exercises[0]["equipment"] as? String, "barbell")
         XCTAssertTrue(exercises[0]["modality"] is NSNull)
@@ -69,7 +69,7 @@ final class LiveSessionTests: XCTestCase {
         let sets = try XCTUnwrap(exercises[0]["sets"] as? [[String: Any]])
         XCTAssertEqual(Set(sets[0].keys), ["id", "weightKg", "reps", "rpe", "doneAt"])
         XCTAssertEqual(sets[0]["doneAt"] as? Double, 1_060_000)
-        XCTAssertEqual(sets[0]["rpe"] as? Double, 8.5)
+        XCTAssertEqual(sets[0]["rpe"] as? Double, 8)
         XCTAssertTrue(sets[1]["doneAt"] is NSNull)
         XCTAssertTrue(sets[1]["rpe"] is NSNull)
 
@@ -323,12 +323,84 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(same, local)
     }
 
+    // MARK: Supersets
+
+    private func paired() -> LiveSessionState {
+        var d = day
+        d.exercises[0].supersetId = "a"
+        d.exercises[1].supersetId = "a"
+        return LiveSessionState(day: d, programId: "p", suggestions: [:], now: t0)
+    }
+
+    func testSupersetAlternatesAndRestsAfterTheRound() {
+        var s = paired()
+        XCTAssertEqual(s.superset(of: 0), 0..<2)
+        XCTAssertTrue(s.current! == (0, 0))
+        s.toggle(exercise: 0, set: 0, now: t0)
+        XCTAssertEqual(s.focus, 1, "Straight to the partner")
+        XCTAssertNil(s.restEndsAt, "No rest inside the round")
+        XCTAssertTrue(s.current! == (1, 0))
+        s.toggle(exercise: 1, set: 0, now: t0.addingTimeInterval(30))
+        XCTAssertEqual(s.focus, 0, "Back to the first for the next round")
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(30 + 60), "The last member's rest")
+        s.toggle(exercise: 0, set: 1, now: t0.addingTimeInterval(200))
+        s.toggle(exercise: 1, set: 1, now: t0.addingTimeInterval(230))
+        // The curl has 2 sets, the press 3: the press finishes alone, with its rest.
+        XCTAssertTrue(s.current! == (0, 2))
+        s.toggle(exercise: 0, set: 2, now: t0.addingTimeInterval(400))
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(400 + 120))
+    }
+
+    func testSupersetIdsNormalizeAndSurviveTheJSON() throws {
+        XCTAssertEqual(Superset.normalize(["a", nil, "a", "a"], cardio: [false, false, false, false]), [nil, nil, "a", "a"])
+        XCTAssertEqual(Superset.normalize(["a", "a"], cardio: [false, true]), [nil, nil])
+        XCTAssertEqual(Superset.pair(1, 0, in: [nil, nil, nil], cardio: [false, false, false])?.prefix(2).allSatisfy { $0 != nil }, true)
+        XCTAssertNil(Superset.pair(0, 2, in: [nil, nil, nil], cardio: [false, false, false]))
+        XCTAssertEqual(Superset.unpair(0, in: ["a", "a", "a"], cardio: [false, false, false]), [nil, "a", "a"])
+
+        var s = paired()
+        s.move(fromOffsets: [1], toOffset: 3)
+        XCTAssertEqual(s.exercises.map(\.supersetId), [nil, nil, nil], "Moved apart, the pair is undone")
+
+        let round = try JSONDecoder().decode(LiveSessionState.self, from: JSONEncoder().encode(paired()))
+        XCTAssertEqual(round.exercises.map(\.supersetId), ["a", "a", nil])
+    }
+
+    // MARK: Logging all and effort
+
+    func testCompleteAllLogsTheRestInOrderWithOneRest() {
+        var s = state()
+        s.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(10))
+        s.setWeight(exercise: 0, set: 2, to: 85)
+        s.completeAll(exercise: 0, now: t0.addingTimeInterval(200))
+        XCTAssertTrue(s.exercises[0].done)
+        XCTAssertEqual(s.exercises[0].sets.map(\.weightKg), [80, 80, 85], "Each set is logged as it stands")
+        let saved = s.session(endedAt: t0.addingTimeInterval(400)).sets.filter { $0.exerciseId == "press-banca" }
+        XCTAssertEqual(saved.map(\.setIndex), [0, 1, 2])
+        XCTAssertEqual(saved.map(\.weightKg), [80, 80, 85])
+        XCTAssertEqual(s.restStartedAt, t0.addingTimeInterval(200))
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(200 + Double(s.exercises[0].restSeconds)))
+    }
+
+    func testEffortGoesOnTheDoneSetsOnly() {
+        var s = state()
+        s.toggle(exercise: 0, set: 0, now: t0)
+        s.toggle(exercise: 0, set: 1, now: t0.addingTimeInterval(1))
+        s.setEffort(exercise: 0, to: 7)
+        XCTAssertEqual(s.exercises[0].sets.map(\.rpe), [7, 7, nil])
+        XCTAssertEqual(s.exercises[0].effort, 7)
+        s.setEffort(exercise: 0, to: 14)
+        XCTAssertEqual(s.exercises[0].effort, 10)
+        s.setEffort(exercise: 0, to: nil)
+        XCTAssertNil(s.exercises[0].effort)
+    }
+
     // MARK: Cardio and the saved session
 
     func testSessionIncludesCardioAndRpe() {
         var s = state()
         s.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(20))
-        s.setRpe(exercise: 0, set: 0, to: 9)
+        s.setEffort(exercise: 0, to: 9)
         let log = CardioLog(exerciseId: "cinta", durationSeconds: 480, distanceKm: 1.6, level: nil, inclinePercent: 1, avgHr: 152, kcal: 90, doneAt: 1_700_000)
         s.logCardio(2, log)
         s.logCardio(0, log)
@@ -417,7 +489,8 @@ final class LiveSessionTests: XCTestCase {
         ]
         let last = LiveHistory.last("press-banca", in: sessions)
         XCTAssertEqual(last?.sets.map(\.weightKg), [82.5, 80])
-        XCTAssertEqual(last.map { LiveHistory.line($0.sets) }, "\(82.5.formatted()) × 6 · 80 × 7")
+        XCTAssertEqual(LiveHistory.set(1, of: last)?.weightKg, 80)
+        XCTAssertNil(LiveHistory.set(2, of: last))
         XCTAssertEqual(LiveHistory.best("press-banca", in: sessions)?.heaviestKg, 85)
         // 82,5 × 6 → 99 beats 85 × 3 → 93,5.
         XCTAssertEqual(LiveHistory.best("press-banca", in: sessions)?.e1rm ?? 0, 99, accuracy: 0.01)

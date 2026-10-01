@@ -1,260 +1,148 @@
 import SwiftUI
 
-/// Rewrites a program day by hand: reorder, add, remove, swap and set each target,
-/// then save it for today only or for good. The whole list goes in one write.
+/// "Editar" on a program day: "Personalizar lista" over a copy of the day, saved
+/// in one write for the whole plan or for this workout only.
 struct DayEditorView: View {
-    let day: ProgramDay
-    var suggestions: [String: LoadSuggestion] = [:]
-    var hrZones: [HrZoneRange]?
+    @State private var draft: ProgramListDraft
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var exercises: [ProgramExercise]
-    @State private var scope: EditScope
+    init(day: ProgramDay, suggestions: [String: LoadSuggestion] = [:], hrZones: [HrZoneRange]? = nil) {
+        _draft = State(initialValue: ProgramListDraft(day: day, suggestions: suggestions, hrZones: hrZones))
+    }
+
+    var body: some View {
+        CustomizeListSheet(draft: draft)
+    }
+}
+
+/// A program day being edited: the exercises as they'll be sent.
+@MainActor
+@Observable
+final class ProgramListDraft: ListDraft {
+    let day: ProgramDay
+    let suggestions: [String: LoadSuggestion]
+    let hrZones: [HrZoneRange]?
+    var exercises: [ProgramExercise]
+    var scope: EditScope
     /// Stills for exercises added here, by exercise id (the catalog has the rest).
-    @State private var thumbnails: [String: String] = [:]
-    @State private var path: [String] = []
-    @State private var editMode: EditMode = .inactive
-    @State private var adding = false
-    @State private var swapping: ProgramExercise?
-    @State private var saving = false
-    @State private var error: String?
-    @State private var confirmDiscard = false
+    private var thumbnails: [String: String] = [:]
 
     init(day: ProgramDay, suggestions: [String: LoadSuggestion] = [:], hrZones: [HrZoneRange]? = nil) {
         self.day = day
         self.suggestions = suggestions
         self.hrZones = hrZones
-        _exercises = State(initialValue: day.exercises)
+        exercises = day.exercises
         // A day already changed for today keeps being edited for today.
-        _scope = State(initialValue: day.overridden == true ? .today : .always)
+        scope = day.overridden == true ? .today : .always
     }
 
-    private var changed: Bool { exercises != day.exercises }
+    var title: String { day.name }
+    var current: Int? { nil }
+    var changed: Bool { exercises != day.exercises }
 
-    var body: some View {
-        NavigationStack(path: $path) {
-            List {
-                Section {
-                    if exercises.isEmpty {
-                        EmptyStateView(systemImage: "figure.cooldown", title: "Día sin ejercicios", message: "Añade el primero desde la biblioteca.", tint: Theme.training, actionTitle: "Añadir ejercicio") {
-                            adding = true
-                        }
-                        .listRowBackground(Color.clear)
-                    }
-                    ForEach(exercises) { exercise in
-                        Button { path.append(exercise.id) } label: {
-                            EditorRow(exercise: exercise, suggestion: suggestions[exercise.id], thumbnail: thumbnail(exercise), editing: editMode.isEditing)
-                        }
-                        .buttonStyle(.plain)
-                        .swipeActions(edge: .trailing) {
-                            Button("Quitar", systemImage: "trash", role: .destructive) { remove(exercise) }
-                        }
-                        .swipeActions(edge: .leading) {
-                            Button("Cambiar", systemImage: "arrow.triangle.2.circlepath") { swapping = exercise }
-                                .tint(Theme.training)
-                        }
-                        .contextMenu {
-                            Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") { swapping = exercise }
-                            Button("Quitar", systemImage: "trash", role: .destructive) { remove(exercise) }
-                        }
-                    }
-                    .onMove { exercises.move(fromOffsets: $0, toOffset: $1) }
-                    .onDelete { exercises.remove(atOffsets: $0) }
-                } header: {
-                    header
-                } footer: {
-                    if exercises.count > 1 { Text("Mantén pulsado para reordenar; desliza para cambiar o quitar.") }
-                }
-
-                Section {
-                    Button { adding = true } label: {
-                        Label("Añadir ejercicio", systemImage: "plus.circle.fill")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Theme.training)
-                    }
-                }
-            }
-            .environment(\.editMode, $editMode)
-            .animation(.snappy, value: exercises)
-            .sensoryFeedback(.impact(weight: .light), trigger: exercises.map(\.id))
-            .safeAreaBar(edge: .bottom, spacing: 0) { saveBar }
-            .navigationTitle("Editar día")
-            .navigationSubtitle(day.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { id in
-                if let index = exercises.firstIndex(where: { $0.id == id }) {
-                    ExerciseTargetEditor(exercise: $exercises[index], suggestion: suggestions[id], hrZones: hrZones, thumbnail: thumbnail(exercises[index]))
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancelar", systemImage: "xmark") {
-                        if changed { confirmDiscard = true } else { dismiss() }
-                    }
-                    .confirmationDialog("¿Descartar los cambios?", isPresented: $confirmDiscard, titleVisibility: .visible) {
-                        Button("Descartar cambios", role: .destructive) { dismiss() }
-                        Button("Seguir editando", role: .cancel) {}
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button(editMode.isEditing ? "Listo" : "Ordenar") {
-                        withAnimation(.snappy) { editMode = editMode.isEditing ? .inactive : .active }
-                    }
-                    .disabled(exercises.isEmpty)
-                }
-            }
-        }
-        .interactiveDismissDisabled(changed || saving)
-        .sheet(isPresented: $adding) {
-            ExercisePickerSheet { add($0) }
-        }
-        .sheet(item: $swapping) { exercise in
-            // The editor's own scope applies on save, so the sheet doesn't ask.
-            SwapExerciseSheet(exerciseId: exercise.exerciseId, name: exercise.exerciseName, scopes: [scope], initialScope: scope) { library, _ in
-                swap(exercise, to: library)
-            }
+    var items: [ListItem] {
+        exercises.map { ex in
+            var detail = ex.isCardio ? ex.prescription : TrainingText.short(sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax)
+            if !ex.isCardio, let kg = ex.weightKg ?? suggestions[ex.id]?.weightKg, kg > 0 { detail += " · \(kg.formatted()) kg" }
+            return ListItem(id: ex.id, exerciseId: ex.exerciseId, name: ex.exerciseName, detail: detail, isCardio: ex.isCardio,
+                            thumbnail: thumbnails[ex.exerciseId] ?? cachedThumbnail(ex.exerciseId), supersetId: ex.supersetId,
+                            status: ex.isDraft ? "Nuevo" : nil)
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 6) {
-            Text("\(exercises.count) \(exercises.count == 1 ? "ejercicio" : "ejercicios")")
-                .contentTransition(.numericText())
-            if day.overridden == true {
-                Text("· con cambios de hoy")
-            }
-        }
+    private func index(_ id: String) -> Int? { exercises.firstIndex { $0.id == id } }
+
+    private func normalize() {
+        setSupersets(exercises.map(\.supersetId))
     }
 
-    /// When the edit applies, then save. Thumb-reachable, always in view.
-    private var saveBar: some View {
-        VStack(spacing: 10) {
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            }
-            Picker("Aplicar", selection: $scope) {
-                ForEach(EditScope.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            Text(scope.explanation)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentTransition(.opacity)
-            Button(action: save) {
-                Group {
-                    if saving {
-                        ProgressView().tint(.white)
-                    } else {
-                        Text(scope == .today ? "Guardar solo para hoy" : "Guardar en el programa")
-                    }
-                }
-                .font(.headline)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-            }
-            .buttonStyle(.glassProminent)
-            .tint(Theme.training)
-            .disabled(saving || exercises.isEmpty && day.exercises.isEmpty)
-        }
-        .padding(.horizontal, Theme.padding)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-        .sensoryFeedback(.selection, trigger: scope)
-        .animation(.snappy, value: scope)
-        .animation(.snappy, value: error)
+    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        exercises.move(fromOffsets: source, toOffset: destination)
+        normalize()
     }
 
-    private func thumbnail(_ exercise: ProgramExercise) -> String? {
-        thumbnails[exercise.exerciseId] ?? cachedThumbnail(exercise.exerciseId)
+    func remove(_ id: String) {
+        exercises.removeAll { $0.id == id }
+        normalize()
     }
 
-    private func add(_ library: LibraryExercise) {
+    func add(_ library: LibraryExercise) {
         thumbnails[library.id] = library.thumbnail
         exercises.append(.draft(library))
     }
 
-    private func swap(_ exercise: ProgramExercise, to library: LibraryExercise) {
-        guard let index = exercises.firstIndex(of: exercise) else { return }
+    func swap(_ id: String, to library: LibraryExercise) -> String? {
+        guard let i = index(id) else { return nil }
         thumbnails[library.id] = library.thumbnail
-        exercises[index] = exercise.swapped(to: library)
+        exercises[i] = exercises[i].swapped(to: library)
+        normalize()
+        return exercises[i].id
     }
 
-    private func remove(_ exercise: ProgramExercise) {
-        exercises.removeAll { $0.id == exercise.id }
+    func setSupersets(_ ids: [String?]) {
+        let clean = Superset.normalize(ids, cardio: exercises.map(\.isCardio))
+        for i in exercises.indices where exercises[i].supersetId != clean[i] { exercises[i].supersetId = clean[i] }
     }
 
-    private func save() {
-        saving = true
-        error = nil
-        Task {
-            defer { saving = false }
-            do {
-                try await TrainingStore.shared.saveDay(day.id, scope: scope, exercises: exercises.map(\.editInput))
-                dismiss()
-            } catch let failure {
-                error = failure.localizedDescription
-            }
+    func customization(_ id: String) -> ExerciseCustomization? {
+        guard let ex = index(id).map({ exercises[$0] }) else { return nil }
+        return ExerciseCustomization(
+            sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax, weightKg: ex.weightKg, suggestedKg: suggestions[ex.id]?.weightKg,
+            suggestible: true, weightStep: ex.weightStep, restSeconds: ex.restSeconds, isCardio: ex.isCardio,
+            needsLoad: Equipment.needsLoad(ex.equipment), durationMinutes: ex.cardio?.durationMinutes
+        )
+    }
+
+    func apply(_ new: ExerciseCustomization, was old: ExerciseCustomization, to id: String) {
+        guard let i = index(id) else { return }
+        var ex = exercises[i]
+        if new.sets != old.sets { ex.sets = new.sets }
+        if new.repMin != old.repMin || new.repMax != old.repMax { (ex.repMin, ex.repMax) = (new.repMin, new.repMax) }
+        if new.weightKg != old.weightKg { ex.weightKg = new.weightKg }
+        if new.restSeconds != old.restSeconds { ex.restSeconds = new.restSeconds }
+        if new.durationMinutes != old.durationMinutes {
+            var cardio = ex.cardio ?? CardioTarget()
+            cardio.durationMinutes = new.durationMinutes
+            ex.cardio = cardio
         }
+        exercises[i] = ex
     }
-}
 
-/// An exercise in the editor: still, name and its target in one line.
-private struct EditorRow: View {
-    let exercise: ProgramExercise
-    let suggestion: LoadSuggestion?
-    let thumbnail: String?
-    let editing: Bool
+    func moreSettings(_ id: String) -> AnyView? {
+        guard let i = index(id) else { return nil }
+        let fallback = exercises[i]
+        let binding = Binding(
+            get: { [self] in exercises.first { $0.id == id } ?? fallback },
+            set: { [self] new in if let j = index(id) { exercises[j] = new } }
+        )
+        return AnyView(ExerciseTargetEditor(exercise: binding, suggestion: suggestions[id], hrZones: hrZones, thumbnail: thumbnails[fallback.exerciseId] ?? cachedThumbnail(fallback.exerciseId)))
+    }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            ExerciseMediaView(path: thumbnail, cornerRadius: 10)
-                .frame(width: 46, height: 46)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(exercise.exerciseName)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(2)
-                Text(TrainingFormat.summary(exercise, suggestion: suggestion))
-                    .font(.subheadline)
-                    .fontDesign(.rounded)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 4)
-            if exercise.isDraft {
-                ReasonTag(text: "Nuevo")
-            }
-            if !editing {
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.vertical, 2)
-        .contentShape(.rect)
+    func save() async throws {
+        try await TrainingStore.shared.saveDay(day.id, scope: scope, exercises: exercises.map(\.editInput))
     }
 }
 
 #if DEBUG
-#Preview("Editar día · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
+#Preview("Personalizar lista · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
     DayEditorView(day: .editorPreview, hrZones: HrZoneRange.previews)
 }
 
-#Preview("Editar día · 440 pt, claro", traits: .fixedLayout(width: 440, height: 956)) {
+#Preview("Personalizar lista · 440 pt, claro", traits: .fixedLayout(width: 440, height: 956)) {
     DayEditorView(day: .editorPreview).preferredColorScheme(.light)
 }
 
-#Preview("Editar día · XXL", traits: .fixedLayout(width: 375, height: 812)) {
+#Preview("Personalizar lista · XXL", traits: .fixedLayout(width: 375, height: 812)) {
     DayEditorView(day: .editorPreview).dynamicTypeSize(.xxLarge)
 }
 
-#Preview("Editar día · vacío", traits: .fixedLayout(width: 375, height: 812)) {
+#Preview("Personalizar lista · vacío", traits: .fixedLayout(width: 375, height: 812)) {
     DayEditorView(day: ProgramDay(id: "d", name: "Pierna B", focus: nil, weekday: nil, exercises: []))
+}
+
+#Preview("Personalizar ejercicio", traits: .fixedLayout(width: 375, height: 812)) {
+    @Previewable @State var draft = ProgramListDraft(day: .editorPreview)
+    Color.clear.sheet(isPresented: .constant(true)) {
+        CustomizeExerciseSheet(draft: draft, id: ProgramDay.editorPreview.exercises[0].id)
+    }
 }
 #endif

@@ -225,14 +225,14 @@ enum TrainingFormat {
 
     static func number(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...2))) }
 
-    /// "4 × 6–8 · 32,5 kg · 2:00", or the cardio target.
+    /// "4 series de 6 a 8 repeticiones · unos 32,5 kg · 2:00", or the cardio target.
     static func summary(_ exercise: ProgramExercise, suggestion: LoadSuggestion?) -> String {
         if exercise.isCardio { return exercise.prescription }
         var parts = [exercise.prescription]
         if let kg = exercise.weightKg {
             parts.append("\(number(kg)) kg")
         } else if let kg = suggestion?.weightKg, kg > 0 {
-            parts.append("~\(number(kg)) kg")
+            parts.append("unos \(number(kg)) kg")
         }
         parts.append(rest(exercise.restSeconds))
         return parts.joined(separator: " · ")

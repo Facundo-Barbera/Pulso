@@ -118,6 +118,12 @@ export type ProgramExercise = {
    * next logged; then double progression takes over again. Null = suggest as usual.
    */
   weightKg?: number | null;
+  /**
+   * Exercises of a day sharing a non-null `supersetId` form one superset, done
+   * alternating (A, B, rest, A, B, rest…). Members are always consecutive and at
+   * least two; cardio is never in one. Null = a plain exercise.
+   */
+  supersetId: string | null;
 } & ListMedia;
 
 export type ProgramDay = {
@@ -155,6 +161,13 @@ export type ProgramExerciseInput = {
   cardio?: CardioTarget | null;
   /** Load set by hand for the next time, kg. */
   weightKg?: number | null;
+  /**
+   * Any short label (≤ 32 chars, e.g. "a") shared by the consecutive exercises of
+   * one superset. On save, a member left alone or apart from its group, and any
+   * cardio block, gets null; of a label used by non-adjacent runs only the first
+   * run of two or more keeps it.
+   */
+  supersetId?: string | null;
 };
 export type ProgramDayInput = { name: string; focus?: string | null; weekday?: number | null; exercises: ProgramExerciseInput[] };
 export type ProgramInput = { name: string; goal: string; weeks: number; notes?: string | null; days: ProgramDayInput[] };
@@ -287,6 +300,13 @@ export type LiveExercise = {
   cardioLog: CardioLog | null;
   /** Passed over today; stays in the list, greyed. */
   skipped: boolean;
+  /**
+   * Same rule as `ProgramExercise.supersetId`: copied from the program exercise
+   * when the session starts, kept by a swap, normalized on every write (phone or
+   * Coach). Skipping an exercise takes it out of its superset. Old copies without
+   * it read as null.
+   */
+  supersetId: string | null;
 };
 
 /**

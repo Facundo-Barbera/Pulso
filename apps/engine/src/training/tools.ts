@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape } from "./inputs";
+import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape, supersetIdShape } from "./inputs";
 import { describeLive, editLive, getLive, type LiveOp } from "./live";
 import { idsWithMedia } from "./media";
 import { similarExercises } from "./similar";
@@ -56,6 +56,9 @@ const liveOp = z.discriminatedUnion("op", [
     reps: z.number().int().min(1).max(50).optional().describe("Reps for the sets not done yet."),
     restSeconds: z.number().int().min(0).max(600).optional(),
     cardio: cardioTargetShape.optional().describe("Cardio blocks: the target fields to change."),
+    supersetId: supersetIdShape.describe(
+      'Pair it into a superset: give the same label (e.g. "a") to 2+ consecutive strength exercises, one update each, in the same call. null takes it out of its superset.',
+    ),
   }),
   z.object({
     op: z.literal("add"),
@@ -67,12 +70,17 @@ const liveOp = z.discriminatedUnion("op", [
     restSeconds: z.number().int().min(0).max(600).optional(),
     weightKg: z.number().min(0).max(1000).optional(),
     cardio: cardioTargetShape.optional().describe("For a cardio exercise; defaults to 15 min in zone 2."),
+    supersetId: supersetIdShape.describe("Join the superset of its neighbours with this label (add it right next to them)."),
   }),
   z.object({ op: z.literal("remove"), exercise: exerciseRef }),
   z.object({ op: z.literal("skip"), exercise: exerciseRef }),
   z.object({ op: z.literal("move"), exercise: exerciseRef, to: z.number().int().min(1).describe("New 1-based position.") }),
   z.object({ op: z.literal("focus"), exercise: exerciseRef }),
 ]);
+
+/** How supersets work, shared by the tools that write them. */
+const SUPERSETS =
+  'Supersets ("superseries"): give the same supersetId (any short label, e.g. "a") to 2+ consecutive strength exercises; the person does one set of each in turn (A, B, rest, A, B, rest…), resting only after the last of the group. Members must be next to each other; a lone or separated member, or a cardio block, loses its supersetId.';
 
 /** Finds a program exercise by its id or library id in a day. */
 const findIn = (day: { exercises: { id: string; exerciseId: string }[] }, from: string) => day.exercises.findIndex((e) => e.id === from || e.exerciseId === from);
@@ -107,7 +115,7 @@ export const trainingTools = [
 
   tool(
     "create_program",
-    "Write a whole training program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes) and, if wanted, cardio blocks (a cardio exercise with a `cardio` target: duration, heart-rate zone, distance, speed/pace, incline/level, intervals) — mixed in a day or as cardio-only days. Exercise ids must be library ids from list_exercises; respect the person's preferred equipment (get_training_preferences) and, when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno (replacing the previous one, whose history is kept). Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish.",
+    "Write a whole training program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes) and, if wanted, cardio blocks (a cardio exercise with a `cardio` target: duration, heart-rate zone, distance, speed/pace, incline/level, intervals) — mixed in a day or as cardio-only days. Exercise ids must be library ids from list_exercises; respect the person's preferred equipment (get_training_preferences) and, when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno (replacing the previous one, whose history is kept). Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish. " + SUPERSETS,
     { ...programShape, activate: z.boolean().default(true).describe("Make it the active program.") },
     async ({ activate, ...program }) => guard(() => createProgram(program, activate)),
   ),
@@ -121,7 +129,7 @@ export const trainingTools = [
 
   tool(
     "edit_program_day",
-    'Rewrite one program day\'s exercise list in its new order: reorder, add, remove, swap or change targets (sets, reps, rest, RIR/RPE, a hand-set weightKg, cardio targets) in one call. Pass the WHOLE list: read it from get_active_program first and keep each exercise\'s `id` so its load history follows; omit `id` for new ones. scope "today" changes only today\'s session of that day ("solo hoy"); "always" changes the program ("para siempre"). Returns the updated active program.',
+    'Rewrite one program day\'s exercise list in its new order: reorder, add, remove, swap or change targets (sets, reps, rest, RIR/RPE, a hand-set weightKg, cardio targets) in one call. Pass the WHOLE list: read it from get_active_program first and keep each exercise\'s `id` so its load history follows; omit `id` for new ones. scope "today" changes only today\'s session of that day ("solo hoy"); "always" changes the program ("para siempre"). Returns the updated active program. Pair or unpair exercises by setting or clearing supersetId (keep it on the others so their supersets survive). ' + SUPERSETS,
     {
       dayId: z.string().describe("Program day id from get_active_program."),
       scope: scope.describe('"today" = solo hoy, "always" = para siempre. When unsure, ask.'),
@@ -132,7 +140,7 @@ export const trainingTools = [
 
   tool(
     "swap_program_exercise",
-    'Replace one exercise with another in the active program, keeping its sets, reps and rest (e.g. "cámbiame las sentadillas por prensa"). `from` is a library id or program exercise id; `to` a library id of the same kind (strength for strength, cardio for cardio) — pick it with find_similar_exercises. scope "always" changes every day that has it (or only `dayId`); "today" changes today\'s session of the next day to train (or `dayId`). Returns the days changed.',
+    'Replace one exercise with another in the active program, keeping its sets, reps, rest and superset (e.g. "cámbiame las sentadillas por prensa"). `from` is a library id or program exercise id; `to` a library id of the same kind (strength for strength, cardio for cardio) — pick it with find_similar_exercises. scope "always" changes every day that has it (or only `dayId`); "today" changes today\'s session of the next day to train (or `dayId`). Returns the days changed.',
     {
       from: z.string().describe("Library id or program exercise id to replace."),
       to: z.string().describe("Library id to use instead."),
@@ -190,7 +198,7 @@ export const trainingTools = [
 
   tool(
     "get_live_session",
-    "The strength/cardio session the person is doing right now on the phone, or null: each exercise with its position, live id, library id, sets (weightKg, reps, done or not), cardio target, skipped flag, and `focus` (index of the one on screen). Use it before edit_live_session.",
+    "The strength/cardio session the person is doing right now on the phone, or null: each exercise with its position, live id, library id, sets (weightKg, reps, done or not), cardio target, skipped flag, supersetId (exercises sharing one are done as a superset), and `focus` (index of the one on screen). Use it before edit_live_session.",
     {},
     async () =>
       guard(() => {
@@ -201,7 +209,9 @@ export const trainingTools = [
 
   tool(
     "edit_live_session",
-    'Change the session in progress right now — today only, the program stays as is. Ops run in order, all or nothing: swap (another exercise for the same target; done sets stay logged under the old one), update (sets, reps, load for the sets not done, rest, cardio target), add (strength or cardio, at a position), remove (only if nothing was logged; else skip), skip, move (reorder), focus (show it). The phone shows the change at once with an undo. Returns the updated session and one line per change.',
+    'Change the session in progress right now — today only, the program stays as is. Ops run in order, all or nothing: swap (another exercise for the same target; done sets stay logged under the old one; the new one keeps its superset), update (sets, reps, load for the sets not done, rest, cardio target, supersetId to pair/unpair), add (strength or cardio, at a position, optionally into a superset), remove (only if nothing was logged; else skip), skip, move (reorder), focus (show it). The phone shows the change at once with an undo. Returns the updated session and one line per change. ' +
+      SUPERSETS +
+      " To pair two exercises, update both with the same supersetId in one call (move them next to each other first if needed); a pairing that can't stand is refused. A move, remove or skip that leaves a member alone or apart takes it out of its superset.",
     { ops: z.array(liveOp).min(1).max(10) },
     async ({ ops }) =>
       guard(() => {

@@ -128,7 +128,7 @@ export const TRAINING_SCHEMA = `
 /** Columns added after the first release; SQLite has no ADD COLUMN IF NOT EXISTS. */
 export function migrateTraining(database: Database): void {
   const existing = new Set(database.query<{ name: string }, []>("PRAGMA table_info(program_exercises)").all().map((c) => c.name));
-  for (const column of ["cardio TEXT", "weight_kg REAL", "weight_set_at INTEGER"]) {
+  for (const column of ["cardio TEXT", "weight_kg REAL", "weight_set_at INTEGER", "superset_id TEXT"]) {
     if (!existing.has(column.split(" ")[0]!)) database.exec(`ALTER TABLE program_exercises ADD COLUMN ${column}`);
   }
 }

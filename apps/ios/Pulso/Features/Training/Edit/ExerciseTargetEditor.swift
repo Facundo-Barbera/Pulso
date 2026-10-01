@@ -144,26 +144,26 @@ private struct StrengthTargetFields: View {
         Section {
             Picker("Medir esfuerzo", selection: effort) {
                 Text("Libre").tag(Effort.none)
-                Text("RIR").tag(Effort.rir)
-                Text("RPE").tag(Effort.rpe)
+                Text("En reserva").tag(Effort.rir)
+                Text("Del 1 al 10").tag(Effort.rpe)
             }
             .pickerStyle(.segmented)
             if let rir = exercise.targetRir {
                 Stepper(value: Binding(get: { rir }, set: { exercise.targetRir = $0 }), in: 0...5) {
-                    ValueRow(title: "RIR", value: "\(rir)")
+                    ValueRow(title: "Repeticiones en reserva", value: "\(rir)")
                 }
             }
             if let rpe = exercise.targetRpe {
                 Stepper(value: Binding(get: { rpe }, set: { exercise.targetRpe = $0 }), in: 5...10, step: 0.5) {
-                    ValueRow(title: "RPE", value: TrainingFormat.number(rpe))
+                    ValueRow(title: "Esfuerzo", value: TrainingFormat.number(rpe))
                 }
             }
         } header: {
             Text("Esfuerzo")
         } footer: {
             switch effort.wrappedValue {
-            case .rir: Text("Repeticiones que te quedan en reserva al terminar la serie.")
-            case .rpe: Text("Esfuerzo percibido de 1 a 10; 10 es el fallo.")
+            case .rir: Text("Las que podrías hacer de más al acabar cada serie.")
+            case .rpe: Text("Cuánto cuesta cada serie, de 1 a 10; 10 es no poder hacer ni una más.")
             case .none: EmptyView()
             }
         }

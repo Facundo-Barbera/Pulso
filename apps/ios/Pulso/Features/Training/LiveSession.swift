@@ -91,11 +91,17 @@ final class LiveSession {
         if !state.resting() { mutate { $0.advanceIfDone() } }
     }
 
+    func completeAll(exercise e: Int) {
+        mutate { $0.completeAll(exercise: e) }
+        armRest()
+        if !state.resting() { mutate { $0.advanceIfDone() } }
+    }
+
+    func setEffort(exercise e: Int, to value: Int?) { mutate { $0.setEffort(exercise: e, to: value) } }
     func adjustWeight(exercise e: Int, set s: Int, by steps: Double) { mutate { $0.adjustWeight(exercise: e, set: s, by: steps) } }
     func adjustReps(exercise e: Int, set s: Int, by delta: Int) { mutate { $0.adjustReps(exercise: e, set: s, by: delta) } }
     func setWeight(exercise e: Int, set s: Int, to kg: Double) { mutate { $0.setWeight(exercise: e, set: s, to: kg) } }
     func setReps(exercise e: Int, set s: Int, to reps: Int) { mutate { $0.setReps(exercise: e, set: s, to: reps) } }
-    func setRpe(exercise e: Int, set s: Int, to rpe: Double?) { mutate { $0.setRpe(exercise: e, set: s, to: rpe) } }
     func addSet(exercise e: Int) { mutate { $0.addSet(exercise: e) } }
     func removeSet(exercise e: Int, set s: Int) { mutate { $0.removeSet(exercise: e, set: s) } }
 
@@ -165,6 +171,39 @@ final class LiveSession {
             armCardio()
         }
         if scope == .always { persistSwap(programExerciseId: original.id, to: library.id) }
+    }
+
+    /// "Personalizar lista" saved: the draft's exercises on top of whatever was
+    /// logged since it was copied (checked sets, cardio, the rest timer).
+    func apply(_ draft: LiveSessionState) {
+        let merged = LiveSessionState.merge(remote: draft, local: state).state
+        withAnimation(.snappy) {
+            mutate {
+                $0.exercises = merged.exercises
+                $0.setFocus(merged.focus)
+            }
+        }
+        if let clock, !state.exercises.contains(where: { $0.id == clock.exerciseId && $0.isCardio && $0.cardioLog == nil }) { self.clock = nil }
+        armRest()
+        armCardio()
+    }
+
+    /// "Todo el plan" from the live session: the program day becomes this list.
+    /// Exercises from the program keep their id (and load history); a load typed
+    /// in `weights` becomes the hand-set one.
+    func savePlan(_ exercises: [LiveExercise], weights: [String: Double]) async throws {
+        let store = TrainingStore.shared
+        guard let dayId = state.dayId, let day = store.program?.days.first(where: { $0.id == dayId }) else { return }
+        let known = Dictionary(day.exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let inputs = exercises.map { ex in
+            let program = known[ex.id]
+            return DayExerciseInput(
+                id: program?.id, exerciseId: ex.exerciseId, sets: ex.isCardio ? 1 : max(1, ex.sets.count), repMin: ex.repMin, repMax: ex.repMax,
+                targetRpe: ex.targetRpe, targetRir: ex.targetRir, restSeconds: ex.restSeconds, notes: ex.notes, cardio: ex.cardio,
+                weightKg: weights[ex.id] ?? (program?.exerciseId == ex.exerciseId ? program?.weightKg : nil), supersetId: ex.supersetId
+            )
+        }
+        try await store.saveDay(dayId, scope: .always, exercises: inputs)
     }
 
     private func persistSwap(programExerciseId: String, to exerciseId: String) {

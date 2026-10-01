@@ -22,6 +22,9 @@ export const cardioTargetShape = z.object({
     .describe("Work/recovery repeats, e.g. 8 × 30 s / 90 s."),
 });
 
+/** A superset label; the engine clears it when the members aren't 2+ consecutive strength exercises. */
+export const supersetIdShape = z.string().max(32).nullish();
+
 /** One prescribed exercise or cardio block. Shared by the program tools and their tests. */
 export const programExerciseShape = z.object({
   exerciseId: z.string().describe("Exercise id from list_exercises, e.g. `press-banca` or `eliptica`."),
@@ -34,6 +37,9 @@ export const programExerciseShape = z.object({
   notes: z.string().max(300).nullish().describe("Cue or technique note shown to the person, in Spanish."),
   cardio: cardioTargetShape.nullish().describe("Required for cardio exercises (kind cardio): duration, zone, intervals…"),
   weightKg: z.number().min(0).max(1000).nullish().describe("A load the person chose for next time, kg; omit to let progression suggest it."),
+  supersetId: supersetIdShape.describe(
+    'Superset label, e.g. "a": give it to 2+ consecutive strength exercises to do them as a superset (alternating, rest after the last). Null or omitted = a plain exercise.',
+  ),
 });
 
 export const programDayShape = z.object({
@@ -123,6 +129,7 @@ export const liveSessionInput = z.object({
           cardio: cardioTargetShape.nullish().transform((v) => v ?? null),
           cardioLog: cardioLog.nullish().transform((v) => v ?? null),
           skipped: z.boolean().default(false),
+          supersetId: supersetIdShape.transform((v) => v ?? null),
         }),
       )
       .max(40),

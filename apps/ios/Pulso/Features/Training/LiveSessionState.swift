@@ -40,6 +40,8 @@ struct LiveExercise: Identifiable, Hashable {
     var cardioLog: CardioLog? = nil
     /// Passed over today; stays in the list, greyed.
     var skipped = false
+    /// Consecutive exercises sharing it are a superset: a set of each, then the rest.
+    var supersetId: String? = nil
 
     var isCardio: Bool { kind == "cardio" }
     var weightStep: Double { Equipment.weightStep(equipment) }
@@ -49,26 +51,29 @@ struct LiveExercise: Identifiable, Hashable {
     /// Neither done nor skipped: where focus moves next.
     var pending: Bool { !skipped && !done }
 
-    var reps: String { repMin == repMax ? "\(repMin)" : "\(repMin)–\(repMax)" }
-
-    /// "3 × 6–8 · RIR 2", or the cardio target.
+    /// "3 series de 6 a 8 repeticiones", or the cardio target.
     var prescription: String {
-        if isCardio { return cardio?.summary ?? "Cardio" }
-        var text = "\(sets.count) × \(reps)"
-        if let targetRir { text += " · RIR \(targetRir)" } else if let targetRpe { text += " · RPE \(targetRpe.formatted())" }
-        return text
+        isCardio ? cardio?.summary ?? "Cardio" : TrainingText.target(sets: sets.count, repMin: repMin, repMax: repMax)
     }
 
-    /// The load of the next set to do (or the last one), for "series × reps × kg".
+    /// The load of the next set to do (or the last one).
     var workingWeight: Double { (sets.first { !$0.done } ?? sets.last)?.weightKg ?? 0 }
 
-    /// "4 series × 6–8 reps × 80 kg"
+    /// "4 series de 6 a 8 repeticiones con 80 kg"
     var target: String {
-        if isCardio { return prescription }
-        var text = "\(sets.count) \(sets.count == 1 ? "serie" : "series") × \(reps) reps"
-        if workingWeight > 0 { text += " × \(workingWeight.formatted()) kg" }
-        return text
+        if isCardio || workingWeight <= 0 { return prescription }
+        return "\(prescription) con \(workingWeight.formatted()) kg"
     }
+
+    /// "Acaba cada serie pudiendo hacer 2 más. Descansa 3 min.", the one line of advice.
+    var guidance: String? {
+        guard !isCardio else { return nil }
+        let parts = [TrainingText.effort(rir: targetRir, rpe: targetRpe), restSeconds > 0 ? "Descansa \(TrainingText.rest(restSeconds))" : nil].compactMap(\.self)
+        return parts.isEmpty ? nil : parts.joined(separator: ". ") + "."
+    }
+
+    /// The effort rated for this exercise (on its sets), 1–10.
+    var effort: Int? { sets.last { $0.done && $0.rpe != nil }?.rpe.map { Int($0.rounded()) } }
 
     /// A new exercise from the library, its sets prefilled with `weightKg`.
     static func fresh(_ library: LibraryExercise, id: String = LiveSessionState.newId(), weightKg: Double, sets: Int = 3, repMin: Int = 8, repMax: Int = 12, restSeconds: Int = 90) -> LiveExercise {
@@ -145,7 +150,8 @@ struct LiveSessionState: Hashable {
                 notes: ex.notes,
                 hint: ex.isCardio ? nil : suggestion?.reason,
                 sets: ex.isCardio ? [] : (0..<ex.sets).map { _ in LiveSet(weightKg: weight, reps: reps) },
-                cardio: ex.cardio
+                cardio: ex.cardio,
+                supersetId: ex.supersetId
             )
         }
         self.init(programId: programId, dayId: day.id, name: day.name, startedAt: now, exercises: exercises, updatedAt: now)
@@ -164,12 +170,37 @@ struct LiveSessionState: Hashable {
 
     var focused: LiveExercise? { exercises.indices.contains(focus) ? exercises[focus] : nil }
 
-    /// The first strength set not yet done, in order, skipping passed-over exercises.
+    /// The first strength set not yet done, in order, skipping passed-over
+    /// exercises. In a superset, the member furthest behind goes next.
     var current: (exercise: Int, set: Int)? {
-        for (e, ex) in exercises.enumerated() where !ex.skipped {
-            if let s = ex.sets.firstIndex(where: { !$0.done }) { return (e, s) }
+        var e = 0
+        while e < exercises.count {
+            if let group = superset(of: e) {
+                if let next = nextInSuperset(group) { return next }
+                e = group.upperBound
+                continue
+            }
+            if !exercises[e].skipped, let s = exercises[e].sets.firstIndex(where: { !$0.done }) { return (e, s) }
+            e += 1
         }
         return nil
+    }
+
+    // MARK: Supersets
+
+    func superset(of e: Int) -> Range<Int>? { Superset.group(of: e, in: exercises.map(\.supersetId)) }
+
+    /// The member with the fewest sets done among those with sets left; the earliest on a tie.
+    func nextInSuperset(_ group: Range<Int>) -> (exercise: Int, set: Int)? {
+        let open = group.filter { !exercises[$0].skipped && exercises[$0].sets.contains { !$0.done } }
+        guard let e = open.min(by: { exercises[$0].sets.count(where: \.done) < exercises[$1].sets.count(where: \.done) }),
+              let s = exercises[e].sets.firstIndex(where: { !$0.done }) else { return nil }
+        return (e, s)
+    }
+
+    mutating func normalizeSupersets() {
+        let ids = Superset.normalize(exercises.map(\.supersetId), cardio: exercises.map(\.isCardio))
+        for e in exercises.indices { exercises[e].supersetId = ids[e] }
     }
 
     /// The next exercise to do after `index`, wrapping to earlier ones left behind.
@@ -199,6 +230,32 @@ struct LiveSessionState: Hashable {
         for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
             exercises[e].sets[later].weightKg = weight
         }
+        // A superset goes straight to the partner still behind; the rest comes after the round.
+        if let group = superset(of: e), let next = nextInSuperset(group) {
+            focus = next.exercise
+            if exercises[next.exercise].sets.count(where: \.done) < exercises[e].sets.count(where: \.done) {
+                restStartedAt = nil
+                restEndsAt = nil
+                return
+            }
+        }
+        startRest(after: e, now: now)
+    }
+
+    /// "Registrar todas": checks off every set left as it stands, in order, with
+    /// one rest after the last.
+    mutating func completeAll(exercise e: Int, now: Date = .now) {
+        guard exercises.indices.contains(e) else { return }
+        let open = exercises[e].sets.indices.filter { !exercises[e].sets[$0].done }
+        guard !open.isEmpty else { return }
+        // A millisecond apart, so the saved order is the list's order.
+        for (i, s) in open.enumerated() { exercises[e].sets[s].doneAt = now.addingTimeInterval(Double(i) / 1000) }
+        exercises[e].skipped = false
+        startRest(after: e, now: now)
+    }
+
+    /// The rest after a set of `e`; none once the whole session is done.
+    private mutating func startRest(after e: Int, now: Date) {
         if current == nil && allDone {
             restStartedAt = nil
             restEndsAt = nil
@@ -230,9 +287,12 @@ struct LiveSessionState: Hashable {
         exercises[e].sets[s].reps = max(0, reps)
     }
 
-    mutating func setRpe(exercise e: Int, set s: Int, to rpe: Double?) {
-        guard has(e, s) else { return }
-        exercises[e].sets[s].rpe = rpe
+    /// The effort felt on the whole exercise, 1–10 (nil clears), kept on each done set.
+    mutating func setEffort(exercise e: Int, to value: Int?) {
+        guard exercises.indices.contains(e) else { return }
+        for s in exercises[e].sets.indices where exercises[e].sets[s].done {
+            exercises[e].sets[s].rpe = value.map { Double(min(max($0, EffortLevel.range.lowerBound), EffortLevel.range.upperBound)) }
+        }
     }
 
     /// One more set, copying the last one's load and reps (or the target's bottom).
@@ -291,6 +351,7 @@ struct LiveSessionState: Hashable {
         var kept = exercises.enumerated().filter { !source.contains($0.offset) }.map(\.element)
         kept.insert(contentsOf: moving, at: min(kept.count, max(0, destination - source.count { $0 < destination })))
         exercises = kept
+        normalizeSupersets()
         if let focusedId, let index = exercises.firstIndex(where: { $0.id == focusedId }) { focus = index }
     }
 
@@ -306,6 +367,7 @@ struct LiveSessionState: Hashable {
         guard exercises.indices.contains(index), !exercises[index].hasDoneWork else { return }
         let focusedId = focused?.id
         exercises.remove(at: index)
+        normalizeSupersets()
         if let focusedId, let kept = exercises.firstIndex(where: { $0.id == focusedId }) {
             focus = kept
         } else {
@@ -486,7 +548,7 @@ struct LiveSessionState: Hashable {
     }
 
     static func target(_ set: LiveSet) -> String {
-        set.weightKg > 0 ? "\(set.weightKg.formatted()) kg × \(set.reps)" : "\(set.reps) reps"
+        TrainingText.load(set.weightKg, reps: set.reps)
     }
 
     static func ms(_ date: Date) -> Double { (date.timeIntervalSince1970 * 1000).rounded() }
@@ -519,7 +581,7 @@ extension LiveSet: Codable {
 
 extension LiveExercise: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, skipped
+        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, skipped, supersetId
     }
 
     init(from decoder: Decoder) throws {
@@ -541,6 +603,7 @@ extension LiveExercise: Codable {
         cardio = try c.decodeIfPresent(CardioTarget.self, forKey: .cardio)
         cardioLog = try c.decodeIfPresent(CardioLog.self, forKey: .cardioLog)
         skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
+        supersetId = try c.decodeIfPresent(String.self, forKey: .supersetId)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -562,6 +625,7 @@ extension LiveExercise: Codable {
         try c.encode(cardio, forKey: .cardio)
         try c.encode(cardioLog.map(CardioLogJSON.init), forKey: .cardioLog)
         try c.encode(skipped, forKey: .skipped)
+        try c.encode(supersetId, forKey: .supersetId)
     }
 }
 

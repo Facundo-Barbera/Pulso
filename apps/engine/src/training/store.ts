@@ -34,6 +34,7 @@ import { ANATOMY } from "./anatomy";
 import { CARDIO, INCREMENT_KG } from "./library";
 import { bests, nextLoad, performance, recordsFor, type Prescription } from "./math";
 import { mediaFor, mediaSourceOf } from "./media";
+import { supersetIds } from "./superset";
 import { TECHNIQUE } from "./technique";
 import { VIDEOS } from "./videos";
 
@@ -104,11 +105,11 @@ export function exercisePerformance(id: string): ExercisePerformance | undefined
 // ── Programs ─────────────────────────────────────────────────────────────────
 
 /** A prescription as stored: strength exercises need sets, reps and rest; cardio blocks a target. */
-type Rx = Pick<ProgramExercise, "sets" | "repMin" | "repMax" | "targetRpe" | "targetRir" | "restSeconds" | "notes" | "cardio"> & { weightKg: number | null };
+type Rx = Pick<ProgramExercise, "sets" | "repMin" | "repMax" | "targetRpe" | "targetRir" | "restSeconds" | "notes" | "cardio" | "supersetId"> & { weightKg: number | null };
 
 /** Fills in and checks one prescribed exercise against the library row it names. */
 function prescribe(ex: ProgramExerciseInput, exercise: Exercise, where: string): Rx {
-  const base = { targetRpe: ex.targetRpe ?? null, targetRir: ex.targetRir ?? null, notes: ex.notes ?? null };
+  const base = { targetRpe: ex.targetRpe ?? null, targetRir: ex.targetRir ?? null, notes: ex.notes ?? null, supersetId: ex.supersetId ?? null };
   if (exercise.kind === "cardio") {
     // A cardio block with no target gets the usual easy default rather than failing a swap.
     const cardio = ex.cardio && Object.values(ex.cardio).some((v) => v != null) ? ex.cardio : { durationMinutes: 20, zone: 2 as const };
@@ -122,15 +123,17 @@ function prescribe(ex: ProgramExerciseInput, exercise: Exercise, where: string):
   return { ...base, sets, repMin, repMax, restSeconds, cardio: null, weightKg: ex.weightKg ?? null };
 }
 
-/** Checks a day's exercises and returns them with their library rows. */
+/** Checks a day's exercises and returns them with their library rows, superset ids normalized. */
 function prescribeDay(name: string, exercises: ProgramExerciseInput[], library: Map<string, Exercise>): { exercise: Exercise; rx: Rx }[] {
   if (exercises.length === 0) throw new TrainingError(`Day "${name}" has no exercises.`);
   const unknown = [...new Set(exercises.map((e) => e.exerciseId).filter((id) => !library.has(id)))];
   if (unknown.length) throw new TrainingError(`Unknown exercise ids: ${unknown.join(", ")}. Use ids from list_exercises.`);
-  return exercises.map((ex) => {
+  const checked = exercises.map((ex) => {
     const exercise = library.get(ex.exerciseId)!;
     return { exercise, rx: prescribe(ex, exercise, `Day "${name}": `) };
   });
+  const supersets = supersetIds(checked.map(({ exercise, rx }) => ({ kind: exercise.kind, supersetId: rx.supersetId })));
+  return checked.map(({ exercise, rx }, i) => ({ exercise, rx: { ...rx, supersetId: supersets[i]! } }));
 }
 
 const libraryMap = () => new Map(listExercises().map((e) => [e.id, e]));
@@ -148,9 +151,9 @@ function validateProgram(input: ProgramInput): void {
 
 function insertProgramExercise(database: Database, id: string, dayId: string, position: number, exerciseId: string, rx: Rx, now: number): void {
   database.run(
-    `INSERT INTO program_exercises (id, day_id, position, exercise_id, sets, rep_min, rep_max, target_rpe, target_rir, rest_seconds, notes, cardio, weight_kg, weight_set_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, dayId, position, exerciseId, rx.sets, rx.repMin, rx.repMax, rx.targetRpe, rx.targetRir, rx.restSeconds, rx.notes, rx.cardio ? JSON.stringify(rx.cardio) : null, rx.weightKg, rx.weightKg == null ? null : now],
+    `INSERT INTO program_exercises (id, day_id, position, exercise_id, sets, rep_min, rep_max, target_rpe, target_rir, rest_seconds, notes, cardio, weight_kg, weight_set_at, superset_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, dayId, position, exerciseId, rx.sets, rx.repMin, rx.repMax, rx.targetRpe, rx.targetRir, rx.restSeconds, rx.notes, rx.cardio ? JSON.stringify(rx.cardio) : null, rx.weightKg, rx.weightKg == null ? null : now, rx.supersetId],
   );
 }
 
@@ -206,6 +209,7 @@ type ProgramExerciseRow = {
   cardio: string | null;
   weight_kg: number | null;
   weight_set_at: number | null;
+  superset_id: string | null;
   /** Set when the exercise was logged after the hand-set load: the load is spent. */
   logged_since: number | null;
 };
@@ -226,6 +230,7 @@ const toProgramExercise = (r: ProgramExerciseRow): ProgramExercise => ({
   notes: r.notes,
   cardio: r.cardio ? (JSON.parse(r.cardio) as CardioTarget) : null,
   weightKg: r.weight_kg != null && !r.logged_since ? r.weight_kg : null,
+  supersetId: r.superset_id,
 });
 
 export function getProgram(id: string): Program | undefined {
@@ -319,8 +324,8 @@ export function updateProgramDay(dayId: string, edit: DayEdit, now = Date.now())
       const weightSetAt = rx.weightKg == null ? null : rx.weightKg === old.weight_kg ? old.weight_set_at : now;
       database.run(
         `UPDATE program_exercises SET position = ?, exercise_id = ?, sets = ?, rep_min = ?, rep_max = ?, target_rpe = ?, target_rir = ?, rest_seconds = ?,
-           notes = ?, cardio = ?, weight_kg = ?, weight_set_at = ? WHERE id = ?`,
-        [position, exercise.id, rx.sets, rx.repMin, rx.repMax, rx.targetRpe, rx.targetRir, rx.restSeconds, rx.notes, rx.cardio ? JSON.stringify(rx.cardio) : null, rx.weightKg, weightSetAt, old.id],
+           notes = ?, cardio = ?, weight_kg = ?, weight_set_at = ?, superset_id = ? WHERE id = ?`,
+        [position, exercise.id, rx.sets, rx.repMin, rx.repMax, rx.targetRpe, rx.targetRir, rx.restSeconds, rx.notes, rx.cardio ? JSON.stringify(rx.cardio) : null, rx.weightKg, weightSetAt, rx.supersetId, old.id],
       );
     });
     for (const id of existing.keys()) if (!kept.has(id)) database.run("DELETE FROM program_exercises WHERE id = ?", [id]);
@@ -342,7 +347,8 @@ function withOverrides(program: Program, now: number): Program {
     .query<{ day_id: string; exercises: string }, [string]>("SELECT day_id, exercises FROM program_day_overrides WHERE date = ?")
     .all(localDate(new Date(now)));
   if (rows.length === 0) return program;
-  const today = new Map(rows.map((r) => [r.day_id, JSON.parse(r.exercises) as ProgramExercise[]]));
+  // Overrides written before supersets have no supersetId.
+  const today = new Map(rows.map((r) => [r.day_id, (JSON.parse(r.exercises) as ProgramExercise[]).map((e) => ({ ...e, supersetId: e.supersetId ?? null }))]));
   return { ...program, days: program.days.map((d) => (today.has(d.id) ? { ...d, exercises: today.get(d.id)!, overridden: true } : d)) };
 }
 

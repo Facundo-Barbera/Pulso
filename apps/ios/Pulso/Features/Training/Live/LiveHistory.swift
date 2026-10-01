@@ -38,8 +38,9 @@ enum LiveHistory {
         last(exerciseId, in: sessions)?.sets.max { $0.doneAt < $1.doneAt }?.weightKg
     }
 
-    /// "80 × 8 · 80 × 8 · 77,5 × 7", or reps alone for bodyweight sets.
-    static func line(_ sets: [SetLog]) -> String {
-        sets.map { $0.weightKg > 0 ? "\($0.weightKg.formatted()) × \($0.reps)" : "\($0.reps) reps" }.joined(separator: " · ")
+    /// Last time's set in the same position (or the last one), for a set row's "Última vez".
+    static func set(_ index: Int, of last: Last?) -> SetLog? {
+        guard let sets = last?.sets, !sets.isEmpty else { return nil }
+        return sets.indices.contains(index) ? sets[index] : nil
     }
 }

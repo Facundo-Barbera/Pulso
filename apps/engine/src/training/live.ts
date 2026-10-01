@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CardioTarget, Exercise, LiveExercise, LiveSession, LiveSet } from "@pulso/contract";
 import { db } from "../db";
 import { getExercise, listSessions, suggestLoad, TrainingError } from "./store";
+import { withSupersets } from "./superset";
 
 /**
  * The session in progress, mirrored from the phone so the Coach can change it.
@@ -11,7 +12,12 @@ import { getExercise, listSessions, suggestLoad, TrainingError } from "./store";
 
 type Row = { id: string; data: string; version: number; thread_id: string | null; updated_at: number };
 
-const toSession = (r: Row): LiveSession => ({ ...(JSON.parse(r.data) as LiveSession), version: r.version, threadId: r.thread_id, updatedAt: r.updated_at });
+const toSession = (r: Row): LiveSession => {
+  const data = JSON.parse(r.data) as LiveSession;
+  // Copies stored before supersets have no supersetId.
+  const exercises = data.exercises.map((e) => ({ ...e, supersetId: e.supersetId ?? null }));
+  return { ...data, exercises, version: r.version, threadId: r.thread_id, updatedAt: r.updated_at };
+};
 
 export function getLive(): LiveSession | null {
   const row = db().query<Row, []>("SELECT * FROM live_sessions ORDER BY updated_at DESC LIMIT 1").get();
@@ -43,7 +49,7 @@ export function putLive(session: LiveSession, baseVersion: number, now = Date.no
   if (current && current.id === session.id && baseVersion < current.version) return { ok: false, session: current };
   const version = Math.max(current?.id === session.id ? current.version : 0, baseVersion) + 1;
   const threadId = current?.id === session.id ? (current.threadId ?? session.threadId) : session.threadId;
-  return { ok: true, session: write(session, version, threadId, now) };
+  return { ok: true, session: write({ ...session, exercises: withSupersets(session.exercises) }, version, threadId, now) };
 }
 
 export function clearLive(id?: string): boolean {
@@ -77,8 +83,21 @@ export type LiveOp =
       reps?: number;
       restSeconds?: number;
       cardio?: CardioTarget;
+      /** A label to pair it with the neighbours that share it; null takes it out of its superset. */
+      supersetId?: string | null;
     }
-  | { op: "add"; exerciseId: string; position?: number; sets?: number; repMin?: number; repMax?: number; restSeconds?: number; weightKg?: number; cardio?: CardioTarget }
+  | {
+      op: "add";
+      exerciseId: string;
+      position?: number;
+      sets?: number;
+      repMin?: number;
+      repMax?: number;
+      restSeconds?: number;
+      weightKg?: number;
+      cardio?: CardioTarget;
+      supersetId?: string | null;
+    }
   | { op: "remove"; exercise: ExerciseRef }
   | { op: "skip"; exercise: ExerciseRef }
   | { op: "move"; exercise: ExerciseRef; to: number }
@@ -146,6 +165,7 @@ function liveExercise(
     cardio: cardio ? (target.cardio ?? (like?.kind === "cardio" ? like.cardio : null) ?? DEFAULT_CARDIO) : null,
     cardioLog: null,
     skipped: false,
+    supersetId: null,
   };
 }
 
@@ -159,8 +179,13 @@ function refocus(session: LiveSession): void {
   if (next !== -1) session.focus = next;
 }
 
+/** Superset ids the Coach asked for, by live exercise id: checked once all ops ran. */
+type Requested = Map<string, { name: string; supersetId: string | null }>;
+
+const supersetLine = (id: string | null | undefined) => (id === undefined ? "" : id ? ` · superserie ${id}` : " · sin superserie");
+
 /** Applies one change; returns a short Spanish line saying what changed. */
-function apply(session: LiveSession, op: LiveOp): string {
+function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
   const list = session.exercises;
   switch (op.op) {
     case "swap": {
@@ -170,7 +195,8 @@ function apply(session: LiveSession, op: LiveOp): string {
       if ((exercise.kind === "cardio") !== (old.kind === "cardio")) throw new TrainingError("Swap strength for strength and cardio for cardio; use add and remove to change one into the other.");
       const doneSets = old.sets.filter((s) => s.doneAt != null);
       const remaining = Math.max(old.sets.length - doneSets.length, 1);
-      const next = liveExercise(exercise, { sets: remaining, repMin: old.repMin, repMax: old.repMax, restSeconds: old.restSeconds }, old);
+      // The swapped-in exercise takes the old one's place in its superset.
+      const next = { ...liveExercise(exercise, { sets: remaining, repMin: old.repMin, repMax: old.repMax, restSeconds: old.restSeconds }, old), supersetId: old.supersetId };
       if (doneSets.length) {
         // What was lifted stays logged under the exercise actually done.
         list[i] = { ...old, sets: doneSets };
@@ -184,6 +210,10 @@ function apply(session: LiveSession, op: LiveOp): string {
     case "update": {
       const i = indexOf(session, op.exercise);
       const ex = list[i]!;
+      if (op.supersetId !== undefined) {
+        ex.supersetId = op.supersetId?.trim() || null;
+        requested.set(ex.id, { name: ex.name, supersetId: ex.supersetId });
+      }
       if (ex.kind === "cardio") {
         if (op.cardio) ex.cardio = { ...ex.cardio, ...op.cardio };
         return `${ex.name}: objetivo cambiado`;
@@ -206,7 +236,7 @@ function apply(session: LiveSession, op: LiveOp): string {
           for (let s = ex.sets.length - 1; s >= 0 && drop > 0; s--) if (ex.sets[s]!.doneAt == null) (ex.sets.splice(s, 1), drop--);
         }
       }
-      return `${ex.name}: ${ex.sets.length} × ${ex.repMin === ex.repMax ? ex.repMin : `${ex.repMin}–${ex.repMax}`}${open[0] ? ` · ${open[0].weightKg} kg` : ""}`;
+      return `${ex.name}: ${ex.sets.length} × ${ex.repMin === ex.repMax ? ex.repMin : `${ex.repMin}–${ex.repMax}`}${open[0] ? ` · ${open[0].weightKg} kg` : ""}${supersetLine(op.supersetId === undefined ? undefined : ex.supersetId)}`;
     }
     case "add": {
       const exercise = libraryExercise(op.exerciseId);
@@ -218,10 +248,12 @@ function apply(session: LiveSession, op: LiveOp): string {
         weightKg: op.weightKg,
         cardio: op.cardio,
       });
+      next.supersetId = op.supersetId?.trim() || null;
+      if (next.supersetId) requested.set(next.id, { name: next.name, supersetId: next.supersetId });
       const at = op.position == null ? list.length : Math.min(Math.max(op.position - 1, 0), list.length);
       list.splice(at, 0, next);
       if (at <= session.focus && list.length > 1) session.focus++;
-      return `Añadido: ${exercise.name}`;
+      return `Añadido: ${exercise.name}${supersetLine(next.supersetId ?? undefined)}`;
     }
     case "remove": {
       const i = indexOf(session, op.exercise);
@@ -234,6 +266,8 @@ function apply(session: LiveSession, op: LiveOp): string {
     case "skip": {
       const i = indexOf(session, op.exercise);
       list[i]!.skipped = true;
+      // A skipped exercise leaves its superset; a partner left alone is cleared on write.
+      list[i]!.supersetId = null;
       return `Saltado: ${list[i]!.name}`;
     }
     case "move": {
@@ -261,8 +295,21 @@ export function editLive(ops: LiveOp[], now = Date.now()): { session: LiveSessio
   const current = getLive();
   if (!current) throw new TrainingError("There is no session in progress. Changes to the program go through edit_program_day or swap_program_exercise.");
   const session: LiveSession = structuredClone(current);
-  const changes = ops.map((op) => apply(session, op));
+  const requested: Requested = new Map();
+  const changes = ops.map((op) => apply(session, op, requested));
   if (session.exercises.length === 0) throw new TrainingError("A session needs at least one exercise.");
+  // Normalized once all ops ran, so pairing two exercises can take two updates;
+  // a move, remove or skip that leaves a member alone or apart clears it.
+  session.exercises = withSupersets(session.exercises);
+  for (const [id, want] of requested) {
+    const ex = session.exercises.find((e) => e.id === id);
+    if (!want.supersetId || !ex || ex.supersetId === want.supersetId) continue;
+    throw new TrainingError(
+      ex.kind === "cardio"
+        ? `${want.name} is cardio and can't be in a superset.`
+        : `${want.name} can't be in superset "${want.supersetId}": a superset is 2+ consecutive strength exercises sharing a supersetId not used elsewhere in the session. Give its neighbour the same id (or move them next to each other) in the same call.`,
+    );
+  }
   if (ops.some((o) => o.op !== "focus")) refocus(session);
   // Rest belongs to the set that started it; a changed list ends it.
   if (ops.some((o) => o.op === "swap" || o.op === "remove" || o.op === "skip")) {
@@ -285,7 +332,7 @@ export function describeLive(session: LiveSession, now = Date.now()): string {
     }
     const doneSets = ex.sets.filter((s) => s.doneAt != null).length;
     const load = ex.sets.find((s) => s.doneAt == null) ?? ex.sets.at(-1);
-    return `${i + 1}. ${ex.name} [${ex.exerciseId}, ${ex.equipment}] — ${ex.sets.length}×${ex.repMin}–${ex.repMax}${load ? ` · ${load.weightKg} kg` : ""} · ${doneSets}/${ex.sets.length} series${status}${mark}`;
+    return `${i + 1}. ${ex.name} [${ex.exerciseId}, ${ex.equipment}] — ${ex.sets.length}×${ex.repMin}–${ex.repMax}${load ? ` · ${load.weightKg} kg` : ""} · ${doneSets}/${ex.sets.length} series${ex.supersetId ? ` · superserie ${ex.supersetId}` : ""}${status}${mark}`;
   });
   return [`Sesión "${session.name}", ${minutes} min en marcha.`, ...lines].join("\n");
 }

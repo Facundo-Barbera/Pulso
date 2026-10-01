@@ -144,32 +144,20 @@ private struct SwapTarget: Identifiable {
 
 // MARK: - Header
 
-/// "Ejercicio 2 de 6", the session clock, and one capsule per exercise filling
-/// as its sets are done. Tap a capsule to jump to it.
+/// Tiempo · Volumen · Series hechas, and one capsule per exercise filling as
+/// its sets are done. Tap a capsule to jump to it.
 private struct SessionStrip: View {
     let state: LiveSessionState
     let select: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(state.exercises.isEmpty ? "Sin ejercicios" : "Ejercicio \(state.focus + 1) de \(state.exercises.count)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.training)
-                    .contentTransition(.numericText())
-                    .animation(.snappy, value: state.focus)
-                Spacer(minLength: 8)
-                Label {
-                    Text(state.startedAt, style: .timer).monospacedDigit()
-                } icon: {
-                    Image(systemName: "stopwatch")
-                }
-                .font(.subheadline.weight(.medium))
-                .fontDesign(.rounded)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 8) {
+                stat("Tiempo") { Text(state.startedAt, style: .timer) }
+                stat("Volumen") { Text("\(Int(state.volumeKg.rounded()).formatted()) kg").contentTransition(.numericText()) }
+                stat("Series hechas") { Text("\(state.setsDone) de \(state.setsTotal)").contentTransition(.numericText()) }
             }
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .animation(.snappy, value: state.setsDone)
 
             HStack(spacing: 4) {
                 ForEach(Array(state.exercises.enumerated()), id: \.element.id) { index, exercise in
@@ -187,6 +175,20 @@ private struct SessionStrip: View {
             .animation(.snappy, value: state.exercises)
             .animation(.snappy, value: state.focus)
         }
+    }
+
+    private func stat(_ title: String, @ViewBuilder value: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            value()
+                .font(.headline)
+                .fontDesign(.rounded)
+                .monospacedDigit()
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -248,19 +250,7 @@ private struct BottomBar: View {
                     Button {
                         withAnimation(.snappy) { session.setFocus(next) }
                     } label: {
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text("Siguiente").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                Text(state.exercises[next].name).font(.headline).foregroundStyle(.primary)
-                            }
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.right")
-                                .font(.headline)
-                                .foregroundStyle(Theme.training)
-                        }
-                        .padding(.horizontal, 6)
-                        .frame(minHeight: 44)
+                        NextExerciseLabel(exercise: state.exercises[next])
                     }
                     .buttonStyle(.glass)
                     .transition(.opacity)
@@ -276,6 +266,32 @@ private struct BottomBar: View {
     /// The next exercise on the page order, else one left behind.
     private func nextIndex(_ state: LiveSessionState) -> Int? {
         state.focus + 1 < state.exercises.count ? state.focus + 1 : state.nextPending(after: state.focus)
+    }
+}
+
+/// "Siguiente": the next exercise's thumbnail, name and target in words.
+private struct NextExerciseLabel: View {
+    let exercise: LiveExercise
+
+    private var thumbnail: String? { ExerciseCatalog.shared.details[exercise.exerciseId]?.media.thumbnail }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ExerciseMediaView(path: thumbnail, cornerRadius: 10)
+                .frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Siguiente").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(exercise.name).font(.headline).foregroundStyle(.primary)
+                Text(exercise.target).font(.caption).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right")
+                .font(.headline)
+                .foregroundStyle(Theme.training)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -372,7 +388,7 @@ extension LiveSessionState {
             ProgramExercise(id: "pe4", exerciseId: "eliptica", exerciseName: "Elíptica suave", equipment: "machine", sets: 1, repMin: 1, repMax: 1, targetRpe: nil, targetRir: nil, restSeconds: 0, notes: nil, kind: "cardio", modality: "elliptical",
                             cardio: CardioTarget(durationMinutes: 20, level: 8, zone: 2)),
         ])
-        let suggestions = ["pe1": LoadSuggestion(exerciseId: "press-banca", weightKg: 102.5, reps: 7, reason: "Subiste las 3 series a 8: prueba 102,5 kg y vuelve al rango bajo", lastSessionAt: 1)]
+        let suggestions = ["pe1": LoadSuggestion(exerciseId: "press-banca", weightKg: 102.5, reps: 7, reason: "Hiciste 4 series de 8 con 100 kg: sube a 102,5 kg.", lastSessionAt: 1)]
         var state = LiveSessionState(day: day, programId: nil, suggestions: suggestions, now: .now.addingTimeInterval(-1_260))
         state.toggle(exercise: 0, set: 0, now: .now.addingTimeInterval(-400))
         state.skipRest()
