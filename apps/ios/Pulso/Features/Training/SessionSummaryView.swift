@@ -124,3 +124,13 @@ private struct RecordRow: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Resumen · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
+    let start = Date.now.addingTimeInterval(-4_000).timeIntervalSince1970 * 1000
+    let sets = (0..<14).map { SetLog(exerciseId: "press-banca", setIndex: $0, weightKg: 102.5, reps: 8, rpe: nil, doneAt: start + Double($0) * 200_000) }
+    let session = TrainingSession(id: "s1", name: "Torso A · Fuerza", startedAt: start, endedAt: start + 3_960_000, sets: sets)
+    let prs = [TrainingRecord(exerciseId: "press-banca", exerciseName: "Press de banca con barra y agarre cerrado", kind: "e1rm", value: 129.8, previous: 125.4)]
+    SessionSummaryView(summary: SessionSummary(session: session, prs: prs, uploaded: true, savedToHealth: true))
+}
+#endif
