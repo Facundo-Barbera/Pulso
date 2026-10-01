@@ -135,7 +135,8 @@ test("regenerating keeps manual items and marks of ingredients still needed", ()
   list = checkShoppingItems([chicken.id]);
   list = updateShoppingItem(rice.id, { pantry: true });
   list = updateShoppingItem(salmon.id, { category: "congelados" });
-  list = addShoppingItems([{ name: "Papel de cocina" }, { name: "Café", amount: "1 paquete" }]);
+  // The phone sends nulls for empty fields: an automatic aisle and no amount.
+  list = addShoppingItems([{ name: "Papel de cocina", amount: null, category: null }, { name: "Café", amount: "1 paquete" }]);
   expect(list.items.find((i) => i.name === "Café")).toMatchObject({ category: "bebidas", source: "manual", amount: "1 paquete" });
   const total = list.total;
   expect(list.done).toBe(1);

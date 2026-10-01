@@ -21,7 +21,7 @@ export const generateSchema = z.object({
   days: z.number().int().min(1).max(SHOPPING_MAX_DAYS).default(7),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD").optional(),
 });
-export const itemInputSchema = z.object({ name: text(80), amount: optText(30), category: category.optional(), note: optText(200) });
+export const itemInputSchema = z.object({ name: text(80), amount: optText(30), category: category.nullish(), note: optText(200) });
 export const itemPatchSchema = z
   .object({ name: text(80), amount: optText(30), category, checked: z.boolean(), pantry: z.boolean(), note: optText(200) })
   .partial();
