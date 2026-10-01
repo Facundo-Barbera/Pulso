@@ -10,7 +10,8 @@
     "start": "bun --bun next start --hostname 127.0.0.1 --port 3230",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "agent:provider": "bun run scripts/agent-provider.ts"
+    "agent:provider": "bun run scripts/agent-provider.ts",
+    "training:media": "bun run scripts/training-media.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.286",

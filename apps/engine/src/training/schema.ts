@@ -68,6 +68,22 @@ export const TRAINING_SCHEMA = `
     done_at INTEGER NOT NULL,
     PRIMARY KEY (session_id, exercise_id, set_index)
   );
+  -- Which ExerciseDB exercise shows each library exercise. Only the id: their terms forbid storing media.
+  -- source_id NULL with verified = 1 means the person rejected the match.
+  CREATE TABLE IF NOT EXISTS exercise_media (
+    exercise_id TEXT PRIMARY KEY REFERENCES exercises (id),
+    source TEXT NOT NULL,
+    source_id TEXT,
+    attribution TEXT,
+    score REAL NOT NULL DEFAULT 0,
+    verified INTEGER NOT NULL DEFAULT 0,
+    matched_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS exercise_notes (
+    exercise_id TEXT PRIMARY KEY REFERENCES exercises (id),
+    notes TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS program_days_program ON program_days (program_id, position);
   CREATE INDEX IF NOT EXISTS program_exercises_day ON program_exercises (day_id, position);
   CREATE INDEX IF NOT EXISTS training_sessions_started ON training_sessions (started_at DESC);
