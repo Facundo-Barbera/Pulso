@@ -6,6 +6,11 @@ import SwiftUI
 struct RootView: View {
     let model: PulsoModel
     @Environment(\.scenePhase) private var scenePhase
+    @State private var tab = "hoy"
+    private var launcher = CoachLauncher.shared
+    private var training = TrainingStore.shared
+
+    init(model: PulsoModel) { self.model = model }
 
     var body: some View {
         Group {
@@ -13,24 +18,27 @@ struct RootView: View {
                 OnboardingView(model: model)
                     .transition(.opacity)
             } else {
-                TabView {
-                    Tab("Hoy", systemImage: "sun.max") {
+                TabView(selection: $tab) {
+                    Tab("Hoy", systemImage: "sun.max", value: "hoy") {
                         NavigationStack { TodayView(model: model).settingsToolbar(model) }
                     }
-                    Tab("Coach", systemImage: "sparkles") {
+                    Tab("Coach", systemImage: "sparkles", value: "coach") {
                         NavigationStack { CoachView(model: model).settingsToolbar(model) }
                     }
-                    Tab("Entreno", systemImage: "dumbbell") {
+                    Tab("Entreno", systemImage: "dumbbell", value: "entreno") {
                         NavigationStack { TrainingView(model: model).settingsToolbar(model) }
                     }
-                    Tab("Dieta", systemImage: "fork.knife") {
+                    Tab("Dieta", systemImage: "fork.knife", value: "dieta") {
                         NavigationStack { NutritionView(model: model).settingsToolbar(model) }
                     }
-                    Tab("Cuerpo", systemImage: "figure") {
+                    Tab("Cuerpo", systemImage: "figure", value: "cuerpo") {
                         NavigationStack { BodyView(model: model).settingsToolbar(model) }
                     }
                 }
                 .modifier(OfflineAccessory(model: model))
+                .onChange(of: launcher.pending?.id) { _, id in if id != nil { tab = "coach" } }
+                // A session started from Siri, a widget or another tab shows where it lives.
+                .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
                 .transition(.opacity)
             }
         }

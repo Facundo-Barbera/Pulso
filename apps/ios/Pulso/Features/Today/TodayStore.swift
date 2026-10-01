@@ -63,5 +63,6 @@ final class TodayStore {
             await model.refresh()
         }
         await load()
+        await WidgetSync.refresh()
     }
 }

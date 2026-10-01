@@ -37,6 +37,7 @@ final class MedicationStore {
             (medications, day, adherence) = try await (meds, today, report)
             loaded = true
             await replan()
+            await WidgetSync.refresh()
         } catch {
             model.handle(error)
         }
@@ -60,7 +61,7 @@ final class MedicationStore {
     }
 
     func take(_ slot: DoseSlot) async {
-        await log(DoseLog(medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status: .tomada, takenAt: Date.now.timeIntervalSince1970 * 1000))
+        await log(DoseLog(medicationId: slot.medicationId, date: slot.date, scheduledTime: slot.time, status: .tomada, takenAt: (Date.now.timeIntervalSince1970 * 1000).rounded()))
     }
 
     func skip(_ slot: DoseSlot) async {
@@ -80,7 +81,7 @@ final class MedicationStore {
 
     /// An as-needed (or extra) intake, now.
     func takeNow(_ med: Medication) async {
-        await log(DoseLog(medicationId: med.id, date: LocalClock.date(.now), scheduledTime: nil, status: .tomada, takenAt: Date.now.timeIntervalSince1970 * 1000))
+        await log(DoseLog(medicationId: med.id, date: LocalClock.date(.now), scheduledTime: nil, status: .tomada, takenAt: (Date.now.timeIntervalSince1970 * 1000).rounded()))
     }
 
     private func apply(_ log: DoseLog) {

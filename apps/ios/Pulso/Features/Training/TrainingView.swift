@@ -299,6 +299,8 @@ private struct ResumeCard: View {
 }
 
 private struct EmptyProgram: View {
+    @Environment(\.askCoach) private var askCoach
+
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "figure.strengthtraining.traditional")
@@ -310,6 +312,13 @@ private struct EmptyProgram: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            Button("Pedir rutina al Coach", systemImage: "sparkles") {
+                askCoach("Diseña mi rutina de entrenamiento para esta semana según mi perfil y objetivos")
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Theme.training)
+            .controlSize(.large)
+            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 80)

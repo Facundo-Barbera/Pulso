@@ -8,6 +8,7 @@ struct NutritionView: View {
     @State private var store = NutritionStore()
     @State private var sheet: Sheet?
     @State private var toast: String?
+    @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
         case quickAdd, scan, targets
@@ -138,8 +139,16 @@ struct NutritionView: View {
                     .symbolEffect(.bounce, value: store.dateKey)
                 Text(store.isToday ? "Aún no registraste nada hoy" : "Nada registrado este día")
                     .font(.headline)
-                Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }
-                    .buttonStyle(.glass)
+                HStack {
+                    Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }
+                        .buttonStyle(.glass)
+                    if store.day?.plan == nil {
+                        Button("Plan con el Coach", systemImage: "sparkles") {
+                            askCoach("Arma mi plan de comidas según mis objetivos y preferencias")
+                        }
+                        .buttonStyle(.glassProminent)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)

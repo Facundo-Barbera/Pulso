@@ -10,6 +10,7 @@ struct TodayView: View {
             VStack(spacing: 16) {
                 header
                 ReadinessHero(readiness: store.readiness)
+                CoachBriefCard(model: model)
                 MedicationTodayCard(model: model)
                 ActivityCard(day: store.today)
                 SleepCard(day: store.today, onSync: sync) { SleepView(model: model) }
@@ -26,15 +27,6 @@ struct TodayView: View {
             if phase == .active { sync() }
         }
         .sensoryFeedback(.success, trigger: store.updatedAt)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("Olvidar esta Mac", systemImage: "laptopcomputer.slash", role: .destructive) { model.unpair() }
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-            }
-        }
     }
 
     /// Today's date and a quiet sync status; errors show here too, never as a blocking row.
