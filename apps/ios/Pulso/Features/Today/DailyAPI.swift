@@ -9,8 +9,12 @@ struct DailyMetrics: Codable, Identifiable, Equatable {
     /// kcal
     var activeEnergy: Double?
     var exerciseMinutes: Double?
+    /// Summed from workouts because Health had no Apple exercise time.
+    var exerciseMinutesEstimated: Bool?
     /// bpm
     var restingHeartRate: Double?
+    /// Estimated from heart-rate samples because Health had no resting heart rate.
+    var restingHeartRateEstimated: Bool?
     /// SDNN, ms
     var hrv: Double?
     var sleepMinutes: Double?
@@ -34,6 +38,8 @@ struct ReadinessFactor: Codable, Identifiable, Equatable {
     var baseline: Double?
     var score: Int?
     var detail: String
+    /// Today's value is an estimate and counts for a little less.
+    var estimated: Bool?
 
     var id: String { key }
 }

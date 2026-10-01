@@ -1,11 +1,12 @@
 import type { DailyMetrics } from "@pulso/contract";
 import { expect, test } from "bun:test";
 import { addDays } from "./dates";
-import { computeReadiness } from "./readiness";
+import { computeReadiness, ESTIMATE_WEIGHT } from "./readiness";
 
 const DATE = "2026-03-29";
 const blank: Omit<DailyMetrics, "date"> = {
-  steps: null, activeEnergy: null, exerciseMinutes: null, restingHeartRate: null, hrv: null, sleepMinutes: null,
+  steps: null, activeEnergy: null, exerciseMinutes: null, exerciseMinutesEstimated: false, restingHeartRate: null,
+  restingHeartRateEstimated: false, hrv: null, sleepMinutes: null,
   sleepDeep: null, sleepCore: null, sleepRem: null, sleepAwake: null, vo2max: null, respiratoryRate: null, updatedAt: 0,
 };
 const day = (date: string, m: Partial<DailyMetrics>): DailyMetrics => ({ ...blank, date, ...m });
@@ -61,6 +62,26 @@ test("days outside the 28-day window and the day itself are not baseline", () =>
   const r = computeReadiness(DATE, day(DATE, { hrv: 50 }), [...old, day(DATE, { hrv: 50 })]);
   expect(factor(r, "hrv").baseline).toBeNull();
   expect(r.baselineDays).toBe(0);
+});
+
+test("an estimated resting heart rate weighs ESTIMATE_WEIGHT of a measured one", () => {
+  const today = { hrv: 50, restingHeartRate: 64, sleepMinutes: 480 };
+  const measured = computeReadiness(DATE, day(DATE, today), baseline);
+  const estimated = computeReadiness(DATE, day(DATE, { ...today, restingHeartRateEstimated: true }), baseline);
+  const [hrv, resting, sleep] = estimated.factors.map((f) => f.score!);
+  expect(resting).toBe(0);
+  const weights = { hrv: 0.4, resting: 0.3 * ESTIMATE_WEIGHT, sleep: 0.3 };
+  expect(estimated.score).toBe(Math.round((hrv! * weights.hrv + resting! * weights.resting + sleep! * weights.sleep) / (weights.hrv + weights.resting + weights.sleep)));
+  // The same bad resting HR drags the score down less when it is only an estimate.
+  expect(estimated.score!).toBeGreaterThan(measured.score!);
+  expect(factor(estimated, "resting_hr")).toMatchObject({ estimated: true, detail: "9 lpm por encima de tu media (estimado)" });
+  expect(factor(measured, "resting_hr").estimated).toBe(false);
+  expect(factor(estimated, "hrv").estimated).toBe(false);
+});
+
+test("an estimate is not flagged when there is no resting heart rate", () => {
+  const r = computeReadiness(DATE, day(DATE, { restingHeartRateEstimated: true, sleepMinutes: 480 }), baseline);
+  expect(factor(r, "resting_hr").estimated).toBe(false);
 });
 
 test("no data at all is unknown, not zero", () => {

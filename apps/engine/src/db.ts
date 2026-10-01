@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { migrateDaily } from "./daily/schema";
 import { SCHEMAS } from "./schemas";
 import { migrateWorkouts } from "./workouts-schema";
 
@@ -29,6 +30,7 @@ export function db(): Database {
   database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   for (const schema of SCHEMAS) database.exec(schema);
   migrateWorkouts(database);
+  migrateDaily(database);
   g[KEY] = database;
   return database;
 }

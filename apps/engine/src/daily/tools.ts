@@ -13,6 +13,8 @@ export const dailyTools = [
       "Each day: steps; activeEnergy kcal; exerciseMinutes min; restingHeartRate bpm; hrv ms (SDNN); " +
       "sleepMinutes, sleepDeep, sleepCore, sleepRem, sleepAwake in minutes (sleep is the night that ENDED on that date); " +
       "vo2max mL/kg/min; respiratoryRate breaths/min. Any field may be null when not measured. Days with no data are omitted. " +
+      "restingHeartRateEstimated / exerciseMinutesEstimated are true when Health had no value and the phone estimated it " +
+      "(lowest overnight heart rate; summed workout minutes), so treat those as approximate. " +
       "Use for trends in activity, sleep or recovery signals.",
     { from: date.optional(), to: date.optional() },
     async ({ from, to }) => {

@@ -13,8 +13,12 @@ export type DailyMetrics = {
   activeEnergy: number | null;
   /** minutes */
   exerciseMinutes: number | null;
+  /** true when the phone summed workout durations because Health had no Apple exercise time */
+  exerciseMinutesEstimated: boolean;
   /** bpm */
   restingHeartRate: number | null;
+  /** true when the phone estimated it from heart-rate samples because Health had no resting heart rate */
+  restingHeartRateEstimated: boolean;
   /** HRV, SDNN in ms */
   hrv: number | null;
   /** minutes asleep, all stages */
@@ -32,7 +36,10 @@ export type DailyMetrics = {
   updatedAt: number;
 };
 
-/** What the phone sends. Missing or null fields keep what the engine already had. */
+/**
+ * What the phone sends. Missing or null fields keep what the engine already had.
+ * An `...Estimated` flag only applies together with its value; a missing one means false.
+ */
 export type DailyMetricsInput = Omit<DailyMetrics, "updatedAt">;
 
 export type ReadinessFactorKey = "hrv" | "resting_hr" | "sleep";
@@ -49,6 +56,8 @@ export type ReadinessFactor = {
   score: number | null;
   /** Spanish, e.g. "12% por encima de tu media" */
   detail: string;
+  /** today's value is an estimate; it counts for a little less in the score */
+  estimated: boolean;
 };
 
 export type Readiness = {

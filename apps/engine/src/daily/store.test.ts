@@ -1,4 +1,6 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { DAILY_SCHEMA, migrateDaily } from "./schema";
 import { listDailyMetrics, parseDailyInputs, readinessFor, upsertDailyMetrics } from "./store";
 import { dailyTools } from "./tools";
 
@@ -10,6 +12,40 @@ test("upsert by date keeps fields a later partial sync left null", () => {
   const [stored, ...rest] = listDailyMetrics("2026-01-10", "2026-01-10");
   expect(rest).toHaveLength(0);
   expect(stored).toMatchObject({ steps: 9000, hrv: 48, sleepMinutes: 450, vo2max: null, updatedAt: 2 });
+});
+
+test("estimated flags travel with their value", () => {
+  const date = "2026-01-20";
+  const flagged = (m: Record<string, number | boolean | null>) => parseDailyInputs({ days: [{ date, ...m }] })![0]!;
+  const stored = () => listDailyMetrics(date, date)[0]!;
+
+  upsertDailyMetrics([flagged({ restingHeartRate: 52, restingHeartRateEstimated: true, exerciseMinutes: 40, exerciseMinutesEstimated: true })]);
+  expect(stored()).toMatchObject({ restingHeartRate: 52, restingHeartRateEstimated: true, exerciseMinutes: 40, exerciseMinutesEstimated: true });
+
+  // A sync without those values keeps both the numbers and their flags.
+  upsertDailyMetrics([flagged({ steps: 1000 })]);
+  expect(stored()).toMatchObject({ restingHeartRate: 52, restingHeartRateEstimated: true, exerciseMinutes: 40, exerciseMinutesEstimated: true });
+
+  // Health's own value arrives later (flag absent = false) and replaces the estimate.
+  upsertDailyMetrics([flagged({ restingHeartRate: 58 })]);
+  expect(stored()).toMatchObject({ restingHeartRate: 58, restingHeartRateEstimated: false, exerciseMinutesEstimated: true });
+});
+
+test("parseDailyInputs defaults the flags to false, ignores a flag without a value, rejects non-booleans", () => {
+  expect(parseDailyInputs({ days: [{ date: "2026-01-01", restingHeartRate: 50 }] })![0]).toMatchObject({ restingHeartRateEstimated: false, exerciseMinutesEstimated: false });
+  expect(parseDailyInputs({ days: [{ date: "2026-01-01", exerciseMinutesEstimated: true }] })![0]!.exerciseMinutesEstimated).toBe(false);
+  expect(parseDailyInputs({ days: [{ date: "2026-01-01", restingHeartRate: 50, restingHeartRateEstimated: "yes" }] })).toBeUndefined();
+});
+
+test("migrateDaily adds the flag columns once and keeps existing rows", () => {
+  const old = new Database(":memory:");
+  old.exec(DAILY_SCHEMA);
+  old.exec("INSERT INTO daily_metrics (date, resting_heart_rate, updated_at) VALUES ('2026-01-01', 55, 1)");
+  migrateDaily(old);
+  migrateDaily(old);
+  const row = old.query<Record<string, number>, []>("SELECT * FROM daily_metrics").get()!;
+  expect(row).toMatchObject({ resting_heart_rate: 55, resting_heart_rate_estimated: 0, exercise_minutes_estimated: 0 });
+  expect(old.query<{ name: string }, []>("PRAGMA table_info(daily_metrics)").all().filter((c) => c.name.endsWith("_estimated"))).toHaveLength(2);
 });
 
 test("list is inclusive and oldest first", () => {
