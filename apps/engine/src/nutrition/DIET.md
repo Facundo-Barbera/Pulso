@@ -25,8 +25,9 @@ pantry_items ── used up when a planned meal is eaten or a batch is cooked
   (a kcal/macros budget). Every slot carries `items` so old readers work: recipe and
   prep slots hold one dish item in servings, eat-out holds its budget as one item.
 - **Status**: `planned`, `skipped`, `replaced` are stored; `eaten` is derived from a
-  `meal_slot_links` row with role `planned`. A log with `offPlan` linked to a slot
-  replaces it.
+  `meal_slot_links` row with role `planned`. Slots also carry `real` (the entries tied
+  to them, as one meal) and `missed` (pending 2 h past its time, or on a past day,
+  with nothing logged: «sin registrar», never an automatic skip).
 - **Materialization** (the migration): a date is laid out from the rotation the first
   time anything reads or changes it (`materialize`), copying the plan's item ids. A
   `plan_days` row marks it, so it is never refilled — a date whose meals all moved
@@ -38,6 +39,32 @@ pantry_items ── used up when a planned meal is eaten or a batch is cooked
 - **Old readers**: `planForDay(date).day` is the dated plan for that date (skipped and
   replaced meals left out) and `adjustment` stays the overlay it was, so iOS and the
   web keep drawing the same shape.
+
+## Planeado → Real (`reconcile.ts`)
+
+The plan is a suggestion; what was eaten is the truth. `logMeals` ties each meal
+(entries logged together) to the day's slot it belongs to, so every path — Coach,
+phone, web, barcode — gets it:
+
+1. the `slotId` given; 2. the slot holding its plan item; 3. the meal it was logged as
+(`comida` is lunch even at 16:00), unless trivial (< 50 kcal or drinks only); 4. the
+meal whose **window** holds `eatenAt`. Windows come from the person's meal times
+(calendar, else 08:00 / 11:00 / 14:00 / 17:30 / 20:30) and end 90 min before the next
+meal (halfway when closer): breakfast at 8 and lunch at 14 → breakfast until 12:30.
+
+- Under 250 kcal and not said to be a meal → an **extra**, except the first food of
+  the day in the first meal's window (breakfast skipped, a Vualá at 11:11 is breakfast).
+- A slot eaten as planned takes nothing more by inference; a skipped one only when the
+  entry says it is that meal. Later entries in a replaced meal's window join it.
+- Role: plan items (by id, or the same food name) → `planned`, else `replacement`;
+  the slot is `replaced` while anything eaten instead is tied to it. `offPlan` on an
+  entry is derived from that.
+- Inferred ties and replacements are revisions (`op: log`; undo unties, the entry
+  stays). Ticking the plan's own slot leaves none. Deleting or moving entries settles
+  the slot they leave: nothing tied → back to pending.
+- `meal_entry_pins` holds «eso fue un snack» (op `place` with `extra`): never tied
+  again. A one-off backfill (`nutrition_repairs`) ties loose entries of the last 14
+  laid-out days the first time a day is read.
 
 ## Adjustments and compensation (`adjust.ts`, `ops.ts`)
 
@@ -65,6 +92,8 @@ touches the same dates or batches. Undo itself is not a revision (no redo).
 |---|---|
 | `skip` (skip_slot) | the slot → skipped; optional compensation |
 | `replace` (replace_slot) | the slot → replaced, links entries, deviation = eaten − planned |
+| `ate_out` (ate_out) | logs an estimate (given, else planned × 1.3) as the slot's real meal; undo deletes it |
+| `place` (place_meal) | moves entries to another slot, or pins them as extras |
 | `rebalance` (rebalance_day / adjust_day_plan) | that day's overlay |
 | `spread` (spread_deviation) | shifts + overlays of the next N days |
 | `ingredient_unavailable` | without substitute: preview + pantry alternatives (same aisle). With one: items in affected planned slots; recipes and uncooked batches get a *variant* recipe (`variant_of`) |

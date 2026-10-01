@@ -22,6 +22,8 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   get_diet_horizon: "read",
   skip_slot: "write",
   replace_slot: "write",
+  ate_out: "write",
+  place_meal: "write",
   rebalance_day: "write",
   spread_deviation: "write",
   ingredient_unavailable: "write",

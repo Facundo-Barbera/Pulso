@@ -45,7 +45,7 @@ const SUMMARIES: Record<string, Summary> = {
   create_diet_plan: (p: DietPlan) => ({ title: "Plan de comidas creado", detail: `${p.name} · ${days(p.days.length)}`, tab: "dieta" }),
   set_targets: (t: NutritionTargets) => ({ title: "Objetivos de comida actualizados", detail: `${n(t.kcal)} kcal · ${n(t.protein)} g proteína`, tab: "dieta" }),
   log_meal: (entries: MealEntry[]) => ({
-    title: entries[0]?.offPlan ? "Comida fuera del plan registrada" : "Comida registrada",
+    title: "Comida registrada",
     detail: [
       entries[0]?.note ?? (entries.length === 1 ? entries[0]!.name : `${entries.length} alimentos`),
       `${n(entries.reduce((sum, e) => sum + e.kcal, 0))} kcal`,

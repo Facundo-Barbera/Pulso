@@ -37,7 +37,7 @@ test("summaries for the other creating tools, in Spanish", () => {
   });
   expect(summarizeResult("log_meal", blocks([{ name: "Avena", kcal: 230 }, { name: "Leche", kcal: 120 }]))?.detail).toBe("2 alimentos · 350 kcal");
   expect(summarizeResult("log_meal", blocks([{ name: "Big Mac", kcal: 590, offPlan: true, note: "Big Mac y papas", eatenAt: new Date(2030, 0, 1, 14, 5).getTime() }]))).toEqual({
-    title: "Comida fuera del plan registrada",
+    title: "Comida registrada",
     detail: "Big Mac y papas · 590 kcal · 14:05",
     tab: "dieta",
   });

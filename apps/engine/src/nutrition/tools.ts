@@ -17,7 +17,9 @@ const timeDescription = "Local time it happened, 'HH:MM' 24 h (e.g. '14:30'), or
 export const nutritionTools = [
   tool(
     "log_meal",
-    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Snacks and drinks between meals go in slot 'snack', at any hour, as many per day as happen. Drinks other than water never count toward the water goal. Set `at` to the time they said ('a las 14:30' → '14:30'), `description` to their own words, and `offPlan: true` when it was not what the active plan had for that meal (or there is no plan). For a planned item eaten as written pass its planItemId from get_active_plan. When there is an active plan, pass slotId (from get_diet_horizon) for the planned meal this eats or, with offPlan, replaces (a Vualá instead of breakfast → the breakfast slot); a snack on top of the plan has none. Returns the stored entries with their ids and slotId. Then decide by magnitude whether to compensate (rebalance_day, spread_deviation, or nothing).",
+    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Set `at` to the time they said ('a las 14:30' → '14:30') and `description` to their own words. Pick the item slot from what it was: the meal (desayuno, comida, cena…) for a main meal, 'snack' for snacks and drinks between meals. " +
+      "With an active plan every meal is tied to the plan automatically (Planeado → Real): the slot you pass, else the planned item it is (planItemId from get_active_plan, or the same food name), else the meal it was logged as, else the meal whose time window holds it; it then reads «eaten as planned» when it is the plan's food and «ate this instead» otherwise, and that is undoable. Snacks and drinks under ~250 kcal between meals stay extras; the first food of the day is breakfast. " +
+      "Pass slotId (get_diet_horizon) only when you know better than the time (e.g. breakfast eaten at 12:30). Each returned entry has slotId: the meal it became (null = extra). If that is wrong, fix it with place_meal. Then decide by magnitude whether to compensate (rebalance_day, spread_deviation, or nothing)",
     {
       items: z
         .array(z.object({ ...mealShape, planItemId: z.string().optional().describe("The active plan's item this fulfils, from get_active_plan") }))
@@ -27,8 +29,8 @@ export const nutritionTools = [
       at: z.string().max(40).optional().describe(timeDescription),
       date: dateString.optional().describe("Local day (YYYY-MM-DD) the meal counts toward. Defaults to the day of `at`, i.e. today"),
       description: z.string().trim().max(300).optional().describe("The person's own words for the meal, in Spanish, e.g. 'Big Mac y papas medianas en McDonald's'"),
-      offPlan: z.boolean().optional().describe("true when this was not the active plan's meal: eaten instead of it or on top of it"),
-      slotId: z.string().optional().describe("The plan slot (get_diet_horizon) this meal eats as planned, or replaces when offPlan"),
+      offPlan: z.boolean().optional().describe("Legacy, rarely needed: with slotId, counts the meal as eaten instead of that slot even if it matches the plan's foods. Whether a meal was the plan or not is worked out automatically"),
+      slotId: z.string().optional().describe("The plan slot (get_diet_horizon) this meal is, when the time alone would put it in the wrong meal. Omit otherwise"),
     },
     async ({ items, at, date, description, offPlan, slotId }) => {
       const when = at ? parseTime(at, date) : null;
@@ -58,7 +60,7 @@ export const nutritionTools = [
   ),
   tool(
     "list_meals",
-    "Logged food and drink entries between two local days (YYYY-MM-DD, inclusive), oldest first. Macros are totals per entry: kcal and grams. quantity + unit is the normalized amount (g, ml or serving); measure is the amount as the person said it (e.g. 2 lata, size null = 355 ml each), or null. caffeineMg and alcoholG when known. eatenAt is epoch ms; offPlan and note say whether it was off the plan and how the person described it. Defaults to today. Max 62 days.",
+    "Logged food and drink entries between two local days (YYYY-MM-DD, inclusive), oldest first. Macros are totals per entry: kcal and grams. quantity + unit is the normalized amount (g, ml or serving); measure is the amount as the person said it (e.g. 2 lata, size null = 355 ml each), or null. caffeineMg and alcoholG when known. eatenAt is epoch ms; slotId is the plan meal it is the real meal of (null = an extra), offPlan true when it was eaten instead of that meal, note how the person described it. Defaults to today. Max 62 days.",
     { from: dateString.optional(), to: dateString.optional() },
     async ({ from, to }) => {
       const start = from ?? localDate();

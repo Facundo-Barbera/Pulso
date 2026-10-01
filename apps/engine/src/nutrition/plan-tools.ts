@@ -5,10 +5,12 @@ import { localDate } from "./dates";
 import { dietHorizon, requirePlan } from "./horizon";
 import { dateString } from "./inputs";
 import {
+  ateOut,
   fillSlot,
   ingredientUnavailable,
   moveSlot,
   noTimeToCook,
+  placeEntries,
   prepCooked,
   rebalanceDay,
   replaceSlot,
@@ -50,14 +52,15 @@ export const planTools = [
   tool(
     "get_diet_horizon",
     "The active plan laid out as dated slots, from `from` (default today) for `days` (default the plan's horizon, usually 14): per day its slots (id, slot, kind items|recipe|prep|eat_out, name, items as planned, " +
-      "adjusted portions when the day was rebalanced, macros now in kcal and grams, status planned|eaten|replaced|skipped, what replaced it, cookMinutes), the day's planned total, goalKcal and shiftKcal; " +
+      "adjusted portions when the day was rebalanced, macros now in kcal and grams, status planned|eaten|replaced|skipped, real = what was actually eaten for it (label, entryIds, macros, asPlanned), " +
+      "missed = still pending well after its time with nothing logged («sin registrar»: ask, don't assume a skip), cookMinutes), the day's planned total, asPlanned (all the plan had) vs real (all logged) totals, extraIds (entries that are no meal), goalKcal and shiftKcal; " +
       "prep batches (portions, leftover = free portions, status); and lastRevision (the change undo_plan_change would undo). null without an active plan. Read it before changing anything.",
     { from: dateString.optional(), days: z.number().int().min(1).max(31).optional() },
     async ({ from, days }) => safely(() => dietHorizon(from, days)),
   ),
   tool(
     "skip_slot",
-    "The person skipped a planned meal and ate nothing instead. Marks that slot skipped. Then compensate by magnitude: 'none' for a minor slip (≲10 % of the day), 'day' to rebalance the rest of that day, " +
+    "The person skipped a planned meal and ate nothing instead ('no desayuné', 'me la salté'). Marks that slot skipped (use it for a meal shown missed once they confirm). Then compensate by magnitude: 'none' for a minor slip (≲10 % of the day), 'day' to rebalance the rest of that day, " +
       "'spread' to share a big gap over the next spreadDays days. Every day stays within maxChangePct (≤15 %) of its goal. " +
       CHANGE,
     opShapes.skip,
@@ -65,11 +68,28 @@ export const planTools = [
   ),
   tool(
     "replace_slot",
-    "The person ate something else INSTEAD of a planned meal. Log it first with log_meal (offPlan true, slotId = this slot — that alone marks it replaced), or pass the logged entryIds here. " +
-      "Marks the slot replaced and works out the difference in kcal; compensate by magnitude as with skip_slot ('none' when it is within ~10 % of the day). " +
+    "The person ate something else INSTEAD of a planned meal but you can't log it as food (they don't know what or how much): marks the slot replaced with `what`. " +
+      "When it can be logged, just log_meal it — that ties it to the meal by itself — and use this only to compensate, or pass logged entryIds to move them here. Works out the difference in kcal; compensate by magnitude as with skip_slot ('none' when it is within ~10 % of the day). " +
       CHANGE,
     opShapes.replace,
     async (input) => safely(() => replaceSlot(input)),
+  ),
+  tool(
+    "ate_out",
+    "The person ate out unexpectedly ('salí a cenar', 'comí en la calle') instead of a planned meal. Logs what they ate as that meal's real meal: name in their words and, when you can estimate it, kcal and grams " +
+      "(look restaurant food up as for log_meal); without kcal it counts the planned meal × 1.3. Refused when the meal already has entries (log_meal them instead). " +
+      "Then decide by magnitude (compensate none|day|spread). Planned meals that no longer make sense (tonight's quesadilla ingredients) can be moved with move_slot — suggest it, don't force it. " +
+      CHANGE,
+    opShapes.ate_out,
+    async (input) => safely(() => ateOut(input)),
+  ),
+  tool(
+    "place_meal",
+    "Fix which meal some logged entries were: 'eso fue mi desayuno' → slot desayuno (or slotId); 'eso fue un snack' → extra true, and it is never tied to a meal again. " +
+      "The meal they leave goes back to pending when nothing else is in it. entryIds from list_meals or log_meal, all of one day. " +
+      CHANGE,
+    opShapes.place,
+    async (input) => safely(() => placeEntries(input)),
   ),
   tool("rebalance_day", rebalanceDescription, opShapes.rebalance, async (input) => safely(() => rebalanceDay(input))),
   tool(
