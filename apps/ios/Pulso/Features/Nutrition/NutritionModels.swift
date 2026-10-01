@@ -78,6 +78,10 @@ struct MealEntry: Codable, Identifiable, Equatable {
     var source: String
     var barcode: String?
     var planItemId: String?
+    /// Eaten instead of, or on top of, the plan. Absent from older engines.
+    var offPlan: Bool?
+    /// The person's own words for the meal, when the Coach logged it.
+    var note: String?
 }
 
 /// What the phone posts to log a food. Macros are totals for `quantity`.
@@ -163,17 +167,58 @@ struct DietPlan: Codable, Identifiable, Equatable {
     var days: [DietPlanDay]
 }
 
+/// A remaining meal as the Coach rewrote it: portions scaled, or swapped for another dish.
+struct AdjustedMeal: Codable, Equatable {
+    var slot: MealSlot
+    var name: String?
+    var items: [DietPlanItem]
+    /// "scaled", "swapped" or "same".
+    var change: String
+}
+
+/// The Coach's rewrite of what is left of a day, on top of the unchanged plan.
+struct DayAdjustment: Codable, Equatable {
+    var date: String
+    var factor: Double
+    var meals: [AdjustedMeal]
+    var projected: NutritionMacros
+    var summary: String
+    var note: String?
+    var createdAt: Double
+}
+
 struct DietPlanForDay: Codable, Equatable {
     var plan: DietPlan
     var dayIndex: Int
     var day: DietPlanDay
     var eatenItemIds: [String]
+    var adjustment: DayAdjustment?
+
+    /// One plan meal as it should be eaten that day, and whether the Coach changed it.
+    struct Meal: Identifiable, Equatable {
+        var slot: MealSlot
+        var name: String?
+        var items: [DietPlanItem]
+        var change: String?
+        var id: String { slot.rawValue }
+        var adjusted: Bool { change == "scaled" || change == "swapped" }
+    }
+
+    /// The day's meals with the adjustment laid over them, in slot order.
+    var meals: [Meal] {
+        var bySlot = Dictionary(day.meals.map { ($0.slot, Meal(slot: $0.slot, name: $0.name, items: $0.items)) }, uniquingKeysWith: { a, _ in a })
+        for meal in adjustment?.meals ?? [] {
+            bySlot[meal.slot] = Meal(slot: meal.slot, name: meal.name ?? bySlot[meal.slot]?.name, items: meal.items, change: meal.change)
+        }
+        return MealSlot.allCases.compactMap { bySlot[$0] }
+    }
 }
 
 struct NutritionDay: Codable, Equatable {
     var summary: NutritionSummary
     var meals: [MealEntry]
     var plan: DietPlanForDay?
+    var water: WaterDay?
 }
 
 struct FoodProduct: Codable, Equatable, Identifiable {

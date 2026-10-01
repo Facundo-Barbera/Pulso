@@ -1,4 +1,4 @@
-/** Nutrition: meal log, daily targets, diet plans and barcode lookups. */
+/** Nutrition: meal log, daily targets, diet plans, day adjustments, water and barcode lookups. */
 
 export const MEAL_SLOTS = ["desayuno", "media_manana", "comida", "merienda", "cena", "snack"] as const;
 export type MealSlot = (typeof MEAL_SLOTS)[number];
@@ -27,9 +27,13 @@ export type MealEntry = Macros & {
   barcode: string | null;
   /** The plan item this entry fulfils, when logged from the plan. */
   planItemId: string | null;
+  /** True when the person ate it instead of, or on top of, the active plan. */
+  offPlan: boolean;
+  /** The person's own words for the meal, e.g. "Big Mac y papas medianas". */
+  note: string | null;
 };
 
-export type MealInput = Omit<MealEntry, "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId"> & {
+export type MealInput = Omit<MealEntry, "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "offPlan" | "note"> & {
   /** Defaults to now. */
   eatenAt?: number;
   /** Defaults to the local day of `eatenAt`. */
@@ -37,6 +41,8 @@ export type MealInput = Omit<MealEntry, "id" | "date" | "eatenAt" | "source" | "
   source?: MealSource;
   barcode?: string | null;
   planItemId?: string | null;
+  offPlan?: boolean;
+  note?: string | null;
 };
 
 export type NutritionTargets = Macros & { updatedAt: number };
@@ -76,8 +82,35 @@ export type DietPlanInput = {
   days: { label: string; meals: { slot: MealSlot; name?: string | null; items: Omit<PlanItem, "id">[] }[] }[];
 };
 
-/** The active plan as seen on one date: which day applies and which items are already logged. */
-export type PlanForDay = { plan: DietPlan; dayIndex: number; day: PlanDay; eatenItemIds: string[] };
+/** How an adjusted meal differs from the plan: portions scaled, or replaced by the Coach. */
+export type AdjustedMeal = PlanMeal & { change: "scaled" | "swapped" | "same" };
+
+/**
+ * The Coach's rewrite of what is left of one day, on top of the plan (which stays
+ * untouched). Scaled items keep their plan item id; swapped ones get new ids.
+ */
+export type DayAdjustment = {
+  date: string;
+  planId: string;
+  dayIndex: number;
+  /** Portion factor applied to the planned meals that were not swapped. */
+  factor: number;
+  /** The meals still ahead that day, as they should now be eaten. */
+  meals: AdjustedMeal[];
+  /** Eaten when the adjustment was made. */
+  eaten: Macros;
+  targets: Macros;
+  /** Where the day ends if the adjusted meals are eaten. */
+  projected: Macros;
+  /** One Spanish line, e.g. "Merienda y cena al 80 %. Cierras el día en 2.180 de 2.200 kcal." */
+  summary: string;
+  /** The Coach's reason, in Spanish. */
+  note: string | null;
+  createdAt: number;
+};
+
+/** The active plan as seen on one date: which day applies, which items are already logged, and the day's adjustment. */
+export type PlanForDay = { plan: DietPlan; dayIndex: number; day: PlanDay; eatenItemIds: string[]; adjustment: DayAdjustment | null };
 
 /** A packaged food from Open Food Facts. Macros per 100 g. */
 export type FoodProduct = {
@@ -90,8 +123,41 @@ export type FoodProduct = {
   imageUrl: string | null;
 };
 
+export const WATER_UNITS = ["ml", "vaso", "botella"] as const;
+/** How the person counts water: millilitres, glasses or bottles of their own sizes. */
+export type WaterUnit = (typeof WATER_UNITS)[number];
+
+export type WaterSettings = {
+  /** Daily goal in ml; null means derived (35 ml/kg of body weight, or 2000 ml). */
+  goalMl: number | null;
+  unit: WaterUnit;
+  glassMl: number;
+  bottleMl: number;
+};
+
+export type WaterEntry = {
+  id: string;
+  /** Local calendar day (YYYY-MM-DD). */
+  date: string;
+  /** Epoch ms. */
+  loggedAt: number;
+  amountMl: number;
+  source: "manual" | "agent";
+};
+
+export type WaterDay = {
+  date: string;
+  totalMl: number;
+  goalMl: number;
+  /** Where goalMl came from. */
+  goalSource: "custom" | "weight" | "default";
+  /** Oldest first. */
+  entries: WaterEntry[];
+  settings: WaterSettings;
+};
+
 /** Everything the Dieta tab draws for one day, in one request. */
-export type NutritionDay = { summary: DailySummary; meals: MealEntry[]; plan: PlanForDay | null };
+export type NutritionDay = { summary: DailySummary; meals: MealEntry[]; plan: PlanForDay | null; water: WaterDay };
 
 /** A food the person logs often, for quick add. Macros are per one logged `quantity`. */
 export type FrequentFood = Macros & { name: string; quantity: number; unit: QuantityUnit; slot: MealSlot; barcode: string | null; count: number };

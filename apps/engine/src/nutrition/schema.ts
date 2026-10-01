@@ -1,4 +1,4 @@
-/** Meal log, daily targets (single row), diet plans and the Open Food Facts cache. */
+/** Meal log, daily targets (single row), diet plans and their day adjustments, water, and the Open Food Facts cache. */
 export const NUTRITION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS meal_entries (
     id TEXT PRIMARY KEY,
@@ -40,5 +40,32 @@ export const NUTRITION_SCHEMA = `
     barcode TEXT PRIMARY KEY,
     product_json TEXT,
     fetched_at INTEGER NOT NULL
+  );
+  -- A side table rather than new meal_entries columns, so the schema stays CREATE-only.
+  CREATE TABLE IF NOT EXISTS meal_entry_context (
+    entry_id TEXT PRIMARY KEY REFERENCES meal_entries (id) ON DELETE CASCADE,
+    off_plan INTEGER NOT NULL DEFAULT 0,
+    note TEXT
+  );
+  CREATE TABLE IF NOT EXISTS plan_adjustments (
+    date TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    adjustment_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS water_entries (
+    id TEXT PRIMARY KEY,
+    date TEXT NOT NULL,
+    logged_at INTEGER NOT NULL,
+    amount_ml REAL NOT NULL,
+    source TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS water_entries_date ON water_entries (date, logged_at);
+  CREATE TABLE IF NOT EXISTS water_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    goal_ml REAL,
+    unit TEXT NOT NULL,
+    glass_ml REAL NOT NULL,
+    bottle_ml REAL NOT NULL
   );
 `;

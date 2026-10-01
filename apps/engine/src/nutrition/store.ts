@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   DailySummary,
+  DayAdjustment,
   DietPlan,
   DietPlanInput,
   FrequentFood,
@@ -15,25 +16,16 @@ import type {
   PlanForDay,
 } from "@pulso/contract";
 import { db } from "../db";
+import { addDays, DAY_MS, daysBetween, localDate } from "./dates";
+import { waterDay } from "./water";
 
-const DAY_MS = 86_400_000;
-const MACRO_KEYS = ["kcal", "protein", "carbs", "fat", "fiber"] as const;
+export { addDays, localDate };
 
-/** The engine's local calendar day for an instant. The Mac and the phone share a timezone. */
-export function localDate(ms = Date.now()): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+export const MACRO_KEYS = ["kcal", "protein", "carbs", "fat", "fiber"] as const;
 
-export function addDays(date: string, days: number): string {
-  return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
-}
-
-const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
-
-const zero = (): Macros => ({ kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
-const round = (m: Macros): Macros => Object.fromEntries(MACRO_KEYS.map((k) => [k, Math.round(m[k] * 10) / 10])) as Macros;
-function add(into: Macros, m: Macros): Macros {
+export const zero = (): Macros => ({ kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+export const round = (m: Macros): Macros => Object.fromEntries(MACRO_KEYS.map((k) => [k, Math.round(m[k] * 10) / 10])) as Macros;
+export function add(into: Macros, m: Macros): Macros {
   for (const k of MACRO_KEYS) into[k] += m[k];
   return into;
 }
@@ -56,6 +48,8 @@ type MealRow = {
   source: MealSource;
   barcode: string | null;
   plan_item_id: string | null;
+  off_plan: number | null;
+  note: string | null;
 };
 
 const toEntry = (r: MealRow): MealEntry => ({
@@ -74,6 +68,8 @@ const toEntry = (r: MealRow): MealEntry => ({
   source: r.source,
   barcode: r.barcode,
   planItemId: r.plan_item_id,
+  offPlan: r.off_plan === 1,
+  note: r.note,
 });
 
 export function logMeal(input: MealInput, source: MealSource = input.source ?? "manual"): MealEntry {
@@ -94,6 +90,8 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
     source,
     barcode: input.barcode ?? null,
     planItemId: input.planItemId ?? null,
+    offPlan: input.offPlan ?? false,
+    note: input.note?.trim() || null,
   };
   db()
     .query(
@@ -104,6 +102,9 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
       entry.id, entry.date, entry.eatenAt, entry.slot, entry.name, entry.quantity, entry.unit,
       entry.kcal, entry.protein, entry.carbs, entry.fat, entry.fiber, entry.source, entry.barcode, entry.planItemId,
     );
+  if (entry.offPlan || entry.note) {
+    db().query("INSERT INTO meal_entry_context (entry_id, off_plan, note) VALUES (?, ?, ?)").run(entry.id, entry.offPlan ? 1 : 0, entry.note);
+  }
   return entry;
 }
 
@@ -118,7 +119,10 @@ export function deleteMeal(id: string): boolean {
 /** Entries from `from` to `to` inclusive (YYYY-MM-DD), in eating order. */
 export function listMeals(from: string, to: string = from): MealEntry[] {
   return db()
-    .query<MealRow, [string, string]>("SELECT * FROM meal_entries WHERE date BETWEEN ? AND ? ORDER BY date, eaten_at")
+    .query<MealRow, [string, string]>(
+      `SELECT m.*, c.off_plan, c.note FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id
+       WHERE m.date BETWEEN ? AND ? ORDER BY m.date, m.eaten_at`,
+    )
     .all(from, to)
     .map(toEntry);
 }
@@ -249,14 +253,20 @@ export function planForDay(date: string, meals: MealEntry[] = listMeals(date)): 
   const dayIndex = planDayIndex(plan, date);
   const eaten = new Set(meals.map((m) => m.planItemId).filter((id): id is string => id !== null));
   const day = plan.days[dayIndex]!;
-  const eatenItemIds = day.meals.flatMap((m) => m.items.map((i) => i.id)).filter((id) => eaten.has(id));
-  return { plan, dayIndex, day, eatenItemIds };
+  const adjustment = getAdjustment(date, plan.id);
+  const ids = new Set([day, adjustment ?? { meals: [] }].flatMap((d) => d.meals.flatMap((m) => m.items.map((i) => i.id))));
+  const eatenItemIds = [...ids].filter((id) => eaten.has(id));
+  return { plan, dayIndex, day, eatenItemIds, adjustment };
 }
 
-/** Logs a plan item of the active plan as eaten. Undefined when the item is not in it. */
+/**
+ * Logs a plan item as eaten on `date`: the day's adjusted portion when the Coach
+ * adjusted it, else the active plan's. Undefined when the item is in neither.
+ */
 export function eatPlanItem(itemId: string, date = localDate(), eatenAt?: number): MealEntry | undefined {
   const plan = activePlan();
-  for (const day of plan?.days ?? []) {
+  const adjusted = plan ? getAdjustment(date, plan.id) : null;
+  for (const day of [...(adjusted ? [adjusted] : []), ...(plan?.days ?? [])]) {
     for (const meal of day.meals) {
       const item = meal.items.find((i) => i.id === itemId);
       if (!item) continue;
@@ -267,7 +277,32 @@ export function eatPlanItem(itemId: string, date = localDate(), eatenAt?: number
   return undefined;
 }
 
+// --- Day adjustments (the Coach's rewrite of what is left of a day; see ./adjust.ts) ---
+
+/** The adjustment for `date`, if it was made on top of `planId` (a newer plan voids it). */
+export function getAdjustment(date: string, planId: string): DayAdjustment | null {
+  const row = db()
+    .query<{ adjustment_json: string }, [string, string]>("SELECT adjustment_json FROM plan_adjustments WHERE date = ? AND plan_id = ?")
+    .get(date, planId);
+  return row ? (JSON.parse(row.adjustment_json) as DayAdjustment) : null;
+}
+
+export function saveAdjustment(adjustment: DayAdjustment): DayAdjustment {
+  db()
+    .query(
+      `INSERT INTO plan_adjustments (date, plan_id, adjustment_json, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (date) DO UPDATE SET plan_id = excluded.plan_id, adjustment_json = excluded.adjustment_json, created_at = excluded.created_at`,
+    )
+    .run(adjustment.date, adjustment.planId, JSON.stringify(adjustment), adjustment.createdAt);
+  return adjustment;
+}
+
+/** Back to the plan as written for `date`. */
+export function clearAdjustment(date: string): boolean {
+  return db().query("DELETE FROM plan_adjustments WHERE date = ?").run(date).changes > 0;
+}
+
 export function nutritionDay(date: string): NutritionDay {
   const meals = listMeals(date);
-  return { summary: summarize(date, meals, getTargets()), meals, plan: planForDay(date, meals) };
+  return { summary: summarize(date, meals, getTargets()), meals, plan: planForDay(date, meals), water: waterDay(date) };
 }

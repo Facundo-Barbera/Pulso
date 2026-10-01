@@ -51,3 +51,77 @@ final class NutritionTests: XCTestCase {
         XCTAssertFalse(AdherenceChart.onTarget(day(2300)))
     }
 }
+
+final class WaterTests: XCTestCase {
+    private let settings = WaterSettings(goalMl: nil, unit: .vaso, glassMl: 250, bottleMl: 750)
+
+    func testCountsInThePersonsUnit() {
+        XCTAssertEqual(settings.count(750), 3)
+        XCTAssertEqual(settings.count(750, in: .botella), 1)
+        XCTAssertEqual(settings.count(330, in: .ml), 330)
+        XCTAssertEqual(settings.ml(per: .botella), 750)
+    }
+
+    func testFormatsGlassesBottlesAndLitres() {
+        XCTAssertEqual(settings.format(250), "1 vaso")
+        XCTAssertEqual(settings.format(2_750), "11 vasos")
+        // Decimals follow the phone's locale ("1,5" in Spanish).
+        XCTAssertEqual(settings.format(1_125, in: .botella), "\(1.5.formatted()) botellas")
+        XCTAssertEqual(settings.format(600), "\(2.5.formatted()) vasos") // 2.4 rounds to the nearest half
+        XCTAssertEqual(WaterSettings.litres(330), "330 ml")
+        XCTAssertEqual(WaterSettings.litres(1_250), "\(1.25.formatted()) L")
+        XCTAssertEqual(WaterSettings.litres(2_000), "2 L")
+    }
+
+    func testPresetsUseTheirSizesAndAddALitre() {
+        XCTAssertEqual(WaterPreset.presets(settings).map(\.ml), [250, 750, 1_000])
+        var litreBottle = settings
+        litreBottle.bottleMl = 1_000
+        XCTAssertEqual(WaterPreset.presets(litreBottle).map(\.ml), [250, 1_000])
+    }
+
+    func testDecodesTheWaterDayAndProgress() throws {
+        let json = #"""
+        {"date":"2026-10-01","totalMl":1500,"goalMl":2000,"goalSource":"weight",
+         "entries":[{"id":"w1","date":"2026-10-01","loggedAt":1,"amountMl":1500,"source":"agent"}],
+         "settings":{"goalMl":null,"unit":"botella","glassMl":250,"bottleMl":500}}
+        """#
+        let day = try JSONDecoder().decode(WaterDay.self, from: Data(json.utf8))
+        XCTAssertEqual(day.settings.unit, .botella)
+        XCTAssertNil(day.settings.goalMl)
+        XCTAssertEqual(day.progress, 0.75)
+        XCTAssertEqual(day.leftMl, 500)
+    }
+
+    func testAdjustmentReplacesPlannedMealsBySlot() {
+        let item = { (id: String, kcal: Double) in DietPlanItem(id: id, name: id, quantity: 100, unit: .g, kcal: kcal, protein: 0, carbs: 0, fat: 0, fiber: 0) }
+        let day = DietPlanDay(label: "A", meals: [
+            DietPlanMeal(slot: .comida, name: "Pollo", items: [item("c", 700)]),
+            DietPlanMeal(slot: .cena, name: "Salmón", items: [item("n", 600)]),
+        ])
+        let plan = DietPlan(id: "p", name: "Plan", notes: nil, startsOn: "2026-10-01", active: true, createdAt: 0, days: [day])
+        let adjustment = DayAdjustment(date: "2026-10-01", factor: 0.5,
+                                       meals: [AdjustedMeal(slot: .cena, name: nil, items: [item("n", 300)], change: "scaled")],
+                                       projected: .zero, summary: "", note: nil, createdAt: 0)
+        let meals = DietPlanForDay(plan: plan, dayIndex: 0, day: day, eatenItemIds: [], adjustment: adjustment).meals
+        XCTAssertEqual(meals.map(\.slot), [.comida, .cena])
+        XCTAssertFalse(meals[0].adjusted)
+        XCTAssertTrue(meals[1].adjusted)
+        XCTAssertEqual(meals[1].name, "Salmón") // keeps the planned dish name when only portions changed
+        XCTAssertEqual(meals[1].items.first?.kcal, 300)
+    }
+
+    func testWeekAveragesCountOnlyLoggedDays() {
+        let targets = NutritionTargets(kcal: 2000, protein: 150, carbs: 0, fat: 0, fiber: 0)
+        func day(_ kcal: Double, entries: Int) -> NutritionSummary {
+            NutritionSummary(date: "2026-10-01", totals: NutritionMacros(kcal: kcal, protein: kcal / 20, carbs: 0, fat: 0, fiber: 0),
+                             targets: targets, remaining: nil, bySlot: [:], entries: entries)
+        }
+        let averages = WeekAverages(week: [day(2000, entries: 2), day(3000, entries: 1), day(0, entries: 0)], water: ["a": 1000, "b": 2000])
+        XCTAssertEqual(averages.kcal, 2500)
+        XCTAssertEqual(averages.protein, 125)
+        XCTAssertEqual(averages.onTarget, 1)
+        XCTAssertEqual(averages.logged, 2)
+        XCTAssertEqual(averages.waterMl, 1500)
+    }
+}

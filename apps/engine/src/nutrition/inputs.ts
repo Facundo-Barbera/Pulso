@@ -2,7 +2,7 @@
  * Zod shapes shared by the agent tools (which take raw shapes) and the phone
  * routes (which parse untrusted bodies with `z.object(shape)`).
  */
-import { MEAL_SLOTS } from "@pulso/contract";
+import { MEAL_SLOTS, WATER_UNITS } from "@pulso/contract";
 import { z } from "zod";
 
 export const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
@@ -31,7 +31,7 @@ export const mealShape = {
 };
 export const mealSchema = z.object(mealShape);
 
-const planItem = z.object({
+export const planItem = z.object({
   name: z.string().trim().min(1).max(120),
   quantity: z.number().positive().max(10000),
   unit,
@@ -73,3 +73,10 @@ export const targetsShape = {
   fiber: grams.optional().describe("Daily fiber in grams. Defaults to 14 g per 1000 kcal"),
 };
 export const targetsSchema = z.object(targetsShape);
+
+export const waterSettingsSchema = z.object({
+  goalMl: z.number().min(250).max(10000).nullable().optional(),
+  unit: z.enum(WATER_UNITS).optional(),
+  glassMl: z.number().min(50).max(1000).optional(),
+  bottleMl: z.number().min(100).max(3000).optional(),
+});

@@ -13,6 +13,7 @@ enum Theme {
     static let energy = Color(red: 0.98, green: 0.45, blue: 0.20)
     static let training = Color(red: 0.55, green: 0.42, blue: 0.98)
     static let body = Color(red: 0.20, green: 0.78, blue: 0.62)
+    static let water = Color(red: 0.22, green: 0.70, blue: 0.95)
 
     /// The app icon's gradient (Branding/pulso-icon.svg): onboarding, the brand mark, rare hero moments.
     static let brand = [

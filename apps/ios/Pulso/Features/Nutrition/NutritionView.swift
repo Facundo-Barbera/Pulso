@@ -1,55 +1,68 @@
 import SwiftUI
 
-/// The Dieta tab: the macro hero, the active plan with "comido" taps, the
-/// day's meals by slot (swipe or long-press to delete), and 7-day adherence.
-/// Adding food lives in a floating glass bar.
+/// The Dieta tab, in three parts under a sticky day header:
+/// Hoy (macros, water, what's left, the day's meals), Plan (the plan as the
+/// Coach adjusted it, with "comido" ticks) and Progreso (the week).
+/// Adding food lives in a floating glass bar on Hoy.
 struct NutritionView: View {
     let model: PulsoModel
     @State private var store = NutritionStore()
+    @State private var section = DietSection.hoy
     @State private var sheet: Sheet?
     @State private var toast: String?
     @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
-        case quickAdd, scan, targets
+        case quickAdd, scan, targets, water, waterAmount
         var id: String { rawValue }
     }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                if let day = store.day {
-                    content(day)
-                } else if store.loading {
-                    ProgressView().controlSize(.large).padding(.top, 120)
-                } else {
-                    ContentUnavailableView {
-                        Label("Sin conexión con la Mac", systemImage: "fork.knife.circle")
-                    } description: {
-                        Text("No se pudo cargar tu dieta.")
-                    } actions: {
-                        Button("Reintentar") { Task { await store.load() } }.buttonStyle(.glassProminent)
+            LazyVStack(spacing: 16, pinnedViews: [.sectionHeaders]) {
+                Section {
+                    if let day = store.day {
+                        content(day)
+                    } else if store.loading {
+                        ProgressView().controlSize(.large).padding(.top, 120)
+                    } else {
+                        EmptyStateView(systemImage: "fork.knife.circle", title: "Sin conexión con la Mac",
+                                       message: "No se pudo cargar tu dieta.", tint: Theme.energy, actionTitle: "Reintentar") {
+                            Task { await store.load() }
+                        }
+                        .padding(.top, 40)
                     }
-                    .padding(.top, 60)
+                } header: {
+                    DayHeader(store: store, section: $section)
                 }
             }
             .padding(.horizontal)
             // The add bar is a safe-area inset, so the scroll already ends above it.
             .padding(.bottom, 24)
             .animation(.snappy, value: store.day)
+            .animation(.snappy, value: section)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Dieta")
-        .navigationSubtitle(subtitle)
         .toolbar { toolbar }
         .refreshable { await store.load() }
         .task { await store.load() }
-        .safeAreaInset(edge: .bottom) { addBar }
+        .safeAreaInset(edge: .bottom) {
+            if section == .hoy { addBar.transition(.move(edge: .bottom).combined(with: .opacity)) }
+        }
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { sheet in
             switch sheet {
             case .quickAdd: QuickAddView(store: store).presentationDetents([.medium, .large])
             case .scan: BarcodeScanView(store: store).presentationDetents([.large])
             case .targets: TargetsView(store: store).presentationDetents([.medium, .large])
+            case .water:
+                if let water = store.water {
+                    WaterSettingsSheet(water: water) { settings in Task { await store.saveWaterSettings(settings) } }
+                        .presentationDetents([.medium, .large])
+                }
+            case .waterAmount:
+                WaterAmountSheet(settings: store.water?.settings ?? .standard) { ml in Task { await store.addWater(ml: ml) } }
+                    .presentationDetents([.height(280)])
             }
         }
         .overlay(alignment: .top) {
@@ -64,55 +77,39 @@ struct NutritionView: View {
             }
         }
         .sensoryFeedback(.success, trigger: store.day?.meals.count ?? 0) { old, new in new > old }
+        .sensoryFeedback(.selection, trigger: section)
     }
 
     @ViewBuilder
     private func content(_ day: NutritionDay) -> some View {
-        Card {
-            MacroHero(summary: day.summary) { sheet = .targets }
-                .padding(.vertical, 6)
+        switch section {
+        case .hoy:
+            NutritionTodaySection(day: day, store: store, sheet: $sheet, showPlan: { section = .plan },
+                                  copyPrevious: { Task { await copyPrevious() } }, draftForCoach: { askCoach($0, send: false) })
+                .transition(.opacity)
+        case .plan:
+            NutritionPlanSection(day: day, store: store, askCoach: { askCoach($0) })
+                .transition(.opacity)
+        case .progreso:
+            NutritionProgressSection(week: store.week, water: store.weekWater, settings: day.water?.settings ?? .standard,
+                                     waterGoal: day.water?.goalMl)
+                .transition(.opacity)
         }
-        if let plan = day.plan {
-            PlanCard(plan: plan, store: store)
-        }
-        if day.meals.isEmpty {
-            emptyDay
-        } else {
-            ForEach(MealSlot.allCases) { slot in
-                let meals = store.meals(in: slot)
-                if !meals.isEmpty {
-                    SlotCard(slot: slot, meals: meals, totals: day.summary.bySlot[slot.rawValue]) { meal in
-                        Task { await store.delete(meal) }
-                    }
-                }
-            }
-        }
-        if store.week.contains(where: { $0.entries > 0 }) {
-            Card { AdherenceChart(days: store.week) }
-        }
-    }
-
-    private var subtitle: String {
-        if store.isToday { return "Hoy" }
-        return store.date.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarLeading) {
-            Button("Día anterior", systemImage: "chevron.left") { Task { await store.shift(days: -1) } }
-            Button("Día siguiente", systemImage: "chevron.right") { Task { await store.shift(days: 1) } }
-                .disabled(store.isToday)
-        }
         ToolbarItem(placement: .topBarTrailing) {
             Menu("Más", systemImage: "ellipsis") {
                 Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }
                 Button("Objetivos diarios", systemImage: "target") { sheet = .targets }
+                Button("Ajustes de agua", systemImage: "drop") { sheet = .water }
+                    .disabled(store.water == nil)
             }
         }
     }
 
-    /// The glass quick-add bar floating over the content. At large text the scan
+    /// The glass quick-add bar floating over Hoy. At large text the scan
     /// button drops its title so both still fit a 375 pt phone.
     private var addBar: some View {
         GlassEffectContainer(spacing: 12) {
@@ -149,34 +146,6 @@ struct NutritionView: View {
         }
     }
 
-    private var emptyDay: some View {
-        Card {
-            VStack(spacing: 12) {
-                Image(systemName: "fork.knife.circle.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(Theme.energy.gradient)
-                    .symbolEffect(.bounce, value: store.dateKey)
-                Text(store.isToday ? "Aún no registraste nada hoy" : "Nada registrado este día")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                // Side by side these need ~410 pt; a 375 pt card has ~310, so they stack.
-                AdaptiveStack {
-                    Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }
-                        .buttonStyle(.glass)
-                    if store.day?.plan == nil {
-                        Button("Plan con el Coach", systemImage: "sparkles") {
-                            askCoach("Arma mi plan de comidas según mis objetivos y preferencias")
-                        }
-                        .buttonStyle(.glassProminent)
-                    }
-                }
-                .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-        }
-    }
-
     private func copyPrevious() async {
         let copied = await store.copyPreviousDay()
         show(copied == 0 ? "El día anterior está vacío" : "\(copied) alimentos copiados")
@@ -191,232 +160,90 @@ struct NutritionView: View {
     }
 }
 
-/// One meal slot's entries.
-private struct SlotCard: View {
-    let slot: MealSlot
-    let meals: [MealEntry]
-    let totals: NutritionMacros?
-    let onDelete: (MealEntry) -> Void
+enum DietSection: String, CaseIterable, Identifiable {
+    case hoy, plan, progreso
+    var id: String { rawValue }
 
-    var body: some View {
-        Card {
-            HStack {
-                CardTitle(text: slot.title, systemImage: slot.systemImage)
-                Spacer()
-                if let totals {
-                    Text("\(Int(totals.kcal)) kcal")
-                        .font(.caption.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
-                        .foregroundStyle(.secondary)
-                        .contentTransition(.numericText(value: totals.kcal))
-                }
-            }
-            ForEach(meals) { meal in
-                SwipeToDelete { onDelete(meal) } content: {
-                    MealRow(meal: meal)
-                }
-                if meal.id != meals.last?.id { Divider() }
-            }
+    var title: String {
+        switch self {
+        case .hoy: "Hoy"
+        case .plan: "Plan"
+        case .progreso: "Progreso"
         }
     }
 }
 
-private struct MealRow: View {
-    let meal: MealEntry
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    Text(meal.name).font(.body.weight(.medium)).lineLimit(2)
-                    if let icon = sourceIcon {
-                        Image(systemName: icon).font(.caption2).foregroundStyle(.tertiary)
-                    }
-                }
-                HStack(spacing: 6) {
-                    Text(foodQuantityText(meal.quantity, meal.unit))
-                    Text("·")
-                    Text(Date(timeIntervalSince1970: meal.eatenAt / 1000), format: .dateTime.hour().minute())
-                }
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            // The numbers keep their width; a long food name wraps instead.
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("\(Int(meal.kcal)) kcal").font(.subheadline.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
-                MacroLine(macros: meal.macros)
-            }
-            .lineLimit(1)
-            .layoutPriority(1)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-    }
-
-    private var sourceIcon: String? {
-        switch meal.source {
-        case "barcode": "barcode"
-        case "plan": "list.bullet.clipboard"
-        case "agent": "sparkles"
-        default: nil
-        }
-    }
-}
-
-/// Swipe left to reveal a delete button; long-press offers it too.
-private struct SwipeToDelete<Content: View>: View {
-    let onDelete: () -> Void
-    @ViewBuilder var content: Content
-    @State private var offset: CGFloat = 0
-    private let reveal: CGFloat = 76
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            Button(role: .destructive) {
-                withAnimation(.snappy) { offset = 0 }
-                onDelete()
-            } label: {
-                Image(systemName: "trash.fill").font(.body.weight(.semibold)).frame(width: 52, height: 40)
-            }
-            .buttonStyle(.glassProminent)
-            .tint(.red)
-            .opacity(offset < -8 ? 1 : 0)
-
-            content
-                .background(Color(.secondarySystemGroupedBackground))
-                .offset(x: offset)
-                .gesture(
-                    DragGesture(minimumDistance: 20)
-                        .onChanged { value in
-                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                            offset = min(0, max(-reveal - 30, value.translation.width + (offset < 0 ? -reveal : 0)))
-                        }
-                        .onEnded { value in
-                            withAnimation(.snappy) { offset = value.translation.width < -reveal / 2 ? -reveal : 0 }
-                        }
-                )
-        }
-        .contextMenu {
-            Button("Eliminar", systemImage: "trash", role: .destructive, action: onDelete)
-        }
-        .sensoryFeedback(.impact(weight: .light), trigger: offset == -reveal)
-    }
-}
-
-/// The active plan's day: meals with their items, each with a "comido" tap.
-private struct PlanCard: View {
-    let plan: DietPlanForDay
+/// Pinned above the content: the day with its arrows (tap the day to go back
+/// to today) and the Hoy · Plan · Progreso switch.
+private struct DayHeader: View {
     let store: NutritionStore
-    @State private var expanded = true
+    @Binding var section: DietSection
 
-    private var items: [DietPlanItem] { plan.day.meals.flatMap(\.items) }
-    private var eatenCount: Int { items.filter { store.isEaten($0) }.count }
-    private var done: Bool { !items.isEmpty && eatenCount == items.count }
-
-    var body: some View {
-        Card {
-            Button { withAnimation(.snappy) { expanded.toggle() } } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        CardTitle(text: "Plan · \(plan.day.label)", systemImage: "list.bullet.clipboard")
-                        Text(plan.plan.name).font(.headline).foregroundStyle(.primary).lineLimit(2)
-                    }
-                    Spacer(minLength: 8)
-                    Gauge(value: Double(eatenCount), in: 0...Double(max(items.count, 1))) {
-                        EmptyView()
-                    } currentValueLabel: {
-                        Text("\(eatenCount)/\(items.count)").fontDesign(.rounded)
-                    }
-                    .gaugeStyle(.accessoryCircularCapacity)
-                    .tint(Theme.body)
-                    .scaleEffect(0.8)
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(expanded ? 0 : -90))
-                }
-            }
-            .buttonStyle(.plain)
-
-            if expanded {
-                if let notes = plan.plan.notes, !notes.isEmpty {
-                    Text(notes).font(.footnote).foregroundStyle(.secondary)
-                }
-                ForEach(Array(plan.day.meals.enumerated()), id: \.offset) { _, meal in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(meal.name ?? meal.slot.title, systemImage: meal.slot.systemImage)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(meal.items) { item in
-                            PlanItemRow(item: item, eaten: store.isEaten(item)) {
-                                Task { await store.eat(item) }
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-            }
-        }
-        .sensoryFeedback(.success, trigger: done) { _, new in new }
+    private var dayTitle: String {
+        if store.isToday { return "Hoy" }
+        if Calendar.current.isDateInYesterday(store.date) { return "Ayer" }
+        return store.date.formatted(.dateTime.weekday(.wide)).capitalized
     }
-}
-
-private struct PlanItemRow: View {
-    let item: DietPlanItem
-    let eaten: Bool
-    let onEat: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.name).strikethrough(eaten, color: .secondary).foregroundStyle(eaten ? .secondary : .primary)
-                // "1,5 porciones · 1.250 kcal" plus the macros is wider than a 375 pt card: macros go below.
-                AdaptiveStack(horizontalAlignment: .leading, spacing: 6) {
-                    Text("\(foodQuantityText(item.quantity, item.unit)) · \(Int(item.kcal)) kcal")
-                    MacroLine(macros: item.macros)
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                arrow("Día anterior", "chevron.left", days: -1)
+                Spacer(minLength: 4)
+                Button { Task { await store.goToToday() } } label: {
+                    VStack(spacing: 0) {
+                        Text(dayTitle).font(.headline)
+                            .contentTransition(.interpolate)
+                        Text(store.date.formatted(.dateTime.day().month(.wide)))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 }
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1)
+                .buttonStyle(.plain)
+                .disabled(store.isToday)
+                .accessibilityHint(store.isToday ? "" : "Vuelve a hoy")
+                Spacer(minLength: 4)
+                arrow("Día siguiente", "chevron.right", days: 1)
+                    .disabled(store.isToday)
             }
-            Spacer(minLength: 8)
-            Button(action: onEat) {
-                Image(systemName: eaten ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(eaten ? Theme.body : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: eaten)
+            Picker("Sección", selection: $section) {
+                ForEach(DietSection.allCases) { Text($0.title).tag($0) }
             }
-            .buttonStyle(.plain)
-            .disabled(eaten)
-            .accessibilityLabel(eaten ? "Comido" : "Marcar como comido")
+            .pickerStyle(.segmented)
         }
+        .padding(10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 24))
+        .padding(.top, 4)
+        .animation(.snappy, value: store.dateKey)
+        .sensoryFeedback(.selection, trigger: store.dateKey)
+    }
+
+    private func arrow(_ title: String, _ symbol: String, days: Int) -> some View {
+        Button { Task { await store.shift(days: days) } } label: {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .frame(width: 40, height: 40)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }
 
 // MARK: - Previews
 
-private let previewMeals = [
-    MealEntry(id: "1", date: "2026-10-01", eatenAt: 1_790_838_000_000, slot: .comida, name: "Pechuga de pollo a la plancha con arroz integral y verduras salteadas",
-              quantity: 1.5, unit: .serving, kcal: 1_248, protein: 96, carbs: 142, fat: 31, fiber: 9, source: "plan"),
-    MealEntry(id: "2", date: "2026-10-01", eatenAt: 1_790_839_000_000, slot: .comida, name: "Yogur griego natural",
-              quantity: 250, unit: .g, kcal: 245, protein: 22.5, carbs: 10, fat: 12.5, fiber: 0, source: "barcode"),
-]
-
-private let previewSummary = NutritionSummary(
+let previewNutritionSummary = NutritionSummary(
     date: "2026-10-01",
-    totals: NutritionMacros(kcal: 2_874, protein: 186, carbs: 312, fat: 104, fiber: 31),
-    targets: NutritionTargets(kcal: 2_400, protein: 160, carbs: 280, fat: 80, fiber: 30),
-    bySlot: ["comida": NutritionMacros(kcal: 1_493, protein: 118.5, carbs: 152, fat: 43.5, fiber: 9)],
-    entries: 2
+    totals: NutritionMacros(kcal: 1_510, protein: 74, carbs: 158, fat: 64, fiber: 14),
+    targets: NutritionTargets(kcal: 2_200, protein: 160, carbs: 230, fat: 70, fiber: 30),
+    remaining: NutritionMacros(kcal: 690, protein: 86, carbs: 72, fat: 6, fiber: 16),
+    bySlot: ["comida": NutritionMacros(kcal: 910, protein: 29, carbs: 88, fat: 49, fiber: 7)],
+    entries: 3
 )
 
-#Preview("Dieta · 375 pt · XXL") {
+#Preview("Cabecera · 375 pt · XXL") {
     NarrowPreview(dynamicType: .xxLarge) {
-        Card { MacroHero(summary: previewSummary) {} }
-        SlotCard(slot: .comida, meals: previewMeals, totals: previewSummary.bySlot["comida"]) { _ in }
-        Card {
-            PlanItemRow(item: DietPlanItem(id: "p1", name: "Avena con plátano, nueces y miel", quantity: 1.5, unit: .serving,
-                                           kcal: 1_250, protein: 32, carbs: 168, fat: 41, fiber: 12), eaten: false) {}
-        }
-        Card { AdherenceChart(days: [previewSummary]) }
+        DayHeader(store: NutritionStore(), section: .constant(.plan))
     }
 }

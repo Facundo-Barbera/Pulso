@@ -36,6 +36,17 @@ test("summaries for the other creating tools, in Spanish", () => {
     tab: "dieta",
   });
   expect(summarizeResult("log_meal", blocks([{ name: "Avena", kcal: 230 }, { name: "Leche", kcal: 120 }]))?.detail).toBe("2 alimentos · 350 kcal");
+  expect(summarizeResult("log_meal", blocks([{ name: "Big Mac", kcal: 590, offPlan: true, note: "Big Mac y papas", eatenAt: new Date(2030, 0, 1, 14, 5).getTime() }]))).toEqual({
+    title: "Comida fuera del plan registrada",
+    detail: "Big Mac y papas · 590 kcal · 14:05",
+    tab: "dieta",
+  });
+  expect(summarizeResult("adjust_day_plan", blocks({ stored: true, summary: "Cena al 60 %. Cierras el día en 2000 de 2000 kcal y 150 de 150 g de proteína." }))).toEqual({
+    title: "Plan de hoy ajustado",
+    detail: "Cena al 60 %. Cierras el día en 2000 de 2000 kcal y 150 de 150 g de proteína.",
+    tab: "dieta",
+  });
+  expect(summarizeResult("log_water", blocks({ entry: { amountMl: 500 }, totalMl: 1750, goalMl: 2500 }))?.detail).toBe("+500 ml · 1,75 de 2,5 L hoy");
   expect(summarizeResult("add_medication", blocks({ name: "Creatina", kind: "suplemento", dose: 5, unit: "g" }))).toEqual({ title: "Suplemento añadido", detail: "Creatina · 5 g", tab: "hoy" });
   expect(summarizeResult("set_body_goal", blocks({ goal: { metric: "percentBodyFat", target: 15, setAt: 0 } }))).toEqual({ title: "Meta guardada", detail: "Grasa: 15 %", tab: "cuerpo" });
   expect(summarizeResult("set_body_goal", blocks({ cleared: "weight" }))).toEqual({ title: "Meta borrada", detail: "Peso", tab: "cuerpo" });
