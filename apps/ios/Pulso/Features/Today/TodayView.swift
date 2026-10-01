@@ -11,6 +11,7 @@ struct TodayView: View {
                 header
                 ReadinessHero(readiness: store.readiness)
                 CoachBriefCard(model: model)
+                CalendarWeekStrip(model: model)
                 MedicationTodayCard(model: model)
                 ActivityCard(day: store.today)
                 SleepCard(day: store.today, onSync: sync) { SleepView(model: model) }
@@ -21,6 +22,12 @@ struct TodayView: View {
             .padding(.bottom, 32)
         }
         .navigationTitle(Self.greeting())
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink { CalendarView(model: model) } label: { Image(systemName: "calendar") }
+                    .accessibilityLabel("Calendario")
+            }
+        }
         .refreshable { await store.sync() }
         .task { await store.sync() }
         .onChange(of: scenePhase) { _, phase in
