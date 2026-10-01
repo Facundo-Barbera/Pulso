@@ -33,6 +33,7 @@ export const ANATOMY: Record<string, Anatomy> = {
   "remo-maquina": { nameEn: "Machine row", edb: "machine seated row", primary: ["upper_back", "lats"], secondary: ["rear_delts", "biceps"] },
   "pullover-polea": { nameEn: "Cable pullover", edb: "cable straight arm pulldown", primary: ["lats"], secondary: ["triceps"] },
   encogimientos: { nameEn: "Dumbbell shrug", primary: ["traps"], secondary: ["forearms"] },
+  "remo-banda": { nameEn: "Resistance band seated row", edb: "band seated row", primary: ["upper_back", "lats"], secondary: ["rear_delts", "biceps"] },
   hiperextensiones: { nameEn: "Back extension", edb: "hyperextension", primary: ["lower_back"], secondary: ["glutes", "hamstrings"] },
   // Shoulders
   "press-militar": { nameEn: "Overhead press", edb: "barbell standing close-grip military press", primary: ["front_delts"], secondary: ["side_delts", "triceps", "upper_back"] },
@@ -43,6 +44,9 @@ export const ANATOMY: Record<string, Anatomy> = {
   "elevaciones-laterales-polea": { nameEn: "Cable lateral raise", primary: ["side_delts"], secondary: ["traps"] },
   pajaros: { nameEn: "Dumbbell rear delt fly", edb: "dumbbell rear lateral raise", primary: ["rear_delts"], secondary: ["upper_back"] },
   "face-pull": { nameEn: "Face pull", edb: "cable standing rear delt row (with rope)", primary: ["rear_delts"], secondary: ["upper_back", "traps"] },
+  "elevaciones-laterales-maquina": { nameEn: "Machine lateral raise", edb: "lever lateral raise", primary: ["side_delts"], secondary: ["traps"] },
+  "pajaros-maquina": { nameEn: "Reverse pec deck", edb: "lever seated reverse fly", primary: ["rear_delts"], secondary: ["upper_back", "traps"] },
+  "face-pull-banda": { nameEn: "Band face pull", edb: "band standing rear delt row", primary: ["rear_delts"], secondary: ["upper_back", "traps"] },
   // Biceps
   "curl-barra": { nameEn: "Barbell curl", primary: ["biceps"], secondary: ["forearms"] },
   "curl-mancuernas": { nameEn: "Dumbbell curl", edb: "dumbbell biceps curl", primary: ["biceps"], secondary: ["forearms"] },
@@ -50,12 +54,16 @@ export const ANATOMY: Record<string, Anatomy> = {
   "curl-inclinado": { nameEn: "Dumbbell incline curl", primary: ["biceps"], secondary: ["forearms"] },
   "curl-predicador": { nameEn: "Barbell preacher curl", primary: ["biceps"], secondary: ["forearms"] },
   "curl-polea": { nameEn: "Cable curl", primary: ["biceps"], secondary: ["forearms"] },
+  "curl-maquina": { nameEn: "Machine biceps curl", edb: "lever preacher curl", primary: ["biceps"], secondary: ["forearms"] },
+  "curl-banda": { nameEn: "Band biceps curl", edb: "band concentration curl", primary: ["biceps"], secondary: ["forearms"] },
   // Triceps
   "press-banca-cerrado": { nameEn: "Close-grip bench press", edb: "barbell close-grip bench press", primary: ["triceps", "chest"], secondary: ["front_delts"] },
   "press-frances": { nameEn: "Skull crusher", edb: "barbell lying triceps extension skull crusher", primary: ["triceps"], secondary: [] },
   "extension-triceps-polea": { nameEn: "Triceps pushdown", edb: "cable pushdown", primary: ["triceps"], secondary: [] },
   "extension-triceps-sobre-cabeza": { nameEn: "Overhead dumbbell triceps extension", edb: "dumbbell seated triceps extension", primary: ["triceps"], secondary: [] },
   "patada-triceps": { nameEn: "Dumbbell triceps kickback", edb: "dumbbell kickback", primary: ["triceps"], secondary: [] },
+  "extension-triceps-maquina": { nameEn: "Machine triceps extension", edb: "lever triceps extension", primary: ["triceps"], secondary: [] },
+  "extension-triceps-banda": { nameEn: "Band triceps pushdown", edb: "band side triceps extension", primary: ["triceps"], secondary: [] },
   // Forearms
   "curl-muneca": { nameEn: "Dumbbell wrist curl", edb: "dumbbell seated palms up wrist curl", primary: ["forearms"], secondary: [] },
   // Quads
@@ -85,7 +93,18 @@ export const ANATOMY: Record<string, Anatomy> = {
   "elevacion-piernas-colgado": { nameEn: "Hanging leg raise", primary: ["abs"], secondary: ["obliques", "forearms"] },
   "rueda-abdominal": { nameEn: "Ab wheel rollout", edb: "wheel rollout", primary: ["abs"], secondary: ["obliques", "lats", "front_delts"] },
   "press-pallof": { nameEn: "Pallof press", edb: "band horizontal pallof press", primary: ["obliques", "abs"], secondary: [] },
+  "crunch-maquina": { nameEn: "Machine crunch", edb: "lever seated crunch", primary: ["abs"], secondary: ["obliques"] },
   // Full body
   "swing-kettlebell": { nameEn: "Kettlebell swing", primary: ["glutes", "hamstrings"], secondary: ["lower_back", "abs", "front_delts"] },
   "cargada-potencia": { nameEn: "Power clean", primary: ["glutes", "hamstrings", "quads"], secondary: ["traps", "upper_back", "calves"] },
+  // Cardio
+  caminadora: { nameEn: "Treadmill walk or run", edb: "walking on incline treadmill", primary: ["quads", "calves"], secondary: ["glutes", "hamstrings"] },
+  eliptica: { nameEn: "Elliptical trainer", edb: "walk elliptical cross trainer", primary: ["quads", "glutes"], secondary: ["hamstrings", "calves"] },
+  "bici-estatica": { nameEn: "Stationary bike", edb: "stationary bike walk", primary: ["quads"], secondary: ["glutes", "hamstrings", "calves"] },
+  "remo-ergometro": { nameEn: "Rowing machine", edb: "rowing machine", primary: ["upper_back", "lats", "quads"], secondary: ["glutes", "hamstrings", "biceps"] },
+  escaladora: { nameEn: "Stair climber", edb: "stairmaster", primary: ["glutes", "quads"], secondary: ["hamstrings", "calves"] },
+  correr: { nameEn: "Running", edb: "run", primary: ["quads", "calves"], secondary: ["glutes", "hamstrings"] },
+  caminar: { nameEn: "Walking", edb: "walking high knees lunge", primary: ["quads", "calves"], secondary: ["glutes"] },
+  "saltar-cuerda": { nameEn: "Jump rope", primary: ["calves"], secondary: ["quads", "front_delts", "forearms"] },
+  hiit: { nameEn: "High intensity interval training", edb: "burpee", primary: ["quads", "glutes"], secondary: ["chest", "abs", "front_delts"] },
 };

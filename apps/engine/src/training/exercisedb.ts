@@ -23,10 +23,11 @@ export type EdbExercise = {
 export const EDB_EQUIPMENT: Record<Equipment, string[]> = {
   barbell: ["barbell", "olympic barbell", "ez bar"],
   dumbbell: ["dumbbell"],
-  machine: ["leverage machine", "sled machine", "smith machine"],
+  machine: ["leverage machine", "sled machine", "smith machine", "stationary bike", "elliptical machine", "stepmill machine"],
   cable: ["cable"],
   bodyweight: ["bodyweight", "weighted", "ab wheel"],
   kettlebell: ["kettlebell"],
+  band: ["band", "resistance band"],
 };
 
 /** ExerciseDB muscle names → the body map's muscles. Unlisted ones (hip flexors, feet…) are not on the map. */

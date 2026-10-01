@@ -874,4 +874,166 @@ export const TECHNIQUE: Record<string, { instructions: string[]; tips: string[] 
       "Aprende la técnica con poco peso.",
     ],
   },
+  "remo-banda": {
+    instructions: [
+      "Siéntate con las piernas estiradas y pasa la banda por la planta de los pies.",
+      "Agarra los extremos con los brazos estirados y la espalda recta.",
+      "Tira llevando los codos atrás pegados al cuerpo hasta juntar las escápulas.",
+      "Vuelve despacio hasta estirar los brazos.",
+    ],
+    tips: ["Junta las escápulas al final.", "No eches el tronco atrás."],
+  },
+  "elevaciones-laterales-maquina": {
+    instructions: [
+      "Ajusta el asiento para que el eje de la máquina quede a la altura de tus hombros.",
+      "Apoya los antebrazos o agarra las asas con los codos algo flexionados.",
+      "Sube los brazos hacia los lados hasta la altura de los hombros.",
+      "Baja despacio sin dejar que el peso toque abajo.",
+    ],
+    tips: ["Sube con los codos, no con las manos.", "No encojas los hombros."],
+  },
+  "pajaros-maquina": {
+    instructions: [
+      "Siéntate mirando al respaldo de la máquina con el pecho apoyado.",
+      "Agarra las asas con los brazos estirados a la altura de los hombros.",
+      "Abre los brazos hacia atrás hasta quedar en cruz.",
+      "Vuelve despacio al frente.",
+    ],
+    tips: ["Codos ligeramente flexionados.", "Piensa en llevar las manos lejos, no atrás."],
+  },
+  "face-pull-banda": {
+    instructions: [
+      "Ata la banda a la altura de la cara y agarra los extremos con las palmas hacia abajo.",
+      "Da un paso atrás hasta tensar la banda con los brazos estirados.",
+      "Tira hacia la cara separando las manos y llevando los codos altos.",
+      "Vuelve despacio hasta estirar los brazos.",
+    ],
+    tips: ["Codos a la altura de los hombros.", "Gira las manos hacia fuera al final."],
+  },
+  "curl-maquina": {
+    instructions: [
+      "Ajusta el asiento para que los codos queden alineados con el eje de la máquina.",
+      "Apoya la parte de atrás de los brazos en el soporte y agarra las asas.",
+      "Sube flexionando los codos hasta contraer el bíceps.",
+      "Baja despacio hasta casi estirar los brazos.",
+    ],
+    tips: ["No despegues los brazos del soporte.", "Baja en dos o tres segundos."],
+  },
+  "curl-banda": {
+    instructions: [
+      "Pisa la banda con ambos pies y agarra los extremos con las palmas al frente.",
+      "Con los codos pegados al cuerpo, sube las manos hacia los hombros.",
+      "Aprieta arriba un segundo.",
+      "Baja despacio hasta estirar los brazos.",
+    ],
+    tips: ["Codos quietos a los lados.", "No balancees el cuerpo."],
+  },
+  "extension-triceps-maquina": {
+    instructions: [
+      "Ajusta el asiento para que los codos queden alineados con el eje de la máquina.",
+      "Apoya los brazos en el soporte y agarra las asas con los codos flexionados.",
+      "Extiende los codos hasta estirar los brazos.",
+      "Vuelve despacio sin dejar que el peso toque abajo.",
+    ],
+    tips: ["Mueve solo los antebrazos.", "Bloquea un instante abajo."],
+  },
+  "extension-triceps-banda": {
+    instructions: [
+      "Ata la banda arriba y agarra los extremos con los codos pegados al cuerpo.",
+      "Empuja hacia abajo hasta estirar los brazos.",
+      "Abre ligeramente las manos al final.",
+      "Sube despacio hasta que los antebrazos queden paralelos al suelo.",
+    ],
+    tips: ["Codos quietos junto al cuerpo.", "Tronco ligeramente inclinado, sin balanceo."],
+  },
+  "crunch-maquina": {
+    instructions: [
+      "Ajusta el asiento y apoya el pecho o agarra las asas según la máquina.",
+      "Encorva el tronco llevando el pecho hacia la cadera.",
+      "Aprieta el abdomen un segundo abajo.",
+      "Vuelve despacio sin soltar la tensión.",
+    ],
+    tips: ["Encorva la espalda, no tires con los brazos.", "Exhala al bajar."],
+  },
+  caminadora: {
+    instructions: [
+      "Sube a la cinta parado sobre los laterales y arranca a velocidad lenta.",
+      "Ponte en el centro de la cinta y sube la velocidad y la inclinación poco a poco.",
+      "Mantén el ritmo del objetivo: zona de pulso, velocidad o inclinación.",
+      "Al final baja la velocidad dos o tres minutos para enfriar.",
+    ],
+    tips: ["No te agarres a las barras con inclinación.", "Pasos cortos y cómodos."],
+  },
+  eliptica: {
+    instructions: [
+      "Sube a los pedales y agarra las asas móviles.",
+      "Empieza a pedalear suave y ajusta el nivel de resistencia.",
+      "Empuja y tira de las asas a la vez que pedaleas, con la espalda recta.",
+      "Baja la resistencia los últimos minutos para enfriar.",
+    ],
+    tips: ["Apoya todo el pie en el pedal.", "No te apoyes con el peso en las asas."],
+  },
+  "bici-estatica": {
+    instructions: [
+      "Ajusta el sillín a la altura de la cadera y el manillar a tu medida.",
+      "Pedalea suave unos minutos para calentar.",
+      "Sube la resistencia hasta la zona o el nivel del objetivo.",
+      "Termina con unos minutos suaves.",
+    ],
+    tips: ["Rodilla casi estirada abajo.", "Cadencia constante, sin rebotar en el sillín."],
+  },
+  "remo-ergometro": {
+    instructions: [
+      "Siéntate, sujeta los pies con las correas y agarra el mango.",
+      "Empuja primero con las piernas, luego inclina el tronco atrás y tira del mango al abdomen.",
+      "Vuelve en orden inverso: brazos, tronco y piernas.",
+      "Mantén un ritmo constante de paladas.",
+    ],
+    tips: ["Piernas, tronco, brazos; y al volver al revés.", "Espalda recta, sin encorvarte."],
+  },
+  escaladora: {
+    instructions: [
+      "Sube a los escalones agarrándote a las barras y arranca a nivel bajo.",
+      "Sube el nivel hasta el ritmo del objetivo.",
+      "Pisa con todo el pie y mantén el tronco erguido.",
+      "Baja el nivel al final para enfriar.",
+    ],
+    tips: ["No cargues el peso en los brazos.", "Pasos completos, no de puntillas."],
+  },
+  correr: {
+    instructions: [
+      "Calienta caminando y trotando suave cinco minutos.",
+      "Corre al ritmo del objetivo con pasos cortos y ligeros.",
+      "Mantén la mirada al frente y los hombros relajados.",
+      "Termina caminando unos minutos.",
+    ],
+    tips: ["Si no puedes hablar en zona 2, ve más despacio.", "Cadencia alta, zancada corta."],
+  },
+  caminar: {
+    instructions: [
+      "Sal a buen paso con la espalda recta.",
+      "Balancea los brazos de forma natural.",
+      "Mantén un ritmo en el que puedas hablar sin ahogarte.",
+      "Sube el ritmo o busca cuestas para más intensidad.",
+    ],
+    tips: ["Pisa de talón a punta.", "Hombros relajados."],
+  },
+  "saltar-cuerda": {
+    instructions: [
+      "Agarra los mangos con los codos cerca del cuerpo.",
+      "Gira la cuerda con las muñecas, no con los brazos.",
+      "Salta bajito sobre la punta de los pies justo para que pase la cuerda.",
+      "Alterna bloques de saltos con pausas cortas si lo pide el objetivo.",
+    ],
+    tips: ["Saltos de pocos centímetros.", "Rodillas algo flexionadas al caer."],
+  },
+  hiit: {
+    instructions: [
+      "Calienta cinco minutos con movimientos suaves.",
+      "Haz cada bloque de trabajo a máxima intensidad sostenible: burpees, sprints o saltos.",
+      "Recupera en la pausa caminando o muy suave.",
+      "Repite las rondas del objetivo y termina con unos minutos suaves.",
+    ],
+    tips: ["La calidad del movimiento antes que la velocidad.", "Si la técnica se rompe, alarga la pausa."],
+  },
 };
