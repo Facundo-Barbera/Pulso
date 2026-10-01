@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { TOOLS } from "../agent/registry";
+import { proposeMedia } from "./media";
 import { trainingTools } from "./tools";
 
 const call = async (name: string, args: Record<string, unknown>) => {
@@ -12,7 +13,7 @@ const call = async (name: string, args: Record<string, unknown>) => {
 
 test("every training tool is registered with the agent", () => {
   const names = TOOLS.map((t) => t.name);
-  for (const name of ["list_exercises", "create_program", "get_active_program", "list_sessions", "exercise_history", "suggest_next_loads", "log_session"]) {
+  for (const name of ["list_exercises", "get_exercise", "create_program", "get_active_program", "list_sessions", "exercise_history", "suggest_next_loads", "log_session"]) {
     expect(names).toContain(name);
   }
 });
@@ -76,4 +77,16 @@ test("caller mistakes come back as tool errors the model can act on", async () =
   expect(bad.text).toContain("sentadilla-espacial");
   expect((await call("exercise_history", { exerciseId: "nope", limit: 5 })).isError).toBe(true);
   expect((await call("suggest_next_loads", { dayId: "not-a-day" })).isError).toBe(true);
+});
+
+test("get_exercise returns the detail; list_exercises says which have media", async () => {
+  proposeMedia("swing-kettlebell", "UHJlbu3", 1);
+  const { data } = await call("list_exercises", { equipment: "kettlebell" });
+  expect(Object.fromEntries(data.map((e: { id: string; hasMedia: boolean }) => [e.id, e.hasMedia]))).toEqual({ "sentadilla-goblet": false, "swing-kettlebell": true });
+
+  const detail = await call("get_exercise", { exerciseId: "swing-kettlebell" });
+  expect(detail.data.primaryMuscles).toEqual(["glutes", "hamstrings"]);
+  expect(detail.data.instructions.length).toBeGreaterThanOrEqual(3);
+  expect(detail.data.media.source).toBe("exercisedb");
+  expect((await call("get_exercise", { exerciseId: "nope" })).isError).toBe(true);
 });

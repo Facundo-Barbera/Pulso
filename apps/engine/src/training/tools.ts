@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { programShape } from "./inputs";
+import { idsWithMedia } from "./media";
 import {
   activeProgramView,
   createProgram,
+  exerciseDetail,
   exerciseHistory,
   getActiveProgram,
   listExercises,
@@ -34,18 +36,34 @@ const equipment = ["barbell", "dumbbell", "machine", "cable", "bodyweight", "ket
 export const trainingTools = [
   tool(
     "list_exercises",
-    "The exercise library: id, Spanish name, primary muscle, secondary muscles, equipment, kind (compound/isolation). Programs and logged sets must use these ids. Filter by muscle (matches primary or secondary), equipment, or a name search.",
+    "The exercise library: id, Spanish name, primary muscle, secondary muscles, equipment, kind (compound/isolation), and hasMedia (the phone shows a demonstration animation for it). Programs and logged sets must use these ids. Filter by muscle (matches primary or secondary), equipment, or a name search.",
     {
       muscle: z.enum(muscles).optional(),
       equipment: z.enum(equipment).optional(),
       query: z.string().optional().describe("Substring of the Spanish name or id, e.g. 'remo'."),
     },
-    async (filter) => guard(() => listExercises(filter)),
+    async (filter) =>
+      guard(() => {
+        const media = idsWithMedia();
+        return listExercises(filter).map((e) => ({ ...e, hasMedia: media.has(e.id) }));
+      }),
+  ),
+
+  tool(
+    "get_exercise",
+    "One library exercise in full, by library id (from list_exercises): fine-grained primary and secondary muscles, Spanish step-by-step instructions and technique cues, curated YouTube technique videos, whether it has a demonstration animation, and the person's own notes on it. Use it to explain how to do an exercise or to pick a substitute that hits the same muscles.",
+    { exerciseId: z.string().describe("Library id, e.g. 'press-banca'.") },
+    async ({ exerciseId }) =>
+      guard(() => {
+        const detail = exerciseDetail(exerciseId);
+        if (!detail) throw new TrainingError(`Unknown exercise id: ${exerciseId}. Use ids from list_exercises.`);
+        return detail;
+      }),
   ),
 
   tool(
     "create_program",
-    "Write a whole strength program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes). Exercise ids must come from list_exercises. By default it becomes the active program the phone shows in Entreno (replacing the previous one, whose history is kept). Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish.",
+    "Write a whole strength program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes). Exercise ids must be library ids from list_exercises; when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno (replacing the previous one, whose history is kept). Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish.",
     { ...programShape, activate: z.boolean().default(true).describe("Make it the active program.") },
     async ({ activate, ...program }) => guard(() => createProgram(program, activate)),
   ),
