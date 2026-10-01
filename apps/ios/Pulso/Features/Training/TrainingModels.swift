@@ -108,35 +108,6 @@ struct TrainingSessionSaved: Codable {
     var prs: [TrainingRecord]
 }
 
-struct LibraryExercise: Codable, Identifiable, Hashable {
-    var id: String
-    var name: String
-    var muscle: String
-    var secondary: [String]
-    var equipment: String
-    var kind: String
-}
-
-struct ExerciseHistoryPoint: Codable, Identifiable, Hashable {
-    var sessionId: String
-    var date: Double
-    var topWeightKg: Double
-    var bestE1rm: Double
-    var totalReps: Int
-    var volumeKg: Double
-    var sets: [SetLog]
-
-    var id: String { sessionId }
-    var day: Date { Date(timeIntervalSince1970: date / 1000) }
-}
-
-struct ExerciseHistory: Codable {
-    var exercise: LibraryExercise
-    var points: [ExerciseHistoryPoint]
-    var bestE1rm: Double?
-    var heaviestKg: Double?
-}
-
 extension PulsoAPI {
     private struct SessionsResponse: Decodable { var sessions: [TrainingSession] }
 
@@ -152,9 +123,5 @@ extension PulsoAPI {
     /// Upserts by the session's client-made id, so retrying after a failure is safe.
     func saveTrainingSession(_ session: TrainingSession) async throws -> TrainingSessionSaved {
         try await call("api/mobile/training/sessions", method: "POST", body: session)
-    }
-
-    func exerciseHistory(_ exerciseId: String) async throws -> ExerciseHistory {
-        try await call("api/mobile/training/exercises/\(exerciseId)/history", method: "GET")
     }
 }
