@@ -5,6 +5,7 @@
  */
 import { ZodError } from "zod";
 import { ShoppingError } from "../shopping/errors";
+import { DishError } from "./dishes";
 import { PlanError } from "./horizon";
 import { OPS } from "./ops";
 import { planOpSchema } from "./plan-inputs";
@@ -25,6 +26,8 @@ export function apiFailure(error: unknown): ApiFailure | null {
   if (error instanceof ZodError) return { status: 400, code: "invalid_request", message: error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ") };
   if (error instanceof ShoppingError) return { status: error.code === "not_found" ? 404 : 409, code: error.code, message: error.code === "not_found" ? "Eso ya no está." : "No hay un plan de dieta activo." };
   if (error instanceof RevisionError) return { status: 409, code: "cannot_undo", message: error.message.startsWith("Nothing") ? "No hay nada que deshacer." : error.message.startsWith("A later") ? "Antes hay que deshacer un cambio posterior en esos días." : "Ese cambio ya no se puede deshacer." };
+  if (error instanceof DishError && /^No (saved|logged) dish/.test(error.message)) return { status: 404, code: "not_found", message: "Ese platillo ya no existe." };
+  if (error instanceof DishError) return { status: 400, code: "invalid_request", message: "Eso no encaja con el platillo.", detail: error.message };
   if (error instanceof RecipeError) return { status: 404, code: "not_found", message: "Esa receta o ese batch ya no existe." };
   if (error instanceof PlanError && error.message.startsWith("No active diet plan")) return { status: 409, code: "no_plan", message: "No hay un plan de dieta activo." };
   if (error instanceof PlanError) return { status: 409, code: "plan_conflict", message: "Ese cambio no encaja con el plan.", detail: error.message };
