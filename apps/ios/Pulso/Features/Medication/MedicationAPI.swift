@@ -5,6 +5,7 @@ import Foundation
 extension PulsoAPI {
     private struct MedicationsResponse: Decodable { var medications: [Medication] }
     private struct Ack: Decodable {}
+    private struct DosesResponse: Decodable { var doses: [DoseEvent] }
 
     private static func asOf(_ now: Date) -> [URLQueryItem] {
         [URLQueryItem(name: "date", value: LocalClock.date(now)), URLQueryItem(name: "time", value: LocalClock.time(now))]
@@ -48,6 +49,12 @@ extension PulsoAPI {
     @discardableResult
     func logDose(_ log: DoseLog) async throws -> DoseEvent {
         try await call("api/mobile/medication/doses", method: "POST", body: log)
+    }
+
+    /// Every logged dose between two local dates, inclusive.
+    func doses(from: String, to: String) async throws -> [DoseEvent] {
+        let response: DosesResponse = try await get("api/mobile/medication/doses", query: [URLQueryItem(name: "from", value: from), URLQueryItem(name: "to", value: to)])
+        return response.doses
     }
 
     func undoDose(eventId: String) async throws {

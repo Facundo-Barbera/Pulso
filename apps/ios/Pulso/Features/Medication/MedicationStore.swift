@@ -12,6 +12,9 @@ final class MedicationStore {
     private(set) var medications: [Medication] = []
     private(set) var day: MedicationDay?
     private(set) var adherence: AdherenceReport?
+    /// The last `historyDays` days of logged doses, newest first.
+    private(set) var history: [DoseEvent] = []
+    static let historyDays = 60
     private(set) var loaded = false
     private(set) var loading = false
 
@@ -34,7 +37,10 @@ final class MedicationStore {
             async let meds = api.medications()
             async let today = api.medicationDay()
             async let report = api.medicationAdherence()
+            let from = LocalClock.date(Calendar.current.date(byAdding: .day, value: -(Self.historyDays - 1), to: .now) ?? .now)
+            async let doses = api.doses(from: from, to: LocalClock.date(.now))
             (medications, day, adherence) = try await (meds, today, report)
+            history = (try? await doses)?.sorted { ($0.takenAt ?? 0, $0.date, $0.scheduledTime ?? "") > ($1.takenAt ?? 0, $1.date, $1.scheduledTime ?? "") } ?? history
             loaded = true
             await replan()
             await WidgetSync.refresh()
@@ -73,6 +79,23 @@ final class MedicationStore {
         guard let api = model.api, let eventId = slot.eventId else { return }
         do {
             try await api.undoDose(eventId: eventId)
+        } catch {
+            model.handle(error)
+        }
+        await refresh()
+    }
+
+    /// Doses actually taken today, scheduled or not.
+    var takenToday: Int {
+        (day?.taken ?? 0) + (day?.asNeeded.count { $0.status == .tomada } ?? 0)
+    }
+
+    /// Removes one logged dose (a mistaken tap, a duplicate).
+    func undo(event: DoseEvent) async {
+        guard let api = model.api else { return }
+        history.removeAll { $0.id == event.id }
+        do {
+            try await api.undoDose(eventId: event.id)
         } catch {
             model.handle(error)
         }

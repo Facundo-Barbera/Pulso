@@ -28,6 +28,7 @@ struct MedicationView: View {
                     if !store.asNeeded.isEmpty { asNeededCard }
                     if let report = store.adherence, !report.medications.isEmpty { AdherenceSection(report: report) }
                     medicationsCard
+                    MedicationHistoryCard(store: store)
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 24)
@@ -67,9 +68,10 @@ struct MedicationView: View {
     // MARK: Sections
 
     private var hero: some View {
-        let taken = store.day?.taken ?? 0
+        let taken = store.takenToday
         let total = store.day?.slots.count ?? 0
-        let progress = total > 0 ? Double(taken) / Double(total) : 0
+        // Without a schedule there is no target: the ring fills once something is taken.
+        let progress = total > 0 ? min(1, Double(store.day?.taken ?? 0) / Double(total)) : (taken > 0 ? 1 : 0)
         return VStack(spacing: 14) {
             ZStack {
                 Circle().stroke(Color.accentColor.opacity(0.15), lineWidth: 18)
@@ -81,10 +83,11 @@ struct MedicationView: View {
                     )
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 2) {
-                    Text("\(taken)")
+                    let shown = total > 0 ? (store.day?.taken ?? 0) : taken
+                    Text("\(shown)")
                         .font(.system(size: 54, weight: .bold, design: .rounded))
-                        .contentTransition(.numericText(value: Double(taken)))
-                    Text(total == 0 ? "sin tomas hoy" : "de \(total) tomas")
+                        .contentTransition(.numericText(value: Double(shown)))
+                    Text(total > 0 ? "de \(total) tomas" : taken == 0 ? "sin tomas hoy" : taken == 1 ? "toma hoy" : "tomas hoy")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
