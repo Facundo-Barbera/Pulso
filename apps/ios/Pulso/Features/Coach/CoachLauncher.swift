@@ -14,6 +14,8 @@ final class CoachLauncher {
         case prompt(String, send: Bool)
         /// An existing conversation, composer focused.
         case thread(AgentThread)
+        /// A new chat that opens the camera, the prompt waiting in the composer for the photo.
+        case photo(String)
     }
 
     struct Launch: Identifiable, Equatable {
@@ -26,6 +28,11 @@ final class CoachLauncher {
 
     func ask(_ prompt: String, send: Bool = true) {
         pending = Launch(request: .prompt(prompt, send: send))
+    }
+
+    /// "Foto de comida": the Coach with the camera open and `prompt` ready to go with the photo.
+    func photo(_ prompt: String) {
+        pending = Launch(request: .photo(prompt))
     }
 
     func open(_ thread: AgentThread) {

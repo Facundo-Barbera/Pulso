@@ -101,4 +101,11 @@ final class CoachTests: XCTestCase {
         let small = try XCTUnwrap(ChatPhoto(UIGraphicsImageRenderer(size: CGSize(width: 300, height: 200), format: format).image { _ in }))
         XCTAssertEqual(small.attachment.width, 300)
     }
+
+    @MainActor
+    func testFotoDeComidaOpensTheCoachWithTheCamera() {
+        let launcher = CoachLauncher()
+        launcher.photo("Registra esto")
+        XCTAssertEqual(launcher.take()?.request, .photo("Registra esto"))
+    }
 }

@@ -15,7 +15,8 @@ struct RegisterSheet: View {
     let onRoute: (Route) -> Void
 
     enum Route: Equatable {
-        case scan, snack, plan
+        /// `photo`: the Coach, camera open, to log what it sees.
+        case scan, snack, plan, photo
         /// The manual form, with what was typed as the name.
         case manual(String)
     }
@@ -39,6 +40,7 @@ struct RegisterSheet: View {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
+                            chip("Foto de comida", "camera.fill") { onRoute(.photo) }
                             chip("Escanear", "barcode.viewfinder") { onRoute(.scan) }
                             chip("Snack o bebida", "cup.and.saucer.fill") { onRoute(.snack) }
                             if replacing == nil { chip("Del plan", "list.bullet.clipboard") { onRoute(.plan) } }

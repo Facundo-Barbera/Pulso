@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// A fresh conversation, optionally opened by a starter prompt (sent at once) or a draft (left in the composer).
+/// A fresh conversation, optionally opened by a starter prompt (sent at once) or a draft (left in the composer),
+/// and with the camera open for a photo.
 struct NewChat: Identifiable, Hashable {
     let id = UUID()
     var starter: String?
     var draft: String?
+    var camera = false
 }
 
 /// An existing conversation opened from elsewhere (e.g. "Responder" on a brief).
@@ -52,7 +54,7 @@ struct CoachView: View {
             CoachChatView(threadId: thread.id, title: thread.title)
         }
         .navigationDestination(item: $newChat) { chat in
-            CoachChatView(threadId: nil, title: nil, starter: chat.starter, draft: chat.draft)
+            CoachChatView(threadId: nil, title: nil, starter: chat.starter, draft: chat.draft, camera: chat.camera)
         }
         .navigationDestination(item: $opened) { opened in
             CoachChatView(threadId: opened.thread.id, title: opened.thread.title, focus: true)
@@ -89,6 +91,8 @@ struct CoachView: View {
             newChat = send ? NewChat(starter: text) : NewChat(draft: text)
         case let .thread(thread):
             opened = OpenedThread(thread: thread)
+        case let .photo(prompt):
+            newChat = NewChat(draft: prompt, camera: true)
         }
     }
 }
