@@ -181,7 +181,7 @@ private struct TargetEditor: View {
         } header: {
             Text("Objetivo de hoy")
         } footer: {
-            if done > 0 { Text("El peso y las reps cambian en las series que faltan; las \(done) hechas se quedan como están.") }
+            if done > 0 { Text("El peso y las repeticiones cambian en las series que faltan; las \(done) hechas se quedan como están.") }
         }
     }
 
@@ -217,7 +217,7 @@ private struct TargetEditor: View {
             Picker(selection: Binding(get: { target.zone ?? 0 }, set: { zone in set { $0.zone = zone == 0 ? nil : zone } })) {
                 Text("Sin zona").tag(0)
                 ForEach(1...5, id: \.self) { zone in
-                    Text(CardioCue.zone(zone, zones: TrainingStore.shared.hrZones) ?? "Z\(zone)").tag(zone)
+                    Text(CardioCue.zone(zone, zones: TrainingStore.shared.hrZones) ?? "Zona \(zone)").tag(zone)
                 }
             } label: {
                 Label("Zona", systemImage: "heart.fill")

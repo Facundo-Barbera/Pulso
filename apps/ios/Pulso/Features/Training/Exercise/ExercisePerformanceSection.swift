@@ -53,7 +53,7 @@ struct ExercisePerformanceSection: View {
         Card {
             CardTitle(text: "Récords", systemImage: "trophy")
             TrophyRow(title: "Peso máximo", systemImage: "scalemass.fill",
-                      value: performance.maxWeight.map { "\($0.kg.formatted()) kg × \($0.reps)" }, at: performance.maxWeight?.at)
+                      value: performance.maxWeight.map { TrainingText.load($0.kg, reps: $0.reps) }, at: performance.maxWeight?.at)
             Divider()
             TrophyRow(title: "Mejor 1RM estimado", systemImage: "trophy.fill",
                       value: performance.bestE1rm.map { "\($0.kg.formatted(.number.precision(.fractionLength(0...1)))) kg" }, at: performance.bestE1rm?.at)

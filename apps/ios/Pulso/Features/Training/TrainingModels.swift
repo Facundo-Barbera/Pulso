@@ -23,12 +23,9 @@ struct ProgramExercise: Codable, Identifiable, Hashable {
 
     var isCardio: Bool { kind == "cardio" }
 
-    /// "3 × 6–8 · RIR 2", or the cardio target ("20 min · Z2").
+    /// "3 series de 6 a 8 repeticiones", or the cardio target ("20 min · zona 2").
     var prescription: String {
-        if isCardio { return cardio?.summary ?? "Cardio" }
-        var text = "\(sets) × " + (repMin == repMax ? "\(repMin)" : "\(repMin)–\(repMax)")
-        if let targetRir { text += " · RIR \(targetRir)" } else if let targetRpe { text += " · RPE \(targetRpe.formatted())" }
-        return text
+        isCardio ? cardio?.summary ?? "Cardio" : TrainingText.target(sets: sets, repMin: repMin, repMax: repMax)
     }
 
     /// Stepper jump: dumbbells, bodyweight and bands move by 1 kg, plates and stacks by 2.5.
@@ -59,8 +56,8 @@ struct CardioIntervals: Codable, Hashable {
     var workLabel: String? = nil
     var restLabel: String? = nil
 
-    /// "8 × 30 s / 90 s"
-    var summary: String { "\(rounds) × \(workSeconds) s / \(restSeconds) s" }
+    /// "8 rondas de 30 s y 90 s de pausa"
+    var summary: String { "\(rounds) \(rounds == 1 ? "ronda" : "rondas") de \(workSeconds) s y \(restSeconds) s de pausa" }
 }
 
 /// What a cardio block asks for; every field optional. `zone` is 1–5.
@@ -74,12 +71,12 @@ struct CardioTarget: Codable, Hashable {
     var zone: Int? = nil
     var intervals: CardioIntervals? = nil
 
-    /// "20 min · Z2", "8 × 30 s / 90 s · Z4", "5 km".
+    /// "20 min · zona 2", "8 rondas de 30 s y 90 s de pausa · zona 4", "5 km".
     var summary: String {
         var parts: [String] = []
         if let intervals { parts.append(intervals.summary) } else if let durationMinutes { parts.append("\(durationMinutes.formatted()) min") }
         if let distanceKm { parts.append("\(distanceKm.formatted()) km") }
-        if let zone { parts.append("Z\(zone)") }
+        if let zone { parts.append("zona \(zone)") }
         return parts.isEmpty ? "Cardio" : parts.joined(separator: " · ")
     }
 }
@@ -273,7 +270,7 @@ struct TrainingRecord: Codable, Hashable {
         }
     }
 
-    var valueText: String { kind == "reps" ? "\(Int(value)) reps" : "\(value.formatted()) kg" }
+    var valueText: String { kind == "reps" ? TrainingText.repetitions(Int(value)) : "\(value.formatted()) kg" }
 }
 
 struct TrainingSessionSaved: Codable {
