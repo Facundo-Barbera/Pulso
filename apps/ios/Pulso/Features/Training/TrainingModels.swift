@@ -20,6 +20,8 @@ struct ProgramExercise: Codable, Identifiable, Hashable {
     var cardio: CardioTarget? = nil
     /// A load set by hand for the next session, kg; nil = the engine suggests it.
     var weightKg: Double? = nil
+    /// Consecutive exercises sharing it are a superset, done alternating.
+    var supersetId: String? = nil
 
     var isCardio: Bool { kind == "cardio" }
 
@@ -33,7 +35,7 @@ struct ProgramExercise: Codable, Identifiable, Hashable {
 
     /// The same prescription as an edit input, keeping this exercise's id.
     var input: DayExerciseInput {
-        DayExerciseInput(id: id, exerciseId: exerciseId, sets: sets, repMin: repMin, repMax: repMax, targetRpe: targetRpe, targetRir: targetRir, restSeconds: restSeconds, notes: notes, cardio: cardio, weightKg: weightKg)
+        DayExerciseInput(id: id, exerciseId: exerciseId, sets: sets, repMin: repMin, repMax: repMax, targetRpe: targetRpe, targetRir: targetRir, restSeconds: restSeconds, notes: notes, cardio: cardio, weightKg: weightKg, supersetId: supersetId)
     }
 }
 
@@ -192,6 +194,7 @@ struct DayExerciseInput: Codable, Hashable {
     var notes: String?
     var cardio: CardioTarget?
     var weightKg: Double?
+    var supersetId: String? = nil
 }
 
 struct DayEdit: Codable {

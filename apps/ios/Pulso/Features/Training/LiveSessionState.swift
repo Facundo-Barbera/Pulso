@@ -40,6 +40,8 @@ struct LiveExercise: Identifiable, Hashable {
     var cardioLog: CardioLog? = nil
     /// Passed over today; stays in the list, greyed.
     var skipped = false
+    /// Consecutive exercises sharing it are a superset: a set of each, then the rest.
+    var supersetId: String? = nil
 
     var isCardio: Bool { kind == "cardio" }
     var weightStep: Double { Equipment.weightStep(equipment) }
@@ -148,7 +150,8 @@ struct LiveSessionState: Hashable {
                 notes: ex.notes,
                 hint: ex.isCardio ? nil : suggestion?.reason,
                 sets: ex.isCardio ? [] : (0..<ex.sets).map { _ in LiveSet(weightKg: weight, reps: reps) },
-                cardio: ex.cardio
+                cardio: ex.cardio,
+                supersetId: ex.supersetId
             )
         }
         self.init(programId: programId, dayId: day.id, name: day.name, startedAt: now, exercises: exercises, updatedAt: now)
@@ -167,12 +170,37 @@ struct LiveSessionState: Hashable {
 
     var focused: LiveExercise? { exercises.indices.contains(focus) ? exercises[focus] : nil }
 
-    /// The first strength set not yet done, in order, skipping passed-over exercises.
+    /// The first strength set not yet done, in order, skipping passed-over
+    /// exercises. In a superset, the member furthest behind goes next.
     var current: (exercise: Int, set: Int)? {
-        for (e, ex) in exercises.enumerated() where !ex.skipped {
-            if let s = ex.sets.firstIndex(where: { !$0.done }) { return (e, s) }
+        var e = 0
+        while e < exercises.count {
+            if let group = superset(of: e) {
+                if let next = nextInSuperset(group) { return next }
+                e = group.upperBound
+                continue
+            }
+            if !exercises[e].skipped, let s = exercises[e].sets.firstIndex(where: { !$0.done }) { return (e, s) }
+            e += 1
         }
         return nil
+    }
+
+    // MARK: Supersets
+
+    func superset(of e: Int) -> Range<Int>? { Superset.group(of: e, in: exercises.map(\.supersetId)) }
+
+    /// The member with the fewest sets done among those with sets left; the earliest on a tie.
+    func nextInSuperset(_ group: Range<Int>) -> (exercise: Int, set: Int)? {
+        let open = group.filter { !exercises[$0].skipped && exercises[$0].sets.contains { !$0.done } }
+        guard let e = open.min(by: { exercises[$0].sets.count(where: \.done) < exercises[$1].sets.count(where: \.done) }),
+              let s = exercises[e].sets.firstIndex(where: { !$0.done }) else { return nil }
+        return (e, s)
+    }
+
+    mutating func normalizeSupersets() {
+        let ids = Superset.normalize(exercises.map(\.supersetId), cardio: exercises.map(\.isCardio))
+        for e in exercises.indices { exercises[e].supersetId = ids[e] }
     }
 
     /// The next exercise to do after `index`, wrapping to earlier ones left behind.
@@ -201,6 +229,15 @@ struct LiveSessionState: Hashable {
         let weight = exercises[e].sets[s].weightKg
         for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
             exercises[e].sets[later].weightKg = weight
+        }
+        // A superset goes straight to the partner still behind; the rest comes after the round.
+        if let group = superset(of: e), let next = nextInSuperset(group) {
+            focus = next.exercise
+            if exercises[next.exercise].sets.count(where: \.done) < exercises[e].sets.count(where: \.done) {
+                restStartedAt = nil
+                restEndsAt = nil
+                return
+            }
         }
         startRest(after: e, now: now)
     }
@@ -314,6 +351,7 @@ struct LiveSessionState: Hashable {
         var kept = exercises.enumerated().filter { !source.contains($0.offset) }.map(\.element)
         kept.insert(contentsOf: moving, at: min(kept.count, max(0, destination - source.count { $0 < destination })))
         exercises = kept
+        normalizeSupersets()
         if let focusedId, let index = exercises.firstIndex(where: { $0.id == focusedId }) { focus = index }
     }
 
@@ -329,6 +367,7 @@ struct LiveSessionState: Hashable {
         guard exercises.indices.contains(index), !exercises[index].hasDoneWork else { return }
         let focusedId = focused?.id
         exercises.remove(at: index)
+        normalizeSupersets()
         if let focusedId, let kept = exercises.firstIndex(where: { $0.id == focusedId }) {
             focus = kept
         } else {
@@ -542,7 +581,7 @@ extension LiveSet: Codable {
 
 extension LiveExercise: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, skipped
+        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, skipped, supersetId
     }
 
     init(from decoder: Decoder) throws {
@@ -564,6 +603,7 @@ extension LiveExercise: Codable {
         cardio = try c.decodeIfPresent(CardioTarget.self, forKey: .cardio)
         cardioLog = try c.decodeIfPresent(CardioLog.self, forKey: .cardioLog)
         skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
+        supersetId = try c.decodeIfPresent(String.self, forKey: .supersetId)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -585,6 +625,7 @@ extension LiveExercise: Codable {
         try c.encode(cardio, forKey: .cardio)
         try c.encode(cardioLog.map(CardioLogJSON.init), forKey: .cardioLog)
         try c.encode(skipped, forKey: .skipped)
+        try c.encode(supersetId, forKey: .supersetId)
     }
 }
 

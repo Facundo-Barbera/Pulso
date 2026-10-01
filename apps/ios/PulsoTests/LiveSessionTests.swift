@@ -59,7 +59,7 @@ final class LiveSessionTests: XCTestCase {
 
         let exercises = try XCTUnwrap(json["exercises"] as? [[String: Any]])
         XCTAssertEqual(Set(exercises[0].keys), ["id", "exerciseId", "name", "equipment", "kind", "modality", "repMin", "repMax", "targetRpe", "targetRir",
-                                               "restSeconds", "notes", "hint", "sets", "cardio", "cardioLog", "skipped"])
+                                               "restSeconds", "notes", "hint", "sets", "cardio", "cardioLog", "skipped", "supersetId"])
         XCTAssertEqual(exercises[0]["id"] as? String, "pe1")
         XCTAssertEqual(exercises[0]["equipment"] as? String, "barbell")
         XCTAssertTrue(exercises[0]["modality"] is NSNull)
@@ -321,6 +321,49 @@ final class LiveSessionTests: XCTestCase {
         let (same, keptNothing) = LiveSessionState.merge(remote: local, local: local)
         XCTAssertFalse(keptNothing)
         XCTAssertEqual(same, local)
+    }
+
+    // MARK: Supersets
+
+    private func paired() -> LiveSessionState {
+        var d = day
+        d.exercises[0].supersetId = "a"
+        d.exercises[1].supersetId = "a"
+        return LiveSessionState(day: d, programId: "p", suggestions: [:], now: t0)
+    }
+
+    func testSupersetAlternatesAndRestsAfterTheRound() {
+        var s = paired()
+        XCTAssertEqual(s.superset(of: 0), 0..<2)
+        XCTAssertTrue(s.current! == (0, 0))
+        s.toggle(exercise: 0, set: 0, now: t0)
+        XCTAssertEqual(s.focus, 1, "Straight to the partner")
+        XCTAssertNil(s.restEndsAt, "No rest inside the round")
+        XCTAssertTrue(s.current! == (1, 0))
+        s.toggle(exercise: 1, set: 0, now: t0.addingTimeInterval(30))
+        XCTAssertEqual(s.focus, 0, "Back to the first for the next round")
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(30 + 60), "The last member's rest")
+        s.toggle(exercise: 0, set: 1, now: t0.addingTimeInterval(200))
+        s.toggle(exercise: 1, set: 1, now: t0.addingTimeInterval(230))
+        // The curl has 2 sets, the press 3: the press finishes alone, with its rest.
+        XCTAssertTrue(s.current! == (0, 2))
+        s.toggle(exercise: 0, set: 2, now: t0.addingTimeInterval(400))
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(400 + 120))
+    }
+
+    func testSupersetIdsNormalizeAndSurviveTheJSON() throws {
+        XCTAssertEqual(Superset.normalize(["a", nil, "a", "a"], cardio: [false, false, false, false]), [nil, nil, "a", "a"])
+        XCTAssertEqual(Superset.normalize(["a", "a"], cardio: [false, true]), [nil, nil])
+        XCTAssertEqual(Superset.pair(1, 0, in: [nil, nil, nil], cardio: [false, false, false])?.prefix(2).allSatisfy { $0 != nil }, true)
+        XCTAssertNil(Superset.pair(0, 2, in: [nil, nil, nil], cardio: [false, false, false]))
+        XCTAssertEqual(Superset.unpair(0, in: ["a", "a", "a"], cardio: [false, false, false]), [nil, "a", "a"])
+
+        var s = paired()
+        s.move(fromOffsets: [1], toOffset: 3)
+        XCTAssertEqual(s.exercises.map(\.supersetId), [nil, nil, nil], "Moved apart, the pair is undone")
+
+        let round = try JSONDecoder().decode(LiveSessionState.self, from: JSONEncoder().encode(paired()))
+        XCTAssertEqual(round.exercises.map(\.supersetId), ["a", "a", nil])
     }
 
     // MARK: Logging all and effort
