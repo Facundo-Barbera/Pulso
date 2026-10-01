@@ -50,3 +50,4 @@ export * from "./daily";
 export * from "./sleep";
 export * from "./medication";
 export * from "./coach";
+export * from "./mcp";
