@@ -71,6 +71,7 @@ describe("createProgram", () => {
     expect(created.days[0]?.exercises[1]).toMatchObject({
       exerciseId: "remo-polea-baja",
       exerciseName: "Remo en polea baja",
+      equipment: "cable",
       sets: 3,
       repMin: 8,
       repMax: 12,

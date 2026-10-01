@@ -106,6 +106,7 @@ type ProgramExerciseRow = {
   day_id: string;
   exercise_id: string;
   exercise_name: string;
+  equipment: Exercise["equipment"];
   sets: number;
   rep_min: number;
   rep_max: number;
@@ -121,7 +122,7 @@ export function getProgram(id: string): Program | undefined {
   const days = db().query<DayRow, [string]>("SELECT id, name, focus, weekday FROM program_days WHERE program_id = ? ORDER BY position").all(id);
   const exercises = db()
     .query<ProgramExerciseRow, [string]>(
-      `SELECT pe.*, e.name AS exercise_name FROM program_exercises pe
+      `SELECT pe.*, e.name AS exercise_name, e.equipment FROM program_exercises pe
        JOIN program_days d ON d.id = pe.day_id JOIN exercises e ON e.id = pe.exercise_id
        WHERE d.program_id = ? ORDER BY pe.position`,
     )
@@ -130,6 +131,7 @@ export function getProgram(id: string): Program | undefined {
     id: r.id,
     exerciseId: r.exercise_id,
     exerciseName: r.exercise_name,
+    equipment: r.equipment,
     sets: r.sets,
     repMin: r.rep_min,
     repMax: r.rep_max,

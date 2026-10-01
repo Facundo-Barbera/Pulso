@@ -32,6 +32,7 @@ export type ProgramExercise = {
   id: string;
   exerciseId: string;
   exerciseName: string;
+  equipment: Equipment;
   sets: number;
   repMin: number;
   repMax: number;
@@ -61,7 +62,7 @@ export type Program = {
   days: ProgramDay[];
 };
 
-export type ProgramExerciseInput = Omit<ProgramExercise, "id" | "exerciseName" | "targetRpe" | "targetRir" | "notes"> & {
+export type ProgramExerciseInput = Omit<ProgramExercise, "id" | "exerciseName" | "equipment" | "targetRpe" | "targetRir" | "notes"> & {
   targetRpe?: number | null;
   targetRir?: number | null;
   notes?: string | null;
