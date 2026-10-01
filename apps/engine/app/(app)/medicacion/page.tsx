@@ -31,6 +31,8 @@ function scheduleLine(s: MedicationSchedule): string {
 export default function Medicacion() {
   const page = medicationPage();
   const empty = page.medications.length === 0;
+  // With only as-needed meds there is nothing to schedule or score: lead with what was taken.
+  const scheduled = page.medications.some((m) => m.active && !m.schedule.asNeeded);
   return (
     <MedicationEditorProvider today={page.date}>
       <Page>
@@ -46,11 +48,12 @@ export default function Medicacion() {
           <>
             <Hero page={page} />
             <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              <TodayCard page={page} delay={60} />
+              {scheduled && <TodayCard page={page} delay={60} />}
               {page.asNeeded.length > 0 && <AsNeededCard page={page} delay={110} />}
-              <AdherenceCard report={page.adherence} delay={160} />
+              {!scheduled && <HistoryCard page={page} delay={160} />}
+              {scheduled && <AdherenceCard report={page.adherence} delay={160} />}
               <MedicationsCard medications={page.medications} delay={210} />
-              <HistoryCard page={page} delay={260} />
+              {scheduled && <HistoryCard page={page} delay={260} />}
             </div>
           </>
         )}
@@ -60,6 +63,7 @@ export default function Medicacion() {
 }
 
 function Hero({ page }: { page: MedicationPage }) {
+  if (!page.medications.some((m) => m.active && !m.schedule.asNeeded)) return <AsNeededHero page={page} />;
   const { slots, next } = page.day;
   const taken = slots.filter((s) => s.status === "tomada").length;
   const streak = page.adherence.overall.currentStreak;
@@ -105,6 +109,32 @@ function Hero({ page }: { page: MedicationPage }) {
               Quedan pocas: {low.map((m) => `${m.name} (${m.stock})`).join(", ")}.
             </p>
           )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** No schedules: today's count of doses taken, and the last one. */
+function AsNeededHero({ page }: { page: MedicationPage }) {
+  const takenToday = page.asNeeded.reduce((n, a) => n + a.today, 0);
+  const today = page.history.find((d) => d.date === page.date)?.entries.filter((e) => e.status === "tomada") ?? [];
+  const last = today[0];
+  return (
+    <Card className="relative overflow-hidden !p-6 md:!p-8">
+      <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: MED }} aria-hidden />
+      <div className="relative flex flex-col items-center gap-7 md:flex-row md:gap-10">
+        <Ring value={takenToday > 0 ? 100 : null} color={MED} glow={takenToday > 0} size={184} stroke={15} label={`${takenToday} tomas hoy`}>
+          <div>
+            <p className="tabular text-[52px] leading-none font-semibold tracking-tight">{takenToday}</p>
+            <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">{takenToday === 1 ? "Toma hoy" : "Tomas hoy"}</p>
+          </div>
+        </Ring>
+        <div className="w-full min-w-0 flex-1 text-center md:text-left">
+          <p className="text-[22px] font-semibold tracking-tight">{last ? `Última: ${last.name}${last.takenAt ? ` a las ${fmtTime(last.takenAt)}` : ""}` : "Nada tomado hoy"}</p>
+          <p className="text-muted-foreground mt-1.5 text-[15px]">
+            {today.length > 1 ? today.map((e) => `${e.name}${e.takenAt ? ` ${fmtTime(e.takenAt)}` : ""}`).join(" · ") : "Marca «Tomé una» cada vez que tomes algo; queda en el historial."}
+          </p>
         </div>
       </div>
     </Card>
