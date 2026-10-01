@@ -2,11 +2,14 @@ import SwiftUI
 
 /// One exercise, in two segments. Guía: the looping demonstration as the hero,
 /// the muscles it works, how to do it, technique videos and the person's notes.
-/// Rendimiento: records and the history chart.
+/// Rendimiento: records and the history chart. Opened from a live session it
+/// starts with today's targets and the machine's unit.
 struct ExerciseDetailView: View {
     let exerciseId: String
     /// Shown as the title until the detail arrives.
     var name: String?
+    /// The exercise in the live session, for the "Hoy" card.
+    var today: LiveExercise? = nil
     @State private var catalog = ExerciseCatalog.shared
     @State private var segment = Segment.guide
     @State private var failed = false
@@ -22,6 +25,7 @@ struct ExerciseDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if let today { TodayCard(exercise: today) }
                 Picker("Sección", selection: $segment.animation(.snappy)) {
                     ForEach(Segment.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -57,6 +61,48 @@ struct ExerciseDetailView: View {
         _ = catalog.detail(exerciseId) // the disk copy first: the gym may have no signal
         let fresh = await catalog.refresh(exerciseId)
         failed = fresh == nil
+    }
+}
+
+/// Today's prescription in full words, the effort and rest advice, the engine's
+/// reason for the load, the notes and the machine's unit.
+private struct TodayCard: View {
+    let exercise: LiveExercise
+
+    private var notes: String? { exercise.notes.flatMap { $0.isEmpty ? nil : $0 } }
+
+    var body: some View {
+        Card {
+            CardTitle(text: "Hoy", systemImage: "target")
+            Text(exercise.prescription)
+                .font(.title3.bold())
+                .fontDesign(.rounded)
+                .foregroundStyle(Theme.training)
+            if let guidance = exercise.guidance {
+                Text(guidance).font(.subheadline)
+            }
+            if let hint = exercise.hint, !hint.isEmpty {
+                Label(hint, systemImage: "chart.line.uptrend.xyaxis")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if let notes {
+                Label(notes, systemImage: "text.quote")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if Equipment.needsLoad(exercise.equipment) {
+                Divider()
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Unidad de esta máquina").font(.subheadline.weight(.medium))
+                        Text("Se queda para las próximas sesiones.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    UnitPicker(exerciseId: exercise.exerciseId)
+                }
+            }
+        }
     }
 }
 

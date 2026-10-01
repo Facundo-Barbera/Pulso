@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The session in the gym, one exercise per screen: "Ejercicio 2 de 6" and a
-/// strip of the day's exercises up top, the focused exercise (or cardio block)
-/// paging sideways, and a glass bar at the bottom that is the rest countdown
-/// while resting and "Siguiente" otherwise.
+/// The session in the gym, one exercise per screen. Up top only the name with
+/// the time and sets in the title, and a thin strip of the day's exercises;
+/// the focused exercise (or cardio block) pages sideways; at the bottom a slim
+/// rest bar while resting and "Siguiente" otherwise.
 struct LiveSessionView: View {
     let session: LiveSession
     let store: TrainingStore
@@ -25,7 +25,7 @@ struct LiveSessionView: View {
             VStack(spacing: 0) {
                 SessionStrip(state: state) { index in focus.wrappedValue = index }
                     .padding(.horizontal, Theme.padding)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 4)
                 if state.exercises.isEmpty {
                     ScrollView {
                         EmptyStateView(systemImage: "dumbbell", title: "Sesión sin ejercicios", message: "Añade uno o pídeselo al Coach.", tint: Theme.training, actionTitle: "Editar sesión") { editing = true }
@@ -54,7 +54,7 @@ struct LiveSessionView: View {
             }
             .overlay(alignment: .top) {
                 if session.coachUndo != nil {
-                    UndoBanner(undo: session.undoCoach, close: session.dismissUndo)
+                    UndoBanner(text: session.coachSummary ?? "El Coach cambió la sesión", undo: session.undoCoach, close: session.dismissUndo)
                         .padding(.horizontal, Theme.padding)
                         .padding(.top, 4)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -67,15 +67,18 @@ struct LiveSessionView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cerrar", systemImage: "chevron.down") { dismiss() }
                 }
+                ToolbarItem(placement: .principal) {
+                    SessionTitle(state: state)
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Coach", systemImage: "sparkles") { coach = true }
                         .tint(Theme.training)
-                    Button("Editar sesión", systemImage: "list.bullet") { editing = true }
+                    Menu("Más", systemImage: "ellipsis") { menu }
                 }
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Terminar") { confirmEnd = true }
-                        .buttonStyle(.glassProminent)
+                        .fontWeight(.semibold)
                         .tint(Theme.training)
                 }
             }
@@ -124,14 +127,31 @@ struct LiveSessionView: View {
         }
     }
 
+    /// The focused exercise's actions, and the session's list.
+    @ViewBuilder private var menu: some View {
+        Button("Editar sesión", systemImage: "list.bullet") { editing = true }
+        if let focused = state.focused {
+            let index = state.focus
+            Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") {
+                swapping = SwapTarget(index: index, exerciseId: focused.exerciseId, name: focused.name)
+            }
+            Button(focused.skipped ? "Retomar ejercicio" : "Saltar ejercicio", systemImage: focused.skipped ? "arrow.uturn.backward" : "forward") {
+                withAnimation(.snappy) { session.setSkipped(index, !focused.skipped) }
+            }
+        }
+    }
+
     private var endMessage: String {
         let cardio = state.cardioLogs.count
+        let done: String
         switch (state.setsDone, cardio) {
-        case (0, 0): return "Aún no has hecho ninguna serie."
-        case (let sets, 0): return "\(sets) de \(state.setsTotal) series hechas."
-        case (0, let blocks): return blocks == 1 ? "1 bloque de cardio hecho." : "\(blocks) bloques de cardio hechos."
-        case (let sets, let blocks): return "\(sets) de \(state.setsTotal) series y \(blocks) de cardio hechos."
+        case (0, 0): done = "Aún no has hecho ninguna serie."
+        case (let sets, 0): done = "\(sets) de \(state.setsTotal) series hechas."
+        case (0, let blocks): done = blocks == 1 ? "1 bloque de cardio hecho." : "\(blocks) bloques de cardio hechos."
+        case (let sets, let blocks): done = "\(sets) de \(state.setsTotal) series y \(blocks) de cardio hechos."
         }
+        let skipped = state.skippedNames
+        return skipped.isEmpty ? done : "\(done)\nSaltados: \(TrainingText.list(skipped))."
     }
 }
 
@@ -144,51 +164,53 @@ private struct SwapTarget: Identifiable {
 
 // MARK: - Header
 
-/// Tiempo · Volumen · Series hechas, and one capsule per exercise filling as
-/// its sets are done. Tap a capsule to jump to it.
+/// The nav bar's title: the session's name, and its time and sets on one quiet line.
+private struct SessionTitle: View {
+    let state: LiveSessionState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(state.name)
+                .font(.headline)
+            TimelineView(.periodic(from: state.startedAt, by: 1)) { context in
+                let elapsed = max(0, context.date.timeIntervalSince(state.startedAt))
+                Text("\(Duration.seconds(elapsed).formatted(.time(pattern: elapsed >= 3600 ? .hourMinuteSecond : .minuteSecond))) · \(state.setsDone) de \(state.setsTotal) series")
+                    .font(.caption)
+                    .fontDesign(.rounded)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: state.setsDone)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One thin capsule per exercise filling as its sets are done; a skipped one is
+/// hollow and dashed with a forward glyph. Tap a capsule to jump to it.
 private struct SessionStrip: View {
     let state: LiveSessionState
     let select: (Int) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                stat("Tiempo") { Text(state.startedAt, style: .timer) }
-                stat("Volumen") { Text("\(Int(state.volumeKg.rounded()).formatted()) kg").contentTransition(.numericText()) }
-                stat("Series hechas") { Text("\(state.setsDone) de \(state.setsTotal)").contentTransition(.numericText()) }
-            }
-            .animation(.snappy, value: state.setsDone)
-
-            HStack(spacing: 4) {
-                ForEach(Array(state.exercises.enumerated()), id: \.element.id) { index, exercise in
-                    Button { select(index) } label: {
-                        StripCapsule(exercise: exercise, current: index == state.focus)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Ejercicio \(index + 1), \(exercise.name)")
-                    .accessibilityValue(exercise.skipped ? "Saltado" : exercise.done ? "Hecho" : index == state.focus ? "En pantalla" : "Pendiente")
+        HStack(spacing: 4) {
+            ForEach(Array(state.exercises.enumerated()), id: \.element.id) { index, exercise in
+                Button { select(index) } label: {
+                    StripCapsule(exercise: exercise, current: index == state.focus)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 16)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ejercicio \(index + 1), \(exercise.name)")
+                .accessibilityValue(exercise.skipped ? "Saltado" : exercise.done ? "Hecho" : index == state.focus ? "En pantalla" : "Pendiente")
             }
-            .animation(.snappy, value: state.exercises)
-            .animation(.snappy, value: state.focus)
         }
-    }
-
-    private func stat(_ title: String, @ViewBuilder value: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            value()
-                .font(.headline)
-                .fontDesign(.rounded)
-                .monospacedDigit()
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
+        .animation(.snappy, value: state.exercises)
+        .animation(.snappy, value: state.focus)
     }
 }
 
@@ -203,21 +225,29 @@ private struct StripCapsule: View {
     }
 
     var body: some View {
-        Capsule()
-            .fill(Color.secondary.opacity(exercise.skipped ? 0.07 : 0.2))
-            .overlay(alignment: .leading) {
-                GeometryReader { proxy in
-                    Capsule()
-                        .fill(Theme.training.gradient)
-                        .frame(width: proxy.size.width * fraction)
+        if exercise.skipped && !exercise.hasDoneWork {
+            Capsule()
+                .strokeBorder(Color.secondary.opacity(current ? 0.9 : 0.55), style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
+                .frame(height: 12)
+                .overlay {
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundStyle(.secondary)
                 }
-            }
-            .clipShape(Capsule())
-            .frame(height: current ? 10 : 6)
-            .padding(3)
-            .overlay {
-                if current { Capsule().strokeBorder(Theme.training.opacity(0.7), lineWidth: 1.5) }
-            }
+        } else {
+            Capsule()
+                .fill(current ? Theme.training.opacity(0.28) : Color.secondary.opacity(0.2))
+                .overlay(alignment: .leading) {
+                    GeometryReader { proxy in
+                        Capsule()
+                            .fill(Theme.training.gradient)
+                            .frame(width: proxy.size.width * fraction)
+                    }
+                }
+                .clipShape(Capsule())
+                .frame(height: current ? 6 : 4)
+                .opacity(exercise.skipped ? 0.5 : 1)
+        }
     }
 }
 
@@ -234,7 +264,7 @@ private struct BottomBar: View {
             let state = session.state
             Group {
                 if state.resting(at: context.date), let start = state.restStartedAt, let end = state.restEndsAt {
-                    RestPanel(now: context.date, start: start, end: end, next: state.activityState(now: end), session: session)
+                    RestBar(now: context.date, start: start, end: end, session: session)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else if state.allDone || state.exercises.isEmpty {
                     if state.hasWork {
@@ -263,9 +293,9 @@ private struct BottomBar: View {
         .padding(.bottom, 8)
     }
 
-    /// The next exercise on the page order, else one left behind.
+    /// The next exercise still to do (never a skipped or finished one), wrapping to one left behind.
     private func nextIndex(_ state: LiveSessionState) -> Int? {
-        state.focus + 1 < state.exercises.count ? state.focus + 1 : state.nextPending(after: state.focus)
+        state.nextPending(after: state.focus)
     }
 }
 
@@ -295,57 +325,78 @@ private struct NextExerciseLabel: View {
     }
 }
 
-/// 58 ring + 2 × 12 spacing + ~76 buttons + 2 × 16 padding leave ≥ 153 pt for the countdown at 375 pt.
-private struct RestPanel: View {
+/// Resting, on one slim line: a small draining ring, the countdown, −15 s, +15 s
+/// and "Saltar". Each tap buzzes; the Live Activity follows the change.
+private struct RestBar: View {
     let now: Date
     let start: Date
     let end: Date
-    let next: TrainingActivityAttributes.ContentState
     let session: LiveSession
+    @State private var taps = 0
 
     var body: some View {
         let remaining = max(0, end.timeIntervalSince(now))
         let fraction = remaining / max(1, end.timeIntervalSince(start))
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             ZStack {
-                Circle().stroke(Theme.training.opacity(0.2), lineWidth: 7)
+                Circle().stroke(Theme.training.opacity(0.2), lineWidth: 4)
                 Circle()
                     .trim(from: 0, to: fraction)
-                    .stroke(Theme.training, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .stroke(Theme.training, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Image(systemName: "timer").font(.title3.weight(.semibold)).foregroundStyle(Theme.training)
             }
-            .frame(width: 58, height: 58)
+            .frame(width: 26, height: 26)
+            .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Duration.seconds(remaining.rounded(.up)).formatted(.time(pattern: .minuteSecond)))
-                    .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
-                    .contentTransition(.numericText(countsDown: true))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text("Luego: \(next.exerciseName)\(next.target.isEmpty ? "" : " · \(next.target)")")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(spacing: 8) {
-                Button("+15 s") { session.extendRest(by: 15) }
-                    .buttonStyle(.glass)
-                Button("Saltar") { withAnimation(.snappy) { session.skipRest() } }
+            Text(Duration.seconds(remaining.rounded(.up)).formatted(.time(pattern: .minuteSecond)))
+                .font(.title2.bold())
+                .fontDesign(.rounded)
+                .monospacedDigit()
+                .contentTransition(.numericText(countsDown: true))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .accessibilityLabel("Descanso")
+                .accessibilityValue(Duration.seconds(remaining.rounded(.up)).formatted(.units(allowed: [.minutes, .seconds], width: .wide)))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    Button("−15 s") { adjust(-15) }
+                        .buttonStyle(.glass)
+                        .accessibilityLabel("Quitar 15 segundos")
+                    Button("+15 s") { adjust(15) }
+                        .buttonStyle(.glass)
+                        .accessibilityLabel("Añadir 15 segundos")
+                    Button("Saltar") {
+                        taps += 1
+                        withAnimation(.snappy) { session.skipRest() }
+                    }
                     .buttonStyle(.glassProminent)
                     .tint(Theme.training)
+                }
             }
             .font(.subheadline.weight(.semibold))
+            .monospacedDigit()
+            .lineLimit(1)
             .fixedSize()
         }
-        .padding(16)
-        .glassEffect(.regular, in: .rect(cornerRadius: 28))
+        .padding(.leading, 14)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
+        .glassEffect(.regular, in: .capsule)
+        .sensoryFeedback(.impact(weight: .light), trigger: taps)
+    }
+
+    private func adjust(_ seconds: TimeInterval) {
+        taps += 1
+        withAnimation(.snappy) { session.extendRest(by: seconds) }
     }
 }
 
 /// "El Coach cambió la sesión · Deshacer", for a few seconds after a change.
 private struct UndoBanner: View {
+    /// "El Coach saltó Remo en máquina y Curl".
+    let text: String
     let undo: () -> Void
     let close: () -> Void
 
@@ -354,7 +405,7 @@ private struct UndoBanner: View {
             Image(systemName: "sparkles")
                 .foregroundStyle(Theme.training)
                 .symbolEffect(.bounce, options: .nonRepeating)
-            Text("El Coach cambió la sesión")
+            Text(text)
                 .font(.subheadline.weight(.medium))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -394,6 +445,16 @@ extension LiveSessionState {
         state.skipRest()
         return state
     }
+
+    /// As the Coach left it: the curl and the treadmill skipped, resting after a set.
+    static var previewSkipped: LiveSessionState {
+        var state = preview
+        state.setSkipped(1, true)
+        state.setSkipped(2, true)
+        state.toggle(exercise: 0, set: 1, now: .now.addingTimeInterval(-30))
+        state.setFocus(1)
+        return state
+    }
 }
 
 #Preview("Fuerza · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
@@ -403,6 +464,10 @@ extension LiveSessionState {
 #Preview("Fuerza · 440 pt, claro", traits: .fixedLayout(width: 440, height: 956)) {
     LiveSessionView(session: LiveSession(state: .preview), store: .shared)
         .preferredColorScheme(.light)
+}
+
+#Preview("Saltados · 375 pt", traits: .fixedLayout(width: 375, height: 812)) {
+    LiveSessionView(session: LiveSession(state: .previewSkipped), store: .shared)
 }
 
 #Preview("Fuerza · 375 pt, XXL", traits: .fixedLayout(width: 375, height: 812)) {
