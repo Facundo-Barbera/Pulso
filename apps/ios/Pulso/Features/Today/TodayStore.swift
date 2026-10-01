@@ -53,6 +53,9 @@ final class TodayStore {
         if let api = model.api, HealthSync.available {
             do {
                 try await HealthMetrics.requestAccess()
+                #if DEBUG
+                await HealthDiagnostics.logReport()
+                #endif
                 let days = await HealthMetrics.recentDays()
                 if !days.isEmpty { _ = try await api.syncDaily(days) }
             } catch {
