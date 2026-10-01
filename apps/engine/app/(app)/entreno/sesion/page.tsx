@@ -9,7 +9,11 @@ import { Logger } from "../_components/logger";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Sesión" };
 
-/** The session logger: resumes the one in progress in this browser, or starts `?dia=<day id>`. */
+/**
+ * The session logger: resumes the one in progress in this browser, or starts
+ * `?dia=<day id>` — as the Coach adjusted it, when it reviewed that day and the
+ * person didn't choose "Entrenar normal".
+ */
 export default async function Sesion({ searchParams }: { searchParams: Promise<{ dia?: string }> }) {
   if (!(await canEdit())) {
     return (
@@ -23,9 +27,10 @@ export default async function Sesion({ searchParams }: { searchParams: Promise<{
   }
   const { dia } = await searchParams;
   const view = entrenoOverview();
+  const days = view.adjusted ? view.days.map((d) => (d.id === view.adjusted!.id ? view.adjusted! : d)) : view.days;
   return (
     <Page>
-      <Logger days={view.days} programId={view.program?.id ?? null} dayId={dia ?? null} defaultUnit={view.defaultUnit} />
+      <Logger days={days} programId={view.program?.id ?? null} dayId={dia ?? null} defaultUnit={view.defaultUnit} />
     </Page>
   );
 }

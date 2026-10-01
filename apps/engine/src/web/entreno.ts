@@ -146,6 +146,8 @@ export type EntrenoOverview = {
   sessions: Record<string, HistoryEntry>;
   /** the Coach's review of the next day, when there is one */
   adjustment: NextAdjustment | null;
+  /** the next day as the Coach adjusted it, when that applies: starting it uses this */
+  adjusted: PlanDay | null;
 };
 
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
@@ -214,12 +216,12 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
     }),
   );
   const shared = { history, blocks, sessions: opened, adjustment: view.adjustment ?? null };
-  if (!program) return { defaultUnit, program: null, nextDayId: null, days: [], ...shared };
+  if (!program) return { defaultUnit, program: null, nextDayId: null, days: [], adjusted: null, ...shared };
 
   const week = blocks.find((b) => b.programId === program.id)?.currentWeek ?? 1;
   const media = idsWithMedia();
   const weightKg = bodyWeight();
-  const days = program.days.map((day, i): PlanDay => ({
+  const planDay = (day: ProgramDay, i: number, suggestions: Record<string, LoadSuggestion>): PlanDay => ({
     id: day.id,
     name: day.name,
     focus: day.focus,
@@ -229,7 +231,7 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
     minutes: dayMinutes(day),
     kcal: dayKcal(day, weightKg),
     exercises: day.exercises.map((ex) => {
-      const suggestion = view.suggestions[ex.id] ?? null;
+      const suggestion = suggestions[ex.id] ?? null;
       const unit = unitIn(units, ex.exerciseId);
       return {
         ...ex,
@@ -242,12 +244,17 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
         unit,
       };
     }),
-  }));
+  });
+  const days = program.days.map((day, i) => planDay(day, i, view.suggestions));
+  const adjustment = view.adjustment ?? null;
+  const applies = adjustment && adjustment.status === "ready" && !adjustment.noChange && !adjustment.dismissed && adjustment.changes.length > 0;
+  const adjusted = applies ? planDay(adjustment.day, program.days.findIndex((d) => d.id === adjustment.dayId), adjustment.suggestions) : null;
   return {
     defaultUnit,
     program: { id: program.id, name: program.name, goal: program.goal, weeks: program.weeks, notes: program.notes, week, deload: isDeload(week, program.weeks, program.notes) },
     nextDayId: view.nextDayId,
     days,
+    adjusted,
     ...shared,
   };
 }
