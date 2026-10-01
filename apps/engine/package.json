@@ -1,0 +1,26 @@
+{
+  "name": "@pulso/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pulso headless: the Next server that owns the data, the API the iPhone calls, and serves the desktop window.",
+  "scripts": {
+    "dev": "bun --bun next dev --hostname 127.0.0.1 --port 3230",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start --hostname 127.0.0.1 --port 3230",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@pulso/contract": "workspace:*",
+    "next": "^16.3.8",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^4.3.3"
+  }
+}
