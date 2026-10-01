@@ -8,10 +8,13 @@ struct ProgressRing: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(color.opacity(0.18), lineWidth: lineWidth)
+            Circle().stroke(color.opacity(0.16), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: min(progress, 1))
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(
+                    AngularGradient(colors: [color.mix(with: .white, by: 0.15), color], center: .center),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
                 .rotationEffect(.degrees(-90))
             if progress > 1 {
                 Circle()
@@ -20,12 +23,13 @@ struct ProgressRing: View {
                     .rotationEffect(.degrees(-90))
             }
         }
-        .animation(.spring(duration: 0.6), value: progress)
+        .animation(.snappy(duration: 0.7), value: progress)
     }
 }
 
-/// Today's kcal ring and the three macro rings.
-struct MacroRingsCard: View {
+/// The hero: concentric kcal / protein / carbs / fat rings with the day's kcal in the middle,
+/// and a legend of grams eaten against target.
+struct MacroHero: View {
     let summary: NutritionSummary
     let onSetTargets: () -> Void
 
@@ -37,56 +41,73 @@ struct MacroRingsCard: View {
     var body: some View {
         let totals = summary.totals
         let targets = summary.targets
-        HStack(spacing: 18) {
+        VStack(spacing: 20) {
             ZStack {
-                ProgressRing(progress: ratio(totals.kcal, targets?.kcal), color: Theme.energy, lineWidth: 14)
-                VStack(spacing: 0) {
-                    Text(totals.kcal, format: .number.precision(.fractionLength(0)))
-                        .font(.title2.weight(.bold)).monospacedDigit()
-                        .contentTransition(.numericText())
-                    if let targets {
-                        Text("de \(Int(targets.kcal)) kcal").font(.caption2).foregroundStyle(.secondary)
-                    } else {
-                        Text("kcal").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
+                ProgressRing(progress: ratio(totals.kcal, targets?.kcal), color: Theme.energy, lineWidth: 20)
+                ProgressRing(progress: ratio(totals.protein, targets?.protein), color: Theme.protein, lineWidth: 12)
+                    .padding(24)
+                ProgressRing(progress: ratio(totals.carbs, targets?.carbs), color: Theme.carbs, lineWidth: 12)
+                    .padding(42)
+                ProgressRing(progress: ratio(totals.fat, targets?.fat), color: Theme.fat, lineWidth: 12)
+                    .padding(60)
+                center(totals: totals, targets: targets)
             }
-            .frame(width: 118, height: 118)
+            .frame(width: 236, height: 236)
+            .padding(10) // the outer stroke sits half outside its circle
+            .frame(maxWidth: .infinity)
 
-            VStack(alignment: .leading, spacing: 10) {
-                macroRow("Proteína", totals.protein, targets?.protein, Theme.protein)
-                macroRow("Carbos", totals.carbs, targets?.carbs, Theme.carbs)
-                macroRow("Grasa", totals.fat, targets?.fat, Theme.fat)
-                if targets == nil {
-                    Button("Fijar objetivos", systemImage: "target", action: onSetTargets)
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.borderless)
-                } else if let left = summary.remaining?.kcal {
-                    Text(left >= 0 ? "Quedan \(Int(left)) kcal" : "\(Int(-left)) kcal por encima")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(left >= 0 ? Color.secondary : Theme.energy)
+            if targets == nil {
+                Button("Fijar objetivos", systemImage: "target", action: onSetTargets)
+                    .buttonStyle(.glassProminent)
+            } else {
+                HStack(spacing: 10) {
+                    legend("Proteína", totals.protein, targets?.protein, Theme.protein)
+                    legend("Carbos", totals.carbs, targets?.carbs, Theme.carbs)
+                    legend("Grasa", totals.fat, targets?.fat, Theme.fat)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .fontDesign(.rounded)
     }
 
-    private func macroRow(_ title: String, _ value: Double, _ target: Double?, _ color: Color) -> some View {
-        HStack(spacing: 10) {
-            ProgressRing(progress: ratio(value, target), color: color, lineWidth: 5)
-                .frame(width: 26, height: 26)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Group {
-                    if let target {
-                        Text("\(Int(value.rounded())) / \(Int(target)) g")
-                    } else {
-                        Text("\(Int(value.rounded())) g")
-                    }
-                }
-                .font(.subheadline.weight(.semibold)).monospacedDigit()
+    private func center(totals: NutritionMacros, targets: NutritionTargets?) -> some View {
+        VStack(spacing: 0) {
+            Text(totals.kcal, format: .number.precision(.fractionLength(0)))
+                .font(.system(size: 30, weight: .bold))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: totals.kcal))
+            if let target = targets?.kcal {
+                let left = target - totals.kcal
+                Text(left >= 0 ? "quedan \(Int(left))" : "+\(Int(-left)) kcal")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(left >= 0 ? Color.secondary : Theme.energy)
+                    .contentTransition(.numericText(value: left))
+            } else {
+                Text("kcal").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
         }
+        .animation(.snappy, value: totals.kcal)
+    }
+
+    private func legend(_ title: String, _ value: Double, _ target: Double?, _ color: Color) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text(title).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(value, format: .number.precision(.fractionLength(0)))
+                    .font(.headline).monospacedDigit()
+                    .contentTransition(.numericText(value: value))
+                if let target {
+                    Text("/\(Int(target)) g").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .animation(.snappy, value: value)
     }
 }
 
@@ -101,6 +122,7 @@ struct MacroLine: View {
             part("G", macros.fat, Theme.fat)
         }
         .font(.caption.monospacedDigit())
+        .fontDesign(.rounded)
     }
 
     private func part(_ letter: String, _ value: Double, _ color: Color) -> some View {

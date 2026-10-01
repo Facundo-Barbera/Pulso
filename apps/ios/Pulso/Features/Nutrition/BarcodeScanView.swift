@@ -100,7 +100,7 @@ struct BarcodeScanView: View {
                     .keyboardType(.numberPad)
                     .textFieldStyle(.roundedBorder)
                 Button("Buscar") { Task { await lookup(typed) } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glassProminent)
                     .disabled(typed.count < 8 || looking)
             }
             Spacer()
@@ -176,7 +176,7 @@ struct PortionPicker: View {
                     preset("100 g", 100)
                     preset("30 g", 30)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 .controlSize(.small)
             }
             Section("Comida") {
@@ -201,7 +201,7 @@ struct PortionPicker: View {
                 } label: {
                     Text("Registrar").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .disabled(grams <= 0 || saving)
             }
         }

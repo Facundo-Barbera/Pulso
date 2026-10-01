@@ -37,7 +37,7 @@ struct QuickAddView: View {
                                                 .font(.caption).foregroundStyle(.secondary)
                                         }
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.glass)
                                     .disabled(saving)
                                 }
                             }
@@ -69,7 +69,7 @@ struct QuickAddView: View {
                         field("Energía (kcal)", $kcal, Theme.energy)
                         if kcal == nil && estimatedKcal > 0 {
                             Button("≈ \(Int(estimatedKcal))") { kcal = estimatedKcal.rounded() }
-                                .buttonStyle(.bordered).controlSize(.small)
+                                .buttonStyle(.glass).controlSize(.small)
                         }
                     }
                 } header: {
