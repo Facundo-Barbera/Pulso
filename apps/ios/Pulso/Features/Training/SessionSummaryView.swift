@@ -39,6 +39,7 @@ struct SessionSummaryView: View {
                             }
                         }
                     }
+                    PostWorkoutDoseCard(sessionStart: session.start)
                     ForEach(summary.cutShort, id: \.self) { line in
                         Label {
                             Text("Terminado antes: \(line)")

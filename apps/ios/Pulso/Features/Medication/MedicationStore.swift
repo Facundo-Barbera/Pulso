@@ -86,6 +86,33 @@ final class MedicationStore {
         await refresh()
     }
 
+    /// A workout just ended, was saved or synced from Salud: the training slots
+    /// resolve differently now, so reload them and their reminders.
+    func refreshAfterWorkout() async {
+        if loaded && medications.isEmpty { return }
+        await refresh()
+    }
+
+    /// The latest workout end seen from Salud, so a sync with nothing new costs nothing.
+    private var lastHealthWorkoutEnd: Double?
+
+    /// After a Salud sync: replans only when a workout ended today that wasn't seen yet
+    /// and something is tied to training.
+    func healthWorkoutsSynced(_ workouts: [WorkoutInput]) async {
+        let today = LocalClock.date(.now)
+        let ends = workouts.map(\.endedAt).filter { LocalClock.date(Date(timeIntervalSince1970: $0 / 1000)) == today }
+        guard let latest = ends.max(), latest > (lastHealthWorkoutEnd ?? 0) else { return }
+        lastHealthWorkoutEnd = latest
+        if loaded && !medications.contains(where: { $0.active && $0.schedule.training != nil }) { return }
+        await refresh()
+    }
+
+    /// Today's doses tied to training that are still to take, for the post-workout card.
+    var pendingAfterWorkout: [DoseSlot] {
+        guard let day, day.date == LocalClock.date(.now) else { return [] }
+        return day.slots.filter { $0.moment == .entreno && $0.isPending }
+    }
+
     /// Doses actually taken today, scheduled or not.
     var takenToday: Int {
         (day?.taken ?? 0) + (day?.asNeeded.count { $0.status == .tomada } ?? 0)
