@@ -1,8 +1,11 @@
-import { ComingSoon } from "../../_ui/coming-soon";
+import { coachBrief } from "@/src/web/coach";
+import { NewChatView } from "./_components/chat";
 
+export const dynamic = "force-dynamic";
 export const metadata = { title: "Coach" };
 
-// Placeholder: the next wave replaces this page (see WEB.md).
+/** /coach: a new chat beside the list on wide screens; on the phone the list alone (the frame hides this). */
 export default function Coach() {
-  return <ComingSoon href="/coach" subtitle="Tu entrenador personal, con todos tus datos a mano." line="Pronto podrás hablar con el Coach desde la Mac, igual que en el iPhone." />;
+  const { brief } = coachBrief();
+  return <NewChatView brief={brief} replyTo={null} starter={null} />;
 }
