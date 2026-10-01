@@ -7,6 +7,14 @@ struct SessionSummaryView: View {
     @State private var celebrate = false
 
     private var session: TrainingSession { summary.session }
+    private var cardio: [CardioLog] { session.cardio ?? [] }
+    private var cardioMinutes: Double { session.cardioMinutes ?? cardio.reduce(0) { $0 + $1.durationSeconds } / 60 }
+
+    /// Sum of a cardio field over the blocks that logged it; nil when none did.
+    private func total(_ field: KeyPath<CardioLog, Double?>) -> Double? {
+        let values = cardio.compactMap { $0[keyPath: field] }
+        return values.isEmpty ? nil : values.reduce(0, +)
+    }
 
     var body: some View {
         NavigationStack {
@@ -15,8 +23,21 @@ struct SessionSummaryView: View {
                     hero
                     HStack(spacing: 12) {
                         Tile(value: Duration.seconds(session.duration).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated)), label: "Duración", systemImage: "clock")
-                        Tile(value: "\(session.sets.count)", label: "Series", systemImage: "square.stack.3d.up")
-                        Tile(value: "\(Int(session.volumeKg).formatted()) kg", label: "Volumen", systemImage: "scalemass")
+                        if !session.sets.isEmpty || cardio.isEmpty {
+                            Tile(value: "\(session.sets.count)", label: "Series", systemImage: "square.stack.3d.up")
+                            Tile(value: "\(Int(session.volumeKg).formatted()) kg", label: "Volumen", systemImage: "scalemass")
+                        }
+                    }
+                    if !cardio.isEmpty {
+                        HStack(spacing: 12) {
+                            Tile(value: "\(Int(cardioMinutes.rounded())) min", label: cardio.count == 1 ? "Cardio" : "Cardio · \(cardio.count) bloques", systemImage: "heart")
+                            if let km = total(\.distanceKm) {
+                                Tile(value: "\(km.formatted(.number.precision(.fractionLength(0...2)))) km", label: "Distancia", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                            }
+                            if let kcal = total(\.kcal) {
+                                Tile(value: "\(Int(kcal)) kcal", label: "Energía", systemImage: "flame")
+                            }
+                        }
                     }
                     if !summary.prs.isEmpty {
                         Card {
@@ -77,7 +98,7 @@ struct SessionSummaryView: View {
             }
             if summary.uploaded {
                 Label("Guardado en tu Mac", systemImage: "desktopcomputer").foregroundStyle(.secondary)
-            } else if !session.sets.isEmpty {
+            } else if !session.sets.isEmpty || !cardio.isEmpty {
                 Label("Se enviará a tu Mac cuando vuelva la conexión", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
             }
         }
@@ -132,5 +153,14 @@ private struct RecordRow: View {
     let session = TrainingSession(id: "s1", name: "Torso A · Fuerza", startedAt: start, endedAt: start + 3_960_000, sets: sets)
     let prs = [TrainingRecord(exerciseId: "press-banca", exerciseName: "Press de banca con barra y agarre cerrado", kind: "e1rm", value: 129.8, previous: 125.4)]
     SessionSummaryView(summary: SessionSummary(session: session, prs: prs, uploaded: true, savedToHealth: true))
+}
+
+#Preview("Resumen con cardio · 375 pt, XXL", traits: .fixedLayout(width: 375, height: 812)) {
+    let start = Date.now.addingTimeInterval(-4_000).timeIntervalSince1970 * 1000
+    let sets = (0..<8).map { SetLog(exerciseId: "press-banca", setIndex: $0, weightKg: 80, reps: 8, rpe: nil, doneAt: start + Double($0) * 200_000) }
+    let cardio = [CardioLog(exerciseId: "cinta", durationSeconds: 960, distanceKm: 2.6, avgHr: 152, kcal: 190, doneAt: start + 3_900_000)]
+    let session = TrainingSession(id: "s2", name: "Torso A", startedAt: start, endedAt: start + 3_960_000, sets: sets, cardio: cardio)
+    SessionSummaryView(summary: SessionSummary(session: session))
+        .dynamicTypeSize(.xxLarge)
 }
 #endif

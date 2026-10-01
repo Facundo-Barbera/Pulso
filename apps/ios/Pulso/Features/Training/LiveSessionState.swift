@@ -1,78 +1,186 @@
 import Foundation
 
-struct LiveSet: Codable, Identifiable, Hashable {
-    var id = UUID()
+// The session in progress as pure values. The JSON is exactly the contract's
+// `LiveSession` (epoch-ms times, explicit nulls), both on disk and to the engine,
+// so the Coach can read and change it. Dates are `Date` in Swift.
+
+/// One set. `doneAt` is nil until checked off.
+struct LiveSet: Identifiable, Hashable {
+    var id: String = LiveSessionState.newId()
     var weightKg: Double
     var reps: Int
-    var doneAt: Date?
+    var rpe: Double? = nil
+    var doneAt: Date? = nil
 
     var done: Bool { doneAt != nil }
 }
 
-struct LiveExercise: Codable, Identifiable, Hashable {
+/// One exercise of the session: the program's prescription as changed for today.
+struct LiveExercise: Identifiable, Hashable {
+    /// The `ProgramExercise.id` it came from, or a fresh id for one added today.
     var id: String
     var exerciseId: String
     var name: String
-    var prescription: String
+    var equipment: String
+    /// "compound", "isolation" or "cardio".
+    var kind: String
+    var modality: String? = nil
+    var repMin: Int
+    var repMax: Int
+    var targetRpe: Double? = nil
+    var targetRir: Int? = nil
     var restSeconds: Int
-    var weightStep: Double
-    var notes: String?
+    var notes: String? = nil
     /// The double-progression reason from the engine, shown under the name.
-    var hint: String?
+    var hint: String? = nil
+    /// Empty for cardio.
     var sets: [LiveSet]
+    var cardio: CardioTarget? = nil
+    /// Filled when a cardio block ends.
+    var cardioLog: CardioLog? = nil
+    /// Passed over today; stays in the list, greyed.
+    var skipped = false
 
-    var done: Bool { sets.allSatisfy(\.done) }
+    var isCardio: Bool { kind == "cardio" }
+    var weightStep: Double { Equipment.weightStep(equipment) }
+    var done: Bool { isCardio ? cardioLog != nil : sets.allSatisfy(\.done) }
+    /// Something was logged, so removing it would lose history.
+    var hasDoneWork: Bool { cardioLog != nil || sets.contains(where: \.done) }
+    /// Neither done nor skipped: where focus moves next.
+    var pending: Bool { !skipped && !done }
+
+    var reps: String { repMin == repMax ? "\(repMin)" : "\(repMin)–\(repMax)" }
+
+    /// "3 × 6–8 · RIR 2", or the cardio target.
+    var prescription: String {
+        if isCardio { return cardio?.summary ?? "Cardio" }
+        var text = "\(sets.count) × \(reps)"
+        if let targetRir { text += " · RIR \(targetRir)" } else if let targetRpe { text += " · RPE \(targetRpe.formatted())" }
+        return text
+    }
+
+    /// The load of the next set to do (or the last one), for "series × reps × kg".
+    var workingWeight: Double { (sets.first { !$0.done } ?? sets.last)?.weightKg ?? 0 }
+
+    /// "4 series × 6–8 reps × 80 kg"
+    var target: String {
+        if isCardio { return prescription }
+        var text = "\(sets.count) \(sets.count == 1 ? "serie" : "series") × \(reps) reps"
+        if workingWeight > 0 { text += " × \(workingWeight.formatted()) kg" }
+        return text
+    }
+
+    /// A new exercise from the library, its sets prefilled with `weightKg`.
+    static func fresh(_ library: LibraryExercise, id: String = LiveSessionState.newId(), weightKg: Double, sets: Int = 3, repMin: Int = 8, repMax: Int = 12, restSeconds: Int = 90) -> LiveExercise {
+        let cardio = library.isCardio
+        return LiveExercise(
+            id: id,
+            exerciseId: library.id,
+            name: library.name,
+            equipment: library.equipment,
+            kind: library.kind,
+            modality: library.modality,
+            repMin: cardio ? 1 : repMin,
+            repMax: cardio ? 1 : repMax,
+            restSeconds: cardio ? 0 : restSeconds,
+            sets: cardio ? [] : (0..<max(1, sets)).map { _ in LiveSet(weightKg: weightKg, reps: repMin) }
+        )
+    }
 }
 
-/// A strength session in progress: pure value logic, persisted as JSON so a
-/// killed app resumes where it was. `LiveSession` adds timers and side effects.
-struct LiveSessionState: Codable, Hashable {
+/// A session in progress: pure value logic, persisted as JSON so a killed app
+/// resumes where it was. `LiveSession` adds timers, sync and side effects.
+struct LiveSessionState: Hashable {
     var id: String
     var programId: String?
     var dayId: String?
     var name: String
     var startedAt: Date
     var exercises: [LiveExercise]
+    /// Index of the exercise on screen.
+    var focus = 0
     var restStartedAt: Date?
     var restEndsAt: Date?
+    /// The engine's version this copy is based on; it bumps it on every write.
+    var version = 0
+    var updatedAt: Date
+    var threadId: String?
 
-    /// Sets prefilled from the suggested load (0 kg when there is no history yet).
-    init(day: ProgramDay, programId: String?, suggestions: [String: LoadSuggestion], now: Date = .now) {
-        id = UUID().uuidString.lowercased()
+    static func newId() -> String { UUID().uuidString.lowercased() }
+
+    init(id: String = LiveSessionState.newId(), programId: String?, dayId: String?, name: String, startedAt: Date, exercises: [LiveExercise], focus: Int = 0,
+         restStartedAt: Date? = nil, restEndsAt: Date? = nil, version: Int = 0, updatedAt: Date? = nil, threadId: String? = nil) {
+        self.id = id
         self.programId = programId
-        dayId = day.id
-        name = day.name
-        startedAt = now
-        exercises = day.exercises.map { ex in
+        self.dayId = dayId
+        self.name = name
+        self.startedAt = startedAt
+        self.exercises = exercises
+        self.focus = focus
+        self.restStartedAt = restStartedAt
+        self.restEndsAt = restEndsAt
+        self.version = version
+        self.updatedAt = updatedAt ?? startedAt
+        self.threadId = threadId
+    }
+
+    /// Sets prefilled from the suggested load (else the hand-set one, else 0 kg).
+    init(day: ProgramDay, programId: String?, suggestions: [String: LoadSuggestion], now: Date = .now) {
+        let exercises = day.exercises.map { ex in
             let suggestion = suggestions[ex.id]
-            let set = LiveSet(weightKg: suggestion?.weightKg ?? 0, reps: suggestion?.reps ?? ex.repMin)
+            let weight = suggestion?.weightKg ?? ex.weightKg ?? 0
+            let reps = suggestion?.reps ?? ex.repMin
             return LiveExercise(
                 id: ex.id,
                 exerciseId: ex.exerciseId,
                 name: ex.exerciseName,
-                prescription: ex.prescription,
+                equipment: ex.equipment,
+                kind: ex.kind ?? "compound",
+                modality: ex.modality,
+                repMin: ex.repMin,
+                repMax: ex.repMax,
+                targetRpe: ex.targetRpe,
+                targetRir: ex.targetRir,
                 restSeconds: ex.restSeconds,
-                weightStep: ex.weightStep,
                 notes: ex.notes,
-                hint: suggestion?.reason,
-                sets: (0..<ex.sets).map { _ in LiveSet(weightKg: set.weightKg, reps: set.reps) }
+                hint: ex.isCardio ? nil : suggestion?.reason,
+                sets: ex.isCardio ? [] : (0..<ex.sets).map { _ in LiveSet(weightKg: weight, reps: reps) },
+                cardio: ex.cardio
             )
         }
+        self.init(programId: programId, dayId: day.id, name: day.name, startedAt: now, exercises: exercises, updatedAt: now)
     }
 
-    var setsTotal: Int { exercises.reduce(0) { $0 + $1.sets.count } }
+    // MARK: Progress
+
+    /// Sets of the exercises still planned, plus any done in a skipped one.
+    var setsTotal: Int { exercises.reduce(0) { $0 + ($1.skipped ? $1.sets.filter(\.done).count : $1.sets.count) } }
     var setsDone: Int { exercises.reduce(0) { $0 + $1.sets.filter(\.done).count } }
     var volumeKg: Double { exercises.flatMap(\.sets).filter(\.done).reduce(0) { $0 + $1.weightKg * Double($1.reps) } }
+    var cardioLogs: [CardioLog] { exercises.compactMap(\.cardioLog) }
+    /// Anything worth saving: a set or a cardio block.
+    var hasWork: Bool { setsDone > 0 || !cardioLogs.isEmpty }
+    var allDone: Bool { !exercises.contains(where: \.pending) }
 
-    /// The first set not yet done, in program order.
+    var focused: LiveExercise? { exercises.indices.contains(focus) ? exercises[focus] : nil }
+
+    /// The first strength set not yet done, in order, skipping passed-over exercises.
     var current: (exercise: Int, set: Int)? {
-        for (e, ex) in exercises.enumerated() {
+        for (e, ex) in exercises.enumerated() where !ex.skipped {
             if let s = ex.sets.firstIndex(where: { !$0.done }) { return (e, s) }
         }
         return nil
     }
 
+    /// The next exercise to do after `index`, wrapping to earlier ones left behind.
+    func nextPending(after index: Int) -> Int? {
+        let order = Array(exercises.indices.dropFirst(index + 1)) + Array(exercises.indices.prefix(max(0, index)))
+        return order.first { exercises[$0].pending }
+    }
+
     func resting(at now: Date = .now) -> Bool { restEndsAt.map { $0 > now } ?? false }
+
+    // MARK: Sets
 
     /// Checks a set off (starting its rest) or un-checks it. Checking carries
     /// the set's weight to the later sets not done yet, so a changed load
@@ -86,11 +194,12 @@ struct LiveSessionState: Codable, Hashable {
             return
         }
         exercises[e].sets[s].doneAt = now
+        exercises[e].skipped = false
         let weight = exercises[e].sets[s].weightKg
         for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
             exercises[e].sets[later].weightKg = weight
         }
-        if current == nil {
+        if current == nil && allDone {
             restStartedAt = nil
             restEndsAt = nil
         } else {
@@ -100,19 +209,51 @@ struct LiveSessionState: Codable, Hashable {
     }
 
     mutating func adjustWeight(exercise e: Int, set s: Int, by steps: Double) {
+        guard has(e, s) else { return }
         let step = exercises[e].weightStep
         exercises[e].sets[s].weightKg = max(0, ((exercises[e].sets[s].weightKg + steps * step) / step).rounded() * step)
     }
 
     mutating func adjustReps(exercise e: Int, set s: Int, by delta: Int) {
+        guard has(e, s) else { return }
         exercises[e].sets[s].reps = max(0, exercises[e].sets[s].reps + delta)
     }
 
-    /// One more set, copying the last one's load and reps.
-    mutating func addSet(exercise e: Int) {
-        guard let last = exercises[e].sets.last else { return }
-        exercises[e].sets.append(LiveSet(weightKg: last.weightKg, reps: last.reps))
+    /// Typed in: any load (plates aren't always on the step), never negative.
+    mutating func setWeight(exercise e: Int, set s: Int, to kg: Double) {
+        guard has(e, s) else { return }
+        exercises[e].sets[s].weightKg = max(0, (kg * 100).rounded() / 100)
     }
+
+    mutating func setReps(exercise e: Int, set s: Int, to reps: Int) {
+        guard has(e, s) else { return }
+        exercises[e].sets[s].reps = max(0, reps)
+    }
+
+    mutating func setRpe(exercise e: Int, set s: Int, to rpe: Double?) {
+        guard has(e, s) else { return }
+        exercises[e].sets[s].rpe = rpe
+    }
+
+    /// One more set, copying the last one's load and reps (or the target's bottom).
+    mutating func addSet(exercise e: Int) {
+        guard exercises.indices.contains(e), !exercises[e].isCardio else { return }
+        let last = exercises[e].sets.last
+        exercises[e].sets.append(LiveSet(weightKg: last?.weightKg ?? 0, reps: last?.reps ?? exercises[e].repMin))
+        exercises[e].skipped = false
+    }
+
+    /// Only a set not done yet: un-check it first to drop a logged one.
+    mutating func removeSet(exercise e: Int, set s: Int) {
+        guard has(e, s), !exercises[e].sets[s].done else { return }
+        exercises[e].sets.remove(at: s)
+    }
+
+    private func has(_ e: Int, _ s: Int) -> Bool {
+        exercises.indices.contains(e) && exercises[e].sets.indices.contains(s)
+    }
+
+    // MARK: Rest
 
     mutating func extendRest(by seconds: TimeInterval, now: Date = .now) {
         guard let end = restEndsAt, end > now else { return }
@@ -124,9 +265,185 @@ struct LiveSessionState: Codable, Hashable {
         restEndsAt = nil
     }
 
-    /// What the engine stores: done sets only, numbered per exercise in the order they were done.
+    // MARK: Focus
+
+    mutating func setFocus(_ index: Int) {
+        guard !exercises.isEmpty else { return focus = 0 }
+        focus = min(max(index, 0), exercises.count - 1)
+    }
+
+    /// After the focused exercise is finished (or skipped), moves on to the next
+    /// one still to do. Returns whether focus moved.
+    @discardableResult
+    mutating func advanceIfDone() -> Bool {
+        guard let ex = focused, !ex.pending, let next = nextPending(after: focus) else { return false }
+        focus = next
+        return true
+    }
+
+    // MARK: Editing (solo hoy)
+
+    /// Drag to reorder; the exercise on screen stays on screen.
+    mutating func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let focusedId = focused?.id
+        // `List.onMove` semantics: `destination` counts the moved rows still in place.
+        let moving = source.filter(exercises.indices.contains).map { exercises[$0] }
+        var kept = exercises.enumerated().filter { !source.contains($0.offset) }.map(\.element)
+        kept.insert(contentsOf: moving, at: min(kept.count, max(0, destination - source.count { $0 < destination })))
+        exercises = kept
+        if let focusedId, let index = exercises.firstIndex(where: { $0.id == focusedId }) { focus = index }
+    }
+
+    /// Appends an exercise and returns its index.
+    @discardableResult
+    mutating func add(_ library: LibraryExercise, weightKg: Double) -> Int {
+        exercises.append(.fresh(library, weightKg: weightKg))
+        return exercises.count - 1
+    }
+
+    /// Only an exercise with nothing logged; skip the others.
+    mutating func remove(at index: Int) {
+        guard exercises.indices.contains(index), !exercises[index].hasDoneWork else { return }
+        let focusedId = focused?.id
+        exercises.remove(at: index)
+        if let focusedId, let kept = exercises.firstIndex(where: { $0.id == focusedId }) {
+            focus = kept
+        } else {
+            setFocus(min(index, exercises.count - 1))
+        }
+    }
+
+    /// Skipping the exercise on screen moves on to the next one.
+    mutating func setSkipped(_ index: Int, _ skipped: Bool) {
+        guard exercises.indices.contains(index) else { return }
+        exercises[index].skipped = skipped
+        if skipped && index == focus { advanceIfDone() }
+    }
+
+    /// New targets for today. Set count can't drop below the sets done; the load
+    /// and the rep range apply to the sets not done yet.
+    mutating func updateTarget(_ index: Int, sets count: Int, repMin: Int, repMax: Int, weightKg: Double?, restSeconds: Int) {
+        guard exercises.indices.contains(index) else { return }
+        var ex = exercises[index]
+        ex.repMin = max(1, repMin)
+        ex.repMax = max(ex.repMin, repMax)
+        ex.restSeconds = max(0, restSeconds)
+        for s in ex.sets.indices where !ex.sets[s].done {
+            if let weightKg { ex.sets[s].weightKg = max(0, weightKg) }
+            ex.sets[s].reps = min(max(ex.sets[s].reps, ex.repMin), ex.repMax)
+        }
+        if !ex.isCardio {
+            let target = max(count, ex.sets.filter(\.done).count, 1)
+            while ex.sets.count < target {
+                let last = ex.sets.last { !$0.done } ?? ex.sets.last
+                ex.sets.append(LiveSet(weightKg: weightKg ?? last?.weightKg ?? 0, reps: last.map { min(max($0.reps, ex.repMin), ex.repMax) } ?? ex.repMin))
+            }
+            while ex.sets.count > target, let last = ex.sets.lastIndex(where: { !$0.done }) {
+                ex.sets.remove(at: last)
+            }
+        }
+        exercises[index] = ex
+    }
+
+    /// "Cambiar ejercicio". With nothing logged it is replaced in place (keeping its
+    /// id and targets). Otherwise the logged sets stay with the exercise actually
+    /// performed and the new one goes right after it with the sets left.
+    /// Returns the index of the new exercise, which gets focus.
+    @discardableResult
+    mutating func swap(_ index: Int, to library: LibraryExercise, weightKg: Double) -> Int {
+        guard exercises.indices.contains(index) else { return focus }
+        var old = exercises[index]
+        let left = old.sets.filter { !$0.done }
+        let reps = left.first?.reps ?? old.repMin
+        var new = old
+        new.exerciseId = library.id
+        new.name = library.name
+        new.equipment = library.equipment
+        new.kind = library.kind
+        new.modality = library.modality
+        new.hint = nil
+        new.notes = nil
+        new.cardioLog = nil
+        new.skipped = false
+        if library.isCardio {
+            new.sets = []
+            new.cardio = old.isCardio ? old.cardio : nil
+            new.restSeconds = 0
+        } else {
+            let count = old.isCardio ? 3 : max(1, old.hasDoneWork ? left.count : old.sets.count)
+            if old.isCardio {
+                new.repMin = 8
+                new.repMax = 12
+                new.restSeconds = 90
+                new.cardio = nil
+            }
+            new.sets = (0..<count).map { _ in LiveSet(weightKg: weightKg, reps: old.isCardio ? new.repMin : reps) }
+        }
+
+        if !old.hasDoneWork {
+            exercises[index] = new
+            focus = index
+            return index
+        }
+        old.sets = old.sets.filter(\.done)
+        exercises[index] = old
+        new.id = Self.newId()
+        exercises.insert(new, at: index + 1)
+        focus = index + 1
+        return index + 1
+    }
+
+    // MARK: Cardio
+
+    mutating func logCardio(_ index: Int, _ log: CardioLog) {
+        guard exercises.indices.contains(index), exercises[index].isCardio else { return }
+        exercises[index].cardioLog = log
+        exercises[index].skipped = false
+    }
+
+    mutating func clearCardioLog(_ index: Int) {
+        guard exercises.indices.contains(index) else { return }
+        exercises[index].cardioLog = nil
+    }
+
+    // MARK: Merging the engine's copy
+
+    /// The engine's copy, keeping what this phone logged that it doesn't have yet:
+    /// checked sets, cardio logs, the rest timer and the exercise on screen.
+    /// `keptLocal` says the result differs from `remote`, so it must be pushed back.
+    static func merge(remote: LiveSessionState, local: LiveSessionState) -> (state: LiveSessionState, keptLocal: Bool) {
+        var merged = remote
+        var kept = false
+        let localExercises = Dictionary(local.exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let localSets = Dictionary(local.exercises.flatMap(\.sets).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for e in merged.exercises.indices {
+            for s in merged.exercises[e].sets.indices {
+                let id = merged.exercises[e].sets[s].id
+                if merged.exercises[e].sets[s].doneAt == nil, let mine = localSets[id], mine.done {
+                    merged.exercises[e].sets[s] = mine
+                    kept = true
+                }
+            }
+            if merged.exercises[e].cardioLog == nil, let log = localExercises[merged.exercises[e].id]?.cardioLog {
+                merged.exercises[e].cardioLog = log
+                kept = true
+            }
+        }
+        merged.restStartedAt = local.restStartedAt
+        merged.restEndsAt = local.restEndsAt
+        if let focusedId = local.focused?.id, let index = merged.exercises.firstIndex(where: { $0.id == focusedId }) {
+            merged.focus = index
+        } else {
+            merged.setFocus(remote.focus)
+        }
+        return (merged, kept)
+    }
+
+    // MARK: Output
+
+    /// What the engine stores: done sets only, numbered per exercise in the order
+    /// they were done, and the cardio blocks in session order.
     func session(endedAt: Date) -> TrainingSession {
-        let ms = { (date: Date) in (date.timeIntervalSince1970 * 1000).rounded() }
         let sets = exercises
             .flatMap { ex in ex.sets.compactMap { set in set.doneAt.map { (ex.exerciseId, set, $0) } } }
             .sorted { $0.2 < $1.2 }
@@ -134,13 +451,24 @@ struct LiveSessionState: Codable, Hashable {
         let logs = sets.map { exerciseId, set, doneAt in
             let index = counts[exerciseId, default: 0]
             counts[exerciseId] = index + 1
-            return SetLog(exerciseId: exerciseId, setIndex: index, weightKg: set.weightKg, reps: set.reps, rpe: nil, doneAt: ms(doneAt))
+            return SetLog(exerciseId: exerciseId, setIndex: index, weightKg: set.weightKg, reps: set.reps, rpe: set.rpe, doneAt: Self.ms(doneAt))
         }
-        return TrainingSession(id: id, programId: programId, dayId: dayId, name: name, startedAt: ms(startedAt), endedAt: ms(endedAt), notes: nil, sets: logs)
+        let cardio = cardioLogs
+        return TrainingSession(
+            id: id, programId: programId, dayId: dayId, name: name,
+            startedAt: Self.ms(startedAt), endedAt: Self.ms(endedAt), notes: nil, sets: logs,
+            // `cardioMinutes` is the engine's to compute (it is not in `SessionInput`).
+            cardio: cardio
+        )
     }
 
-    func activityState(now: Date = .now) -> TrainingActivityAttributes.ContentState {
+    /// The lock screen: the cardio block `cardio` names when given, else the next set.
+    func activityState(now: Date = .now, cardio: (index: Int, status: TrainingActivityAttributes.ContentState.Cardio)? = nil) -> TrainingActivityAttributes.ContentState {
         let resting = resting(at: now)
+        if let cardio, exercises.indices.contains(cardio.index) {
+            let ex = exercises[cardio.index]
+            return .init(exerciseName: ex.name, setLabel: cardio.status.detail, target: ex.cardio?.summary ?? "", setsDone: setsDone, setsTotal: setsTotal, cardio: cardio.status)
+        }
         guard let (e, s) = current else {
             return .init(exerciseName: "Sesión completa", setLabel: "Todas las series hechas", target: "", setsDone: setsDone, setsTotal: setsTotal)
         }
@@ -159,5 +487,215 @@ struct LiveSessionState: Codable, Hashable {
 
     static func target(_ set: LiveSet) -> String {
         set.weightKg > 0 ? "\(set.weightKg.formatted()) kg × \(set.reps)" : "\(set.reps) reps"
+    }
+
+    static func ms(_ date: Date) -> Double { (date.timeIntervalSince1970 * 1000).rounded() }
+    static func date(_ ms: Double) -> Date { Date(timeIntervalSince1970: ms / 1000) }
+}
+
+// MARK: - Contract JSON
+
+extension LiveSet: Codable {
+    private enum CodingKeys: String, CodingKey { case id, weightKg, reps, rpe, doneAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        weightKg = try c.decode(Double.self, forKey: .weightKg)
+        reps = try c.decode(Int.self, forKey: .reps)
+        rpe = try c.decodeIfPresent(Double.self, forKey: .rpe)
+        doneAt = try c.decodeIfPresent(Double.self, forKey: .doneAt).map(LiveSessionState.date)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(weightKg, forKey: .weightKg)
+        try c.encode(reps, forKey: .reps)
+        try c.encode(rpe, forKey: .rpe)
+        try c.encode(doneAt.map(LiveSessionState.ms), forKey: .doneAt)
+    }
+}
+
+extension LiveExercise: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, skipped
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        exerciseId = try c.decode(String.self, forKey: .exerciseId)
+        name = try c.decode(String.self, forKey: .name)
+        equipment = try c.decode(String.self, forKey: .equipment)
+        kind = try c.decode(String.self, forKey: .kind)
+        modality = try c.decodeIfPresent(String.self, forKey: .modality)
+        repMin = try c.decode(Int.self, forKey: .repMin)
+        repMax = try c.decode(Int.self, forKey: .repMax)
+        targetRpe = try c.decodeIfPresent(Double.self, forKey: .targetRpe)
+        targetRir = try c.decodeIfPresent(Int.self, forKey: .targetRir)
+        restSeconds = try c.decode(Int.self, forKey: .restSeconds)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        hint = try c.decodeIfPresent(String.self, forKey: .hint)
+        sets = try c.decodeIfPresent([LiveSet].self, forKey: .sets) ?? []
+        cardio = try c.decodeIfPresent(CardioTarget.self, forKey: .cardio)
+        cardioLog = try c.decodeIfPresent(CardioLog.self, forKey: .cardioLog)
+        skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(exerciseId, forKey: .exerciseId)
+        try c.encode(name, forKey: .name)
+        try c.encode(equipment, forKey: .equipment)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(modality, forKey: .modality)
+        try c.encode(repMin, forKey: .repMin)
+        try c.encode(repMax, forKey: .repMax)
+        try c.encode(targetRpe, forKey: .targetRpe)
+        try c.encode(targetRir, forKey: .targetRir)
+        try c.encode(restSeconds, forKey: .restSeconds)
+        try c.encode(notes, forKey: .notes)
+        try c.encode(hint, forKey: .hint)
+        try c.encode(sets, forKey: .sets)
+        try c.encode(cardio, forKey: .cardio)
+        try c.encode(cardioLog.map(CardioLogJSON.init), forKey: .cardioLog)
+        try c.encode(skipped, forKey: .skipped)
+    }
+}
+
+/// `CardioLog` with its nullable fields written as null, as the contract types them.
+private struct CardioLogJSON: Encodable {
+    let log: CardioLog
+
+    private enum CodingKeys: String, CodingKey { case exerciseId, durationSeconds, distanceKm, level, inclinePercent, avgHr, kcal, doneAt }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(log.exerciseId, forKey: .exerciseId)
+        try c.encode(log.durationSeconds, forKey: .durationSeconds)
+        try c.encode(log.distanceKm, forKey: .distanceKm)
+        try c.encode(log.level, forKey: .level)
+        try c.encode(log.inclinePercent, forKey: .inclinePercent)
+        try c.encode(log.avgHr, forKey: .avgHr)
+        try c.encode(log.kcal, forKey: .kcal)
+        try c.encode(log.doneAt, forKey: .doneAt)
+    }
+}
+
+extension LiveSessionState: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, programId, dayId, name, startedAt, exercises, focus, restStartedAt, restEndsAt, version, updatedAt, threadId
+    }
+
+    /// `version` is required: a file without it is the older format (see `decodeStored`).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        id = try c.decode(String.self, forKey: .id)
+        programId = try c.decodeIfPresent(String.self, forKey: .programId)
+        dayId = try c.decodeIfPresent(String.self, forKey: .dayId)
+        name = try c.decode(String.self, forKey: .name)
+        startedAt = Self.date(try c.decode(Double.self, forKey: .startedAt))
+        exercises = try c.decode([LiveExercise].self, forKey: .exercises)
+        focus = try c.decodeIfPresent(Int.self, forKey: .focus) ?? 0
+        restStartedAt = try c.decodeIfPresent(Double.self, forKey: .restStartedAt).map(Self.date)
+        restEndsAt = try c.decodeIfPresent(Double.self, forKey: .restEndsAt).map(Self.date)
+        updatedAt = try c.decodeIfPresent(Double.self, forKey: .updatedAt).map(Self.date) ?? startedAt
+        threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
+        setFocus(focus)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(programId, forKey: .programId)
+        try c.encode(dayId, forKey: .dayId)
+        try c.encode(name, forKey: .name)
+        try c.encode(Self.ms(startedAt), forKey: .startedAt)
+        try c.encode(exercises, forKey: .exercises)
+        try c.encode(focus, forKey: .focus)
+        try c.encode(restStartedAt.map(Self.ms), forKey: .restStartedAt)
+        try c.encode(restEndsAt.map(Self.ms), forKey: .restEndsAt)
+        try c.encode(version, forKey: .version)
+        try c.encode(Self.ms(updatedAt), forKey: .updatedAt)
+        try c.encode(threadId, forKey: .threadId)
+    }
+
+    /// The live-session file: the contract format, else one written by an earlier
+    /// build (Date fields, UUID ids, a prescription string) converted.
+    static func decodeStored(_ data: Data) -> LiveSessionState? {
+        if let state = try? JSONDecoder().decode(LiveSessionState.self, from: data) { return state }
+        return (try? JSONDecoder().decode(LegacyLiveSession.self, from: data))?.converted
+    }
+}
+
+// MARK: - The earlier file format
+
+/// The live session as builds before the contract saved it, so a session in
+/// progress across the update still resumes.
+private struct LegacyLiveSession: Decodable {
+    struct Set: Decodable {
+        var id: UUID
+        var weightKg: Double
+        var reps: Int
+        var doneAt: Date?
+    }
+
+    struct Exercise: Decodable {
+        var id: String
+        var exerciseId: String
+        var name: String
+        var prescription: String
+        var restSeconds: Int
+        var weightStep: Double
+        var notes: String?
+        var hint: String?
+        var sets: [Set]
+    }
+
+    var id: String
+    var programId: String?
+    var dayId: String?
+    var name: String
+    var startedAt: Date
+    var exercises: [Exercise]
+    var restStartedAt: Date?
+    var restEndsAt: Date?
+
+    var converted: LiveSessionState {
+        var state = LiveSessionState(
+            id: id, programId: programId, dayId: dayId, name: name, startedAt: startedAt,
+            exercises: exercises.map(Self.convert),
+            restStartedAt: restStartedAt, restEndsAt: restEndsAt, updatedAt: .now
+        )
+        state.setFocus(state.current?.exercise ?? 0)
+        return state
+    }
+
+    /// The rep range and RIR/RPE come back out of "3 × 6–8 · RIR 2"; the step says plates or dumbbells.
+    private static func convert(_ ex: Exercise) -> LiveExercise {
+        let parts = ex.prescription.components(separatedBy: " · ")
+        let reps = parts.first?.components(separatedBy: "× ").last?
+            .components(separatedBy: "–").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? []
+        let fallback = ex.sets.first?.reps ?? 8
+        let rir = parts.dropFirst().first { $0.hasPrefix("RIR ") }.flatMap { Int($0.dropFirst(4)) }
+        let rpe = parts.dropFirst().first { $0.hasPrefix("RPE ") }.flatMap { Double($0.dropFirst(4).replacingOccurrences(of: ",", with: ".")) }
+        return LiveExercise(
+            id: ex.id,
+            exerciseId: ex.exerciseId,
+            name: ex.name,
+            equipment: ex.weightStep == 1 ? "dumbbell" : "barbell",
+            kind: "compound",
+            repMin: reps.first ?? fallback,
+            repMax: reps.last ?? fallback,
+            targetRpe: rpe,
+            targetRir: rir,
+            restSeconds: ex.restSeconds,
+            notes: ex.notes,
+            hint: ex.hint,
+            sets: ex.sets.map { LiveSet(id: $0.id.uuidString.lowercased(), weightKg: $0.weightKg, reps: $0.reps, doneAt: $0.doneAt) }
+        )
     }
 }

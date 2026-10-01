@@ -85,6 +85,7 @@ final class TrainingStore {
         }
     }
 
+    /// Opens the live session for `day` and hands it to the engine, where the Coach can change it.
     func start(_ day: ProgramDay) {
         guard live == nil else { return }
         let session = LiveSession(state: LiveSessionState(day: day, programId: program?.id, suggestions: suggestions))
@@ -92,6 +93,7 @@ final class TrainingStore {
         live = session
     }
 
+    /// Drops the session here and (best effort) on the engine.
     func discard() async {
         await live?.close()
         live = nil
@@ -103,18 +105,25 @@ final class TrainingStore {
         guard let live, !finishing else { return }
         finishing = true
         defer { finishing = false }
-        let session = live.state.session(endedAt: .now)
+        let state = live.state
+        let session = state.session(endedAt: .now)
+        let cardio = state.exercises.compactMap { ex in ex.cardioLog.map { (log: $0, modality: ex.modality) } }
         await live.close()
         self.live = nil
         summary = SessionSummary(session: session)
-        guard !session.sets.isEmpty else { return }
+        guard state.hasWork else { return }
 
-        do {
-            try await StrengthWorkout.save(start: session.start, end: session.start.addingTimeInterval(session.duration), sessionId: session.id)
-            summary?.savedToHealth = true
-        } catch {
-            // Salud refused or is unavailable; the session still goes to the Mac.
+        // Salud refusing or being unavailable doesn't stop the session going to the Mac.
+        var savedToHealth = false
+        if !session.sets.isEmpty, (try? await StrengthWorkout.save(start: session.start, end: session.start.addingTimeInterval(session.duration), sessionId: session.id)) != nil {
+            savedToHealth = true
         }
+        for (index, block) in cardio.enumerated() {
+            if (try? await StrengthWorkout.saveCardio(block.log, modality: block.modality, sessionId: session.id, index: index)) != nil {
+                savedToHealth = true
+            }
+        }
+        if savedToHealth, summary?.id == session.id { summary?.savedToHealth = true }
 
         guard let api = PulsoModel.shared.api else { return queue(session) }
         do {

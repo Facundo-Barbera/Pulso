@@ -18,20 +18,33 @@ private let training = Color(red: 0.55, green: 0.42, blue: 0.98)
 struct TrainingLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TrainingActivityAttributes.self) { context in
-            LockScreenView(state: context.state, attributes: context.attributes)
+            Group {
+                if let cardio = context.state.cardio {
+                    CardioLockScreenView(state: context.state, cardio: cardio)
+                } else {
+                    LockScreenView(state: context.state, attributes: context.attributes)
+                }
+            }
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(training)
         } dynamicIsland: { context in
             let state = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: "figure.strengthtraining.traditional")
+                    Image(systemName: state.cardio == nil ? "figure.strengthtraining.traditional" : "heart.fill")
                         .font(.title2)
-                        .foregroundStyle(training)
+                        .foregroundStyle(state.cardio.map(cardioTint) ?? training)
                         .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if let range = state.restRange, state.resting {
+                    if let cardio = state.cardio {
+                        CardioTime(cardio: cardio)
+                            .font(.title2.bold().monospacedDigit())
+                            .fontDesign(.rounded)
+                            .foregroundStyle(cardioTint(cardio))
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 90)
+                    } else if let range = state.restRange, state.resting {
                         Text(timerInterval: range, countsDown: true)
                             .font(.title2.bold().monospacedDigit())
                             .fontDesign(.rounded)
@@ -50,14 +63,17 @@ struct TrainingLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
                         HStack {
-                            Text(state.setLabel)
+                            Text(state.cardio.map { "\($0.phase) · \($0.detail)" } ?? state.setLabel)
                             Spacer(minLength: 8)
                             Text(state.target).fontWeight(.semibold).foregroundStyle(training)
                         }
                         .font(.subheadline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                        if let range = state.restRange, state.resting {
+                        if let range = state.cardio?.phaseRange {
+                            ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
+                                .tint(state.cardio.map(cardioTint) ?? training)
+                        } else if let range = state.restRange, state.resting {
                             ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
                                 .tint(training)
                         }
@@ -65,10 +81,15 @@ struct TrainingLiveActivity: Widget {
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                Image(systemName: state.resting ? "timer" : "dumbbell.fill")
-                    .foregroundStyle(training)
+                Image(systemName: state.cardio != nil ? "heart.fill" : state.resting ? "timer" : "dumbbell.fill")
+                    .foregroundStyle(state.cardio.map(cardioTint) ?? training)
             } compactTrailing: {
-                if let range = state.restRange, state.resting {
+                if let cardio = state.cardio {
+                    CardioTime(cardio: cardio)
+                        .monospacedDigit()
+                        .foregroundStyle(cardioTint(cardio))
+                        .frame(maxWidth: 44)
+                } else if let range = state.restRange, state.resting {
                     Text(timerInterval: range, countsDown: true)
                         .monospacedDigit()
                         .foregroundStyle(training)
@@ -77,7 +98,15 @@ struct TrainingLiveActivity: Widget {
                     Text("\(state.setsDone)/\(state.setsTotal)").monospacedDigit()
                 }
             } minimal: {
-                if let range = state.restRange, state.resting {
+                if let cardio = state.cardio {
+                    if let range = cardio.phaseRange {
+                        ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
+                            .progressViewStyle(.circular)
+                            .tint(cardioTint(cardio))
+                    } else {
+                        Image(systemName: "heart.fill").foregroundStyle(cardioTint(cardio))
+                    }
+                } else if let range = state.restRange, state.resting {
                     ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
                         .progressViewStyle(.circular)
                         .tint(training)
@@ -87,6 +116,66 @@ struct TrainingLiveActivity: Widget {
             }
             .keylineTint(training)
         }
+    }
+}
+
+/// Same orange and green as `Theme.energy` / `Theme.body`: work and recovery.
+private let work = Color(red: 0.98, green: 0.45, blue: 0.20)
+private let recovery = Color(red: 0.20, green: 0.78, blue: 0.62)
+
+private func cardioTint(_ cardio: TrainingActivityAttributes.ContentState.Cardio) -> Color { cardio.work ? work : recovery }
+
+/// The phase counting down when there is one, else the block's time counting up
+/// (or standing still while paused). The system ticks both.
+private struct CardioTime: View {
+    let cardio: TrainingActivityAttributes.ContentState.Cardio
+
+    var body: some View {
+        if let range = cardio.phaseRange {
+            Text(timerInterval: range, countsDown: true)
+        } else if let from = cardio.elapsedFrom {
+            Text(from, style: .timer)
+        } else {
+            Text(Duration.seconds(cardio.elapsedSeconds).formatted(.time(pattern: cardio.elapsedSeconds >= 3600 ? .hourMinuteSecond : .minuteSecond)))
+        }
+    }
+}
+
+/// A cardio block: "Rápido" big with its countdown, the round and zone, and the phase draining.
+private struct CardioLockScreenView: View {
+    let state: TrainingActivityAttributes.ContentState
+    let cardio: TrainingActivityAttributes.ContentState.Cardio
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: cardio.running ? "heart.fill" : "pause.fill")
+                    .font(.title2)
+                    .foregroundStyle(cardioTint(cardio))
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(cardioTint(cardio).opacity(0.2)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cardio.phase).font(.headline).foregroundStyle(cardioTint(cardio))
+                    Text(state.exerciseName).font(.subheadline).foregroundStyle(.secondary)
+                    if !cardio.detail.isEmpty {
+                        Text(cardio.detail).font(.subheadline.weight(.semibold))
+                    }
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                Spacer(minLength: 8)
+                CardioTime(cardio: cardio)
+                    .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(cardioTint(cardio))
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 110, alignment: .trailing)
+            }
+            if let range = cardio.phaseRange {
+                ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
+                    .tint(cardioTint(cardio))
+            }
+        }
+        .padding(16)
     }
 }
 
