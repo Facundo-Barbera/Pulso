@@ -1,4 +1,16 @@
-import type { AgentToolResult, BodyGoal, DayAdjustment, DietPlan, MealEntry, Medication, NutritionTargets, Program, SessionSaved, WaterEntry } from "@pulso/contract";
+import type {
+  ActiveProgramResponse,
+  AgentToolResult,
+  BodyGoal,
+  DayAdjustment,
+  DietPlan,
+  MealEntry,
+  Medication,
+  NutritionTargets,
+  Program,
+  SessionSaved,
+  WaterEntry,
+} from "@pulso/contract";
 
 type Summary = (value: any) => AgentToolResult | null;
 
@@ -19,6 +31,17 @@ const SUMMARIES: Record<string, Summary> = {
     detail: s.prs.length ? `${s.session.name} · ${s.prs.length === 1 ? "1 récord" : `${s.prs.length} récords`}` : s.session.name,
     tab: "entreno",
   }),
+  edit_program_day: (v: ActiveProgramResponse) => {
+    const today = v.program?.days.some((d) => d.overridden);
+    return { title: today ? "Día cambiado solo para hoy" : "Programa actualizado", detail: v.program?.name ?? null, tab: "entreno" };
+  },
+  swap_program_exercise: (r: { scope: "today" | "always"; to: string; days: string[] }) => ({
+    title: r.scope === "today" ? "Ejercicio cambiado solo hoy" : "Ejercicio cambiado en el programa",
+    detail: `${r.to} · ${r.days.join(", ")}`,
+    tab: "entreno",
+  }),
+  set_training_preferences: () => ({ title: "Preferencias de entreno guardadas", detail: null, tab: "entreno" }),
+  edit_live_session: (r: { changes: string[] }) => ({ title: "Sesión cambiada", detail: r.changes.join(" · "), tab: "entreno" }),
   create_diet_plan: (p: DietPlan) => ({ title: "Plan de comidas creado", detail: `${p.name} · ${days(p.days.length)}`, tab: "dieta" }),
   set_targets: (t: NutritionTargets) => ({ title: "Objetivos de comida actualizados", detail: `${n(t.kcal)} kcal · ${n(t.protein)} g proteína`, tab: "dieta" }),
   log_meal: (entries: MealEntry[]) => ({

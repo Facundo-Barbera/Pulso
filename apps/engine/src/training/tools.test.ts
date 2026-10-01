@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { TOOLS } from "../agent/registry";
+import { clearLive, putLive } from "./live";
 import { proposeMedia } from "./media";
 import { trainingTools } from "./tools";
 
@@ -13,7 +14,23 @@ const call = async (name: string, args: Record<string, unknown>) => {
 
 test("every training tool is registered with the agent", () => {
   const names = TOOLS.map((t) => t.name);
-  for (const name of ["list_exercises", "get_exercise", "create_program", "get_active_program", "list_sessions", "exercise_history", "suggest_next_loads", "log_session"]) {
+  for (const name of [
+    "list_exercises",
+    "get_exercise",
+    "create_program",
+    "get_active_program",
+    "list_sessions",
+    "exercise_history",
+    "suggest_next_loads",
+    "log_session",
+    "edit_program_day",
+    "swap_program_exercise",
+    "find_similar_exercises",
+    "get_training_preferences",
+    "set_training_preferences",
+    "get_live_session",
+    "edit_live_session",
+  ]) {
     expect(names).toContain(name);
   }
 });
@@ -89,4 +106,70 @@ test("get_exercise returns the detail; list_exercises says which have media", as
   expect(detail.data.instructions.length).toBeGreaterThanOrEqual(3);
   expect(detail.data.media.source).toBe("exercisedb");
   expect((await call("get_exercise", { exerciseId: "nope" })).isError).toBe(true);
+});
+
+test("prefiero máquinas → preferences → machine alternatives first → swap for good in every day", async () => {
+  expect((await call("set_training_preferences", { preferredEquipment: ["machine", "cable", "machine"] })).data).toEqual({ preferredEquipment: ["machine", "cable"] });
+  expect((await call("get_training_preferences", {})).data.preferredEquipment).toEqual(["machine", "cable"]);
+
+  const similar = await call("find_similar_exercises", { exerciseId: "sentadilla", limit: 3 });
+  expect(similar.data[0].equipment).toBe("machine");
+  expect(similar.data[0].reasons).toContain("Mismo músculo");
+
+  const created = await call("create_program", {
+    name: "Pierna x2",
+    goal: "Piernas",
+    weeks: 4,
+    activate: true,
+    days: [
+      { name: "Pierna A", exercises: [{ exerciseId: "sentadilla", sets: 4, repMin: 6, repMax: 8, restSeconds: 150 }, { exerciseId: "remo-barra", sets: 3, repMin: 8, repMax: 10, restSeconds: 120 }] },
+      { name: "Pierna B", exercises: [{ exerciseId: "sentadilla", sets: 3, repMin: 8, repMax: 10, restSeconds: 120 }, { exerciseId: "eliptica", cardio: { durationMinutes: 15, zone: 2 } }] },
+    ],
+  });
+  expect(created.isError).toBe(false);
+  const swapped = await call("swap_program_exercise", { from: "sentadilla", to: "prensa", scope: "always" });
+  expect(swapped.data).toEqual({ scope: "always", to: "Prensa de piernas", days: ["Pierna A", "Pierna B"] });
+  const program = (await call("get_active_program", {})).data.program;
+  expect(program.days.map((d: { exercises: { exerciseId: string; sets: number }[] }) => [d.exercises[0]!.exerciseId, d.exercises[0]!.sets])).toEqual([
+    ["prensa", 4],
+    ["prensa", 3],
+  ]);
+  expect(program.days[1].exercises[1].cardio).toEqual({ durationMinutes: 15, zone: 2 });
+
+  // "Quita el remo del día 1", para siempre: the whole list without it, ids kept.
+  const day = program.days[0];
+  const edited = await call("edit_program_day", { dayId: day.id, scope: "always", exercises: [{ ...day.exercises[0], id: day.exercises[0].id }] });
+  expect(edited.data.program.days[0].exercises.map((e: { exerciseId: string }) => e.exerciseId)).toEqual(["prensa"]);
+  expect(edited.data.program.days[0].exercises[0].id).toBe(day.exercises[0].id);
+
+  expect((await call("swap_program_exercise", { from: "sentadilla", to: "prensa", scope: "always" })).isError).toBe(true);
+  await call("set_training_preferences", { preferredEquipment: [] });
+});
+
+test("the Coach sees and changes the session in progress", async () => {
+  expect((await call("get_live_session", {})).data).toEqual({ session: null });
+  expect((await call("edit_live_session", { ops: [{ op: "skip", exercise: 1 }] })).isError).toBe(true);
+  putLive(
+    {
+      id: "tools-live",
+      programId: null,
+      dayId: null,
+      name: "Torso",
+      startedAt: Date.now(),
+      exercises: [
+        { id: "x", exerciseId: "press-banca", name: "Press de banca", equipment: "barbell", kind: "compound", repMin: 6, repMax: 8, targetRpe: null, targetRir: null, restSeconds: 120, notes: null, hint: null, sets: [{ id: "s", weightKg: 60, reps: 8, rpe: null, doneAt: null }], cardio: null, cardioLog: null, skipped: false },
+      ],
+      focus: 0,
+      restStartedAt: null,
+      restEndsAt: null,
+      version: 0,
+      updatedAt: 0,
+      threadId: null,
+    },
+    0,
+  );
+  const changed = await call("edit_live_session", { ops: [{ op: "swap", exercise: "current", toExerciseId: "press-pecho-maquina" }] });
+  expect(changed.data.changes).toEqual(["Press de banca → Press de pecho en máquina"]);
+  expect((await call("get_live_session", {})).data.session.exercises[0].exerciseId).toBe("press-pecho-maquina");
+  clearLive();
 });

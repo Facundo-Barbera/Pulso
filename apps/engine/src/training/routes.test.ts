@@ -1,13 +1,19 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import type { ActiveProgramResponse, Exercise, ExerciseDetail, ExercisePerformance } from "@pulso/contract";
+import type { ActiveProgramResponse, Exercise, ExerciseDetail, ExercisePerformance, LiveSession, SimilarExercise } from "@pulso/contract";
 import { GET as detailGET } from "@/app/api/mobile/training/exercises/[id]/route";
 import { PUT as notesPUT } from "@/app/api/mobile/training/exercises/[id]/notes/route";
 import { GET as performanceGET } from "@/app/api/mobile/training/exercises/[id]/performance/route";
 import { GET as listGET } from "@/app/api/mobile/training/exercises/route";
 import { GET as mediaGET } from "@/app/api/mobile/training/media/[...path]/route";
+import { GET as similarGET } from "@/app/api/mobile/training/exercises/[id]/similar/route";
+import { POST as liveCoachPOST } from "@/app/api/mobile/training/live/coach/route";
+import { DELETE as liveDELETE, GET as liveGET, PUT as livePUT } from "@/app/api/mobile/training/live/route";
+import { DELETE as dayDELETE, PUT as dayPUT } from "@/app/api/mobile/training/program/days/[dayId]/route";
 import { GET as programGET } from "@/app/api/mobile/training/program/route";
+import { GET as settingsGET, PUT as settingsPUT } from "@/app/api/mobile/training/settings/route";
 import { createPairingCode, redeemPairing } from "../devices";
 import { EDB_ATTRIBUTION } from "./exercisedb";
+import { editLive } from "./live";
 import { clearMediaCache, proposeMedia, reviewMedia } from "./media";
 import { createProgram, saveSession } from "./store";
 
@@ -26,6 +32,9 @@ afterEach(() => {
 const req = (init: RequestInit = {}, auth = true) =>
   new Request("http://pulso.test/x", { ...init, headers: { ...(auth ? { authorization: `Bearer ${token}` } : {}), "content-type": "application/json" } });
 const id = (value: string) => ({ params: Promise.resolve({ id: value }) });
+const day = (value: string) => ({ params: Promise.resolve({ dayId: value }) });
+const at = (url: string, init: RequestInit = {}) =>
+  new Request(`http://pulso.test${url}`, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } });
 const path = (...segments: string[]) => ({ params: Promise.resolve({ path: segments }) });
 
 test("every route wants a paired phone", async () => {
@@ -33,6 +42,76 @@ test("every route wants a paired phone", async () => {
   expect((await notesPUT(req({ method: "PUT", body: "{}" }, false), id("press-banca"))).status).toBe(401);
   expect((await performanceGET(req({}, false), id("press-banca"))).status).toBe(401);
   expect((await mediaGET(req({}, false), path("exercises", "press-banca", "animation.gif"))).status).toBe(401);
+  expect((await similarGET(req({}, false), id("press-banca"))).status).toBe(401);
+  expect((await dayPUT(req({ method: "PUT", body: "{}" }, false), day("d"))).status).toBe(401);
+  expect((await dayDELETE(req({ method: "DELETE" }, false), day("d"))).status).toBe(401);
+  expect(settingsGET(req({}, false)).status).toBe(401);
+  expect((await settingsPUT(req({ method: "PUT", body: "{}" }, false))).status).toBe(401);
+  expect(liveGET(req({}, false)).status).toBe(401);
+  expect((await livePUT(req({ method: "PUT", body: "{}" }, false))).status).toBe(401);
+  expect(liveDELETE(req({ method: "DELETE" }, false)).status).toBe(401);
+  expect(liveCoachPOST(req({ method: "POST" }, false)).status).toBe(401);
+});
+
+test("settings, alternatives and day edits over HTTP", async () => {
+  const saved = await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: ["machine", "cable"] }) }));
+  expect(await saved.json()).toEqual({ preferredEquipment: ["machine", "cable"] });
+  expect((await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: ["spaceship"] }) }))).status).toBe(400);
+
+  const similar = (await (await similarGET(at("/api/mobile/training/exercises/press-banca/similar?equipment=machine,cable&limit=3"), id("press-banca"))).json()) as { exercises: SimilarExercise[] };
+  expect(similar.exercises.length).toBe(3);
+  expect(similar.exercises[0]).toMatchObject({ id: "press-pecho-maquina", preferred: true, thumbnail: null });
+  expect(similar.exercises.every((e) => e.equipment === "machine" || e.equipment === "cable")).toBe(true);
+  expect((await similarGET(at("/api/mobile/training/exercises/nope/similar"), id("nope"))).status).toBe(404);
+
+  const program = createProgram({ name: "HTTP", goal: "x", weeks: 4, days: [{ name: "A", exercises: [{ exerciseId: "press-banca", sets: 3, repMin: 6, repMax: 8, restSeconds: 120 }] }] });
+  const dayId = program.days[0]!.id;
+  const bench = program.days[0]!.exercises[0]!;
+  const today = await dayPUT(req({ method: "PUT", body: JSON.stringify({ scope: "today", exercises: [{ ...bench, exerciseId: "press-pecho-maquina" }] }) }), day(dayId));
+  const view = (await today.json()) as ActiveProgramResponse;
+  expect(view.program!.days[0]).toMatchObject({ overridden: true, exercises: [{ id: bench.id, exerciseId: "press-pecho-maquina" }] });
+  expect(view.settings).toEqual({ preferredEquipment: ["machine", "cable"] });
+  const reset = (await (await dayDELETE(req({ method: "DELETE" }), day(dayId))).json()) as ActiveProgramResponse;
+  expect(reset.program!.days[0]!.exercises[0]!.exerciseId).toBe("press-banca");
+  expect((await dayPUT(req({ method: "PUT", body: JSON.stringify({ scope: "always", exercises: [{ exerciseId: "press-banca" }] }) }), day(dayId))).status).toBe(400);
+  expect((await dayPUT(req({ method: "PUT", body: JSON.stringify({ scope: "forever", exercises: [] }) }), day(dayId))).status).toBe(400);
+  expect((await dayDELETE(req({ method: "DELETE" }), day("nope"))).status).toBe(404);
+  await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: [] }) }));
+});
+
+test("the live session syncs both ways and binds a Coach thread", async () => {
+  liveDELETE(req({ method: "DELETE" }));
+  expect(await liveGET(req()).json()).toEqual({ session: null });
+  expect(liveCoachPOST(req({ method: "POST" })).status).toBe(404);
+
+  const live = {
+    id: "http-live",
+    name: "Torso",
+    startedAt: 1_000,
+    exercises: [
+      { id: "x", exerciseId: "press-banca", name: "Press de banca", equipment: "barbell", kind: "compound", repMin: 6, repMax: 8, restSeconds: 120, sets: [{ id: "s1", weightKg: 60, reps: 8, doneAt: 2_000 }] },
+      { id: "y", exerciseId: "eliptica", name: "Elíptica", equipment: "machine", kind: "cardio", repMin: 1, repMax: 1, restSeconds: 0, sets: [], cardio: { durationMinutes: 20, zone: 2 } },
+    ],
+    focus: 0,
+  };
+  const put = await livePUT(req({ method: "PUT", body: JSON.stringify({ session: live, baseVersion: 0 }) }));
+  const stored = ((await put.json()) as { session: LiveSession }).session;
+  expect(stored).toMatchObject({ id: "http-live", version: 1, threadId: null, exercises: [{ skipped: false, sets: [{ rpe: null }] }, { cardioLog: null }] });
+  expect((await livePUT(req({ method: "PUT", body: JSON.stringify({ session: { id: "x" }, baseVersion: 0 }) }))).status).toBe(400);
+
+  const { threadId } = (await liveCoachPOST(req({ method: "POST" })).json()) as { threadId: string };
+  expect(threadId).toBeTruthy();
+  editLive([{ op: "skip", exercise: 2 }]);
+
+  const conflict = await livePUT(req({ method: "PUT", body: JSON.stringify({ session: live, baseVersion: 1 }) }));
+  expect(conflict.status).toBe(409);
+  const body = (await conflict.json()) as { code: string; session: LiveSession };
+  expect(body.code).toBe("conflict");
+  expect(body.session).toMatchObject({ version: 2, threadId, exercises: [{}, { skipped: true }] });
+
+  expect(((await liveGET(req()).json()) as { session: LiveSession }).session.version).toBe(2);
+  expect(liveDELETE(req({ method: "DELETE" })).status).toBe(200);
+  expect(await liveGET(req()).json()).toEqual({ session: null });
 });
 
 test("GET exercises/:id returns the full ExerciseDetail", async () => {
