@@ -4,5 +4,6 @@
  * every boot, in this order.
  */
 import { CORE_SCHEMA } from "./core-schema";
+import { MEDICATION_SCHEMA } from "./medication/schema";
 
-export const SCHEMAS: string[] = [CORE_SCHEMA];
+export const SCHEMAS: string[] = [CORE_SCHEMA, MEDICATION_SCHEMA];
