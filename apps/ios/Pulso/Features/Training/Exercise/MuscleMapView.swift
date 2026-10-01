@@ -49,8 +49,8 @@ struct MuscleMapView: View {
     }
 }
 
-/// The polygons of one figure that pass `include`, scaled to fit the rect.
-private struct BodyShape: Shape {
+/// The polygons of one figure that pass `include`, scaled to fit the rect. Also draws the plan's muscle badges.
+struct BodyShape: Shape {
     let polygons: [BodyPolygon]
     let include: (Muscle?) -> Bool
 
