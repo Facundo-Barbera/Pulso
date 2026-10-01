@@ -115,9 +115,7 @@ private struct TodayPlanCard: View {
                 Divider().padding(.vertical, 2)
                 Text("EXTRAS").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(.secondary)
                 VStack(spacing: 0) {
-                    ForEach(extras.sorted { $0.eatenAt < $1.eatenAt }) { meal in
-                        SwipeToDelete { onDelete(meal) } content: { MealRow(meal: meal) }
-                    }
+                    LoggedList(meals: extras.sorted { $0.eatenAt < $1.eatenAt }, onDelete: onDelete)
                 }
             }
         }
@@ -285,10 +283,7 @@ private struct SlotRow: View {
                             .font(.caption).italic()
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(meals) { meal in
-                        SwipeToDelete { onDelete(meal) } content: { MealRow(meal: meal) }
-                        if meal.id != meals.last?.id { Divider() }
-                    }
+                    LoggedList(meals: meals, onDelete: onDelete)
                 }
             }
             .padding(.bottom, isLast ? 0 : 14)
@@ -307,7 +302,7 @@ private struct SlotRow: View {
                         clock
                     } else {
                         ViewThatFits(in: .horizontal) {
-                            Text("\(clock) · \(note ?? meals.map(\.name).joined(separator: ", "))")
+                            Text("\(clock) · \(note ?? LoggedItem.group(meals).map(\.name).joined(separator: ", "))")
                             clock
                         }
                     }

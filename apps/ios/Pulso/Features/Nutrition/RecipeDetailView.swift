@@ -6,6 +6,7 @@ struct RecipeDetailView: View {
     let recipeId: String
     @State private var recipe: Recipe?
     @State private var failed = false
+    @State private var savedAsDish = false
 
     var body: some View {
         ScrollView {
@@ -28,7 +29,30 @@ struct RecipeDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(recipe?.name ?? "Receta")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if recipe != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(savedAsDish ? "En Mis platillos" : "Guardar como platillo", systemImage: savedAsDish ? "bookmark.fill" : "bookmark") {
+                        Task { await saveAsDish() }
+                    }
+                    .disabled(savedAsDish)
+                    .symbolEffect(.bounce, value: savedAsDish)
+                }
+            }
+        }
+        .sensoryFeedback(.success, trigger: savedAsDish) { _, new in new }
         .task { await load() }
+    }
+
+    /// One portion of the recipe into Mis platillos, to log it in one tap any day.
+    private func saveAsDish() async {
+        guard let api = PulsoModel.shared.api else { return }
+        do {
+            _ = try await api.saveRecipeAsDish(recipeId)
+            savedAsDish = true
+        } catch {
+            PulsoModel.shared.handle(error)
+        }
     }
 
     private func load() async {

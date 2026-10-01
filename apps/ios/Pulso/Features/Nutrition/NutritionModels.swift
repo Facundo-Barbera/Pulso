@@ -211,6 +211,8 @@ struct MealEntry: Codable, Identifiable, Equatable {
     var measure: Measure? = nil
     var caffeineMg: Double? = nil
     var alcoholG: Double? = nil
+    /// The dish it is a component of; nil for a food on its own and older engines.
+    var dish: DishRef? = nil
 }
 
 /// What the phone posts to log a food. Macros are totals for `quantity`.
@@ -364,6 +366,8 @@ struct NutritionDay: Codable, Equatable {
     var meals: [MealEntry]
     var plan: DietPlanForDay?
     var water: WaterDay?
+    /// Mis platillos, most used first; nil from older engines.
+    var dishes: [SavedDish]? = nil
 }
 
 /// A packaged food. Macros per 100 g, or per 100 ml for a drink; sizes in the same unit.

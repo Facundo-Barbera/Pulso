@@ -120,6 +120,64 @@ final class NutritionStore {
         return copied
     }
 
+    // MARK: Dishes (platillos)
+
+    /// Mis platillos, most used first.
+    var dishes: [SavedDish] { day?.dishes ?? [] }
+
+    private var nowMs: Double { (eatenAtNow().timeIntervalSince1970 * 1000).rounded() }
+
+    /// Logs a saved dish now, maybe scaled or with something left out. While replacing, it becomes that meal.
+    @discardableResult
+    func log(_ dish: SavedDish, scale: Double = 1, removed: [Int] = [], slot: MealSlot? = nil) async -> Bool {
+        guard let api else { return false }
+        return await run {
+            let meals = try await api.logSavedDish(dish.id, scale: scale, removed: removed, slot: replacing?.slot ?? slot ?? dish.slot,
+                                                   eatenAt: nowMs, date: dateKey, slotId: nil)
+            if replacing != nil { replacementIds += meals.map(\.id) }
+        }
+    }
+
+    /// «Crear platillo»: foods eaten together as one dish; `keep` also saves it to Mis platillos.
+    @discardableResult
+    func logDish(name: String?, components: [MealInput], slot: MealSlot, keep: Bool) async -> Bool {
+        guard let api, !components.isEmpty else { return false }
+        return await run {
+            let meals = try await api.logDish(name: name, components: components, slot: replacing?.slot ?? slot, eatenAt: nowMs, date: dateKey, slotId: nil)
+            if replacing != nil { replacementIds += meals.map(\.id) }
+            if keep, let dish = meals.first?.dish { _ = try await api.saveLoggedDish(dish.id) }
+        }
+    }
+
+    /// «Guardar como platillo».
+    func save(_ dish: DishRef) async {
+        guard let api else { return }
+        await run { _ = try await api.saveLoggedDish(dish.id) }
+    }
+
+    func saveRecipeAsDish(_ recipeId: String) async -> Bool {
+        guard let api else { return false }
+        return await run { _ = try await api.saveRecipeAsDish(recipeId) }
+    }
+
+    func deleteSavedDish(_ dish: SavedDish) async {
+        guard let api else { return }
+        await run { try await api.deleteSavedDish(dish.id) }
+    }
+
+    @discardableResult
+    func add(_ input: MealInput, to dish: DishRef) async -> Bool {
+        guard let api else { return false }
+        return await run { _ = try await api.addToDish(dish.id, components: [input]) }
+    }
+
+    /// Corrects one entry's amount (macros follow); a dish component stays in its dish.
+    @discardableResult
+    func update(_ meal: MealEntry, scaledBy factor: Double) async -> Bool {
+        guard let api, factor > 0, factor != 1 else { return false }
+        return await run { _ = try await api.updateMeal(meal.id, meal.input(scaledBy: factor)) }
+    }
+
     // MARK: Dated plan
 
     /// Runs a plan change; the Mac answers with its Spanish summary and the revision to undo.

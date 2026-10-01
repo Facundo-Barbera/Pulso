@@ -1,22 +1,26 @@
 import SwiftUI
 
-/// "Registrar": every way to add food from one place. Search the frequent foods
-/// (or type a new one), jump to scanning, a snack or drink, or the plan, and eat
-/// the next planned meal in one tap. Logging a frequent food keeps the sheet
-/// open, so a breakfast of three things is three taps.
+/// "Registrar": every way to add food from one place. Mis platillos first (one
+/// tap logs one; swipe or hold to take half or leave something out), then the
+/// frequent foods (or type a new one), and jumps to scanning, a snack or drink,
+/// creating a dish, or the plan. Logging keeps the sheet open, so a breakfast
+/// of three things is three taps.
 struct RegisterSheet: View {
     let foods: [FrequentFood]
+    var dishes: [SavedDish] = []
     /// The next planned meal of today, for "Comí lo del plan".
     let nextMeal: DietPlanForDay.Meal?
     /// "Registrar lo que comí": the planned meal what is logged here is the real meal of.
     var replacing: PlanSlot? = nil
     let onLog: (MealInput) async -> Bool
+    /// A saved dish with its portion, the components left out, and the slot picked here.
+    var onLogDish: (SavedDish, Double, [Int], MealSlot) async -> Bool = { _, _, _, _ in false }
     let onEatPlan: (DietPlanForDay.Meal) async -> Bool
     let onRoute: (Route) -> Void
 
     enum Route: Equatable {
         /// `photo`: the Coach, camera open, to log what it sees.
-        case scan, snack, plan, photo
+        case scan, snack, plan, photo, createDish
         /// The manual form, with what was typed as the name.
         case manual(String)
     }
@@ -28,10 +32,14 @@ struct RegisterSheet: View {
     @State private var logged: Set<String> = []
     @State private var busy = false
     @State private var planEaten = false
+    @State private var adjusting: SavedDish?
 
     private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
     private var matches: [FrequentFood] {
         trimmed.isEmpty ? foods : foods.filter { $0.name.localizedStandardContains(trimmed) }
+    }
+    private var dishMatches: [SavedDish] {
+        trimmed.isEmpty ? dishes : dishes.filter { $0.name.localizedStandardContains(trimmed) }
     }
 
     var body: some View {
@@ -43,6 +51,7 @@ struct RegisterSheet: View {
                             chip("Foto de comida", "camera.fill") { onRoute(.photo) }
                             chip("Escanear", "barcode.viewfinder") { onRoute(.scan) }
                             chip("Snack o bebida", "cup.and.saucer.fill") { onRoute(.snack) }
+                            chip("Crear platillo", "fork.knife.circle.fill") { onRoute(.createDish) }
                             if replacing == nil { chip("Del plan", "list.bullet.clipboard") { onRoute(.plan) } }
                             chip("A mano", "square.and.pencil") { onRoute(.manual(trimmed)) }
                         }
@@ -73,6 +82,12 @@ struct RegisterSheet: View {
                     planSection(nextMeal)
                 }
 
+                if !dishMatches.isEmpty {
+                    Section("Mis platillos") {
+                        ForEach(dishMatches) { dish in dishRow(dish) }
+                    }
+                }
+
                 if !matches.isEmpty {
                     Section(trimmed.isEmpty ? "Frecuentes" : "Resultados") {
                         ForEach(matches) { food in foodRow(food) }
@@ -87,7 +102,7 @@ struct RegisterSheet: View {
                     } footer: {
                         if matches.isEmpty { Text("No está entre tus frecuentes. Escribe sus macros o cuéntaselo al Coach.") }
                     }
-                } else if foods.isEmpty && nextMeal == nil {
+                } else if foods.isEmpty && dishes.isEmpty && nextMeal == nil {
                     Section {
                         ContentUnavailableView("Aún no hay frecuentes", systemImage: "fork.knife",
                                                description: Text("Lo que registres aparecerá aquí para añadirlo en un toque."))
@@ -106,6 +121,13 @@ struct RegisterSheet: View {
                 guard !didPreset, let replacing else { return }
                 slot = replacing.slot
                 didPreset = true
+            }
+            .sheet(item: $adjusting) { dish in
+                DishLogSheet(dish: dish) { scale, removed in
+                    let ok = await onLogDish(dish, scale, removed, slot)
+                    if ok { withAnimation(.snappy) { _ = logged.insert(dish.id) } }
+                    return ok
+                }
             }
             .sensoryFeedback(.success, trigger: logged.count) { old, new in new > old }
             .sensoryFeedback(.success, trigger: planEaten) { _, new in new }
@@ -157,6 +179,48 @@ struct RegisterSheet: View {
         } header: {
             Text("Siguiente en tu plan · \(meal.slot.title) · \(kcal) kcal")
         }
+    }
+
+    private func dishRow(_ dish: SavedDish) -> some View {
+        let done = logged.contains(dish.id)
+        return Button {
+            Task {
+                busy = true
+                if await onLogDish(dish, 1, [], slot) { withAnimation(.snappy) { _ = logged.insert(dish.id) } }
+                busy = false
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "fork.knife.circle.fill")
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.energy)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(dish.name).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                    Text("\(dish.components.count) \(dish.components.count == 1 ? "ingrediente" : "ingredientes") · \(Int(dish.macros.kcal)) kcal")
+                        .font(.caption.monospacedDigit()).fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: done ? "checkmark.circle.fill" : "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(done ? Theme.body : Theme.energy)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .swipeActions(edge: .leading) {
+            Button("Ajustar", systemImage: "slider.horizontal.3") { adjusting = dish }.tint(Theme.body)
+        }
+        .contextMenu {
+            Button("Media porción", systemImage: "circle.lefthalf.filled") { Task { if await onLogDish(dish, 0.5, [], slot) { _ = logged.insert(dish.id) } } }
+            Button("Ajustar esta vez…", systemImage: "slider.horizontal.3") { adjusting = dish }
+        }
+        .accessibilityLabel(done ? "\(dish.name), añadido" : "Añadir \(dish.name)")
+        .accessibilityAction(named: "Ajustar esta vez") { adjusting = dish }
     }
 
     private func foodRow(_ food: FrequentFood) -> some View {

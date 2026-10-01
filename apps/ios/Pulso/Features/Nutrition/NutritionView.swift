@@ -19,7 +19,7 @@ struct NutritionView: View {
     @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
-        case register, quickAdd, snack, scan, targets, water, waterAmount, waterEntries
+        case register, quickAdd, snack, scan, targets, water, waterAmount, waterEntries, dishBuilder
         var id: String { rawValue }
     }
 
@@ -66,6 +66,11 @@ struct NutritionView: View {
         .navigationDestination(isPresented: $showShopping) { ShoppingListView() }
         .refreshable { await store.load() }
         .task { await store.load() }
+        .environment(\.dishActions, DishActions(
+            save: { dish in Task { await store.save(dish) } },
+            add: { await store.add($0, to: $1) },
+            update: { await store.update($0, scaledBy: $1) }
+        ))
         .safeAreaInset(edge: .bottom) {
             if section == .hoy && store.day != nil {
                 registerButton.transition(.move(edge: .bottom).combined(with: .opacity))
@@ -77,10 +82,12 @@ struct NutritionView: View {
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { sheet in
             switch sheet {
             case .register:
-                RegisterSheet(foods: store.allFrequent, nextMeal: store.isToday ? store.nextMeal : nil, replacing: store.replacing,
-                              onLog: { await store.log($0) }, onEatPlan: { await store.eat($0) }, onRoute: route)
+                RegisterSheet(foods: store.allFrequent, dishes: store.dishes, nextMeal: store.isToday ? store.nextMeal : nil, replacing: store.replacing,
+                              onLog: { await store.log($0) }, onLogDish: { await store.log($0, scale: $1, removed: $2, slot: $3) },
+                              onEatPlan: { await store.eat($0) }, onRoute: route)
                     .presentationDetents([.large])
             case .quickAdd: QuickAddView(store: store, initialName: draftName).presentationDetents([.medium, .large])
+            case .dishBuilder: DishBuilderView(store: store).presentationDetents([.large])
             case .snack: SnackAddView(store: store).presentationDetents([.large])
             case .scan: BarcodeScanView(store: store).presentationDetents([.large])
             case .targets: TargetsView(store: store).presentationDetents([.medium, .large])
@@ -161,6 +168,7 @@ struct NutritionView: View {
         switch route {
         case .scan: sheet = .scan
         case .snack: sheet = .snack
+        case .createDish: sheet = .dishBuilder
         case .manual(let name):
             draftName = name
             sheet = .quickAdd

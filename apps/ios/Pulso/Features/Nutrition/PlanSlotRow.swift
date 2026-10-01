@@ -215,13 +215,7 @@ struct PlanSlotRow: View {
             if slot.real?.asPlanned == false {
                 Text("Comiste").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
-            ForEach(entries) { meal in
-                if let onDeleteEntry {
-                    SwipeToDelete { onDeleteEntry(meal) } content: { MealRow(meal: meal) }
-                } else {
-                    MealRow(meal: meal)
-                }
-            }
+            LoggedList(meals: entries, onDelete: onDeleteEntry)
         }
         if let recipeId = recipeId ?? slot.recipeId {
             NavigationLink { RecipeDetailView(recipeId: recipeId) } label: {
