@@ -173,6 +173,39 @@ final class LiveSession {
         if scope == .always { persistSwap(programExerciseId: original.id, to: library.id) }
     }
 
+    /// "Personalizar lista" saved: the draft's exercises on top of whatever was
+    /// logged since it was copied (checked sets, cardio, the rest timer).
+    func apply(_ draft: LiveSessionState) {
+        let merged = LiveSessionState.merge(remote: draft, local: state).state
+        withAnimation(.snappy) {
+            mutate {
+                $0.exercises = merged.exercises
+                $0.setFocus(merged.focus)
+            }
+        }
+        if let clock, !state.exercises.contains(where: { $0.id == clock.exerciseId && $0.isCardio && $0.cardioLog == nil }) { self.clock = nil }
+        armRest()
+        armCardio()
+    }
+
+    /// "Todo el plan" from the live session: the program day becomes this list.
+    /// Exercises from the program keep their id (and load history); a load typed
+    /// in `weights` becomes the hand-set one.
+    func savePlan(_ exercises: [LiveExercise], weights: [String: Double]) async throws {
+        let store = TrainingStore.shared
+        guard let dayId = state.dayId, let day = store.program?.days.first(where: { $0.id == dayId }) else { return }
+        let known = Dictionary(day.exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let inputs = exercises.map { ex in
+            let program = known[ex.id]
+            return DayExerciseInput(
+                id: program?.id, exerciseId: ex.exerciseId, sets: ex.isCardio ? 1 : max(1, ex.sets.count), repMin: ex.repMin, repMax: ex.repMax,
+                targetRpe: ex.targetRpe, targetRir: ex.targetRir, restSeconds: ex.restSeconds, notes: ex.notes, cardio: ex.cardio,
+                weightKg: weights[ex.id] ?? (program?.exerciseId == ex.exerciseId ? program?.weightKg : nil), supersetId: ex.supersetId
+            )
+        }
+        try await store.saveDay(dayId, scope: .always, exercises: inputs)
+    }
+
     private func persistSwap(programExerciseId: String, to exerciseId: String) {
         let store = TrainingStore.shared
         guard let dayId = state.dayId, let day = store.program?.days.first(where: { $0.id == dayId }),

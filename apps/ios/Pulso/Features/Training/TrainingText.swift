@@ -8,6 +8,11 @@ enum TrainingText {
         "\(sets) \(sets == 1 ? "serie" : "series") de \(reps(repMin, repMax))"
     }
 
+    /// "4 series de 6 a 8", for lists.
+    static func short(sets: Int, repMin: Int, repMax: Int) -> String {
+        "\(sets) \(sets == 1 ? "serie" : "series") de \(repMin == repMax ? "\(repMin)" : "\(repMin) a \(repMax)")"
+    }
+
     /// "6 a 8 repeticiones", "1 repetición".
     static func reps(_ min: Int, _ max: Int) -> String {
         min == max ? repetitions(min) : "\(min) a \(max) repeticiones"

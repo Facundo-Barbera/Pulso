@@ -6,6 +6,8 @@ import SwiftUI
 /// The person's preferred equipment comes first in the results.
 struct ExercisePickerSheet: View {
     var title: String = "Añadir ejercicio"
+    /// The muscle chip selected on open ("cardio" for "Añadir cardio").
+    var initialMuscle: String? = nil
     let onPick: (LibraryExercise) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -47,7 +49,10 @@ struct ExercisePickerSheet: View {
                 .sensoryFeedback(.selection, trigger: equipment)
                 .animation(.snappy, value: results)
         }
-        .task { if case .loading = phase { await load() } }
+        .task {
+            if muscle == nil, let initialMuscle { muscle = initialMuscle }
+            if case .loading = phase { await load() }
+        }
     }
 
     @ViewBuilder private var content: some View {

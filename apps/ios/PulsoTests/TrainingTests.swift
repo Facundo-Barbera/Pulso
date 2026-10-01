@@ -166,4 +166,36 @@ final class TrainingTests: XCTestCase {
         XCTAssertEqual(TrainingPlan.recentRecords(sessions, now: now), ["press-banca"])
         XCTAssertEqual(TrainingPlan.recentRecords(sessions, now: now, days: 21), ["press-banca", "dominadas"])
     }
+
+    // MARK: Personalizar lista
+
+    @MainActor
+    func testProgramDraftPairsAppliesChangesAndSendsSupersets() {
+        let draft = ProgramListDraft(day: day, suggestions: suggestions)
+        XCTAssertEqual(draft.scope, .always)
+        XCTAssertFalse(draft.changed)
+        draft.setSupersets(Superset.pair(0, 1, in: [nil, nil], cardio: [false, false])!)
+        XCTAssertNotNil(draft.items[0].supersetId)
+        XCTAssertEqual(draft.items[0].supersetId, draft.items[1].supersetId)
+        XCTAssertEqual(draft.exercises.map(\.editInput.supersetId), draft.exercises.map(\.supersetId))
+        XCTAssertTrue(draft.changed)
+
+        // Only what changed in the sheet is written: the rest set elsewhere stays.
+        let old = draft.customization("pe1")!
+        draft.exercises[0].restSeconds = 200
+        var new = old
+        new.repMin += 1
+        new.repMax += 1
+        draft.apply(new, was: old, to: "pe1")
+        XCTAssertEqual(draft.exercises[0].repMin, 7)
+        XCTAssertEqual(draft.exercises[0].repMax, 9)
+        XCTAssertEqual(draft.exercises[0].restSeconds, 200)
+        XCTAssertEqual(draft.items[0].detail, "3 series de 7 a 9 · 80 kg")
+
+        draft.move(fromOffsets: [0], toOffset: 2)
+        XCTAssertNotNil(draft.exercises[0].supersetId, "Still next to each other")
+        XCTAssertEqual(draft.exercises[0].supersetId, draft.exercises[1].supersetId)
+        draft.remove("pe2")
+        XCTAssertNil(draft.exercises[0].supersetId, "A lone member is no superset")
+    }
 }
