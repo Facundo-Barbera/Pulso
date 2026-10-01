@@ -4,11 +4,11 @@ import { db } from "../db";
 import type { Line } from "../shopping/aggregate";
 import { addDays, localDate } from "./dates";
 import { pick, sum } from "./macros";
-import { eatenWords, mealClock, minuteOfDay, MISSED_AFTER_MIN, repairOnce } from "./reconcile";
+import { eatenWords, mealClock, minuteOfDay, MISSED_AFTER_MIN } from "./reconcile";
 import { findRecipe, ingredientLines, prepRows, type PrepRow } from "./recipes";
 import { lastRevision } from "./revisions";
 import { dayRow, horizonDays, itemsOf, linksOf, materializeRange, slotRows, type LinkRow, type SlotRow } from "./slots";
-import { activePlan, getAdjustment, getTargets, listMeals } from "./store";
+import { activePlan, ensureReconciled, getAdjustment, getTargets, listMeals } from "./store";
 
 export class PlanError extends Error {}
 
@@ -92,7 +92,7 @@ export function slotViews(rows: SlotRow[], now = Date.now()): PlanSlot[] {
 }
 
 export function dietDay(plan: DietPlan, date: string): DietDay {
-  repairOnce();
+  ensureReconciled();
   materializeRange(plan, date, date);
   const slots = slotViews(slotRows(plan.id, date));
   const marker = dayRow(plan.id, date)!;

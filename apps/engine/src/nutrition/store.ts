@@ -373,8 +373,16 @@ export function clearAdjustment(date: string): boolean {
   return db().query("DELETE FROM plan_adjustments WHERE date = ?").run(date).changes > 0;
 }
 
-export function nutritionDay(date: string): NutritionDay {
+/** Runs the one-off backfill (reconcile.ts) once today is laid out, so today's loose entries find their meals too. */
+export function ensureReconciled(): void {
+  const plan = activePlan();
+  if (!plan) return;
+  materialize(plan, localDate());
   repairOnce();
+}
+
+export function nutritionDay(date: string): NutritionDay {
+  ensureReconciled();
   const meals = listMeals(date);
   return { summary: summarize(date, meals, getTargets()), meals, plan: planForDay(date, meals), water: waterDay(date) };
 }
