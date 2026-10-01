@@ -10,6 +10,7 @@ import { coachTools } from "../coach/tools";
 import { dailyTools } from "../daily/tools";
 import { medicationTools } from "../medication/tools";
 import { nutritionTools } from "../nutrition/tools";
+import { shoppingTools } from "../shopping/tools";
 import { sleepTools } from "../sleep/tools";
 import { trainingTools } from "../training/tools";
 import { workoutTools } from "../workouts-tools";
@@ -28,4 +29,5 @@ export const TOOLS: PulsoTool[] = [
   ...medicationTools,
   ...coachTools,
   ...calendarTools,
+  ...shoppingTools,
 ];

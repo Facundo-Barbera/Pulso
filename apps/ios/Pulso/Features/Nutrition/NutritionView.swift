@@ -100,6 +100,7 @@ struct NutritionView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ShoppingListToolbarItem()
         ToolbarItem(placement: .topBarTrailing) {
             Menu("Más", systemImage: "ellipsis") {
                 Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }

@@ -12,6 +12,7 @@ import { DAILY_SCHEMA } from "./daily/schema";
 import { MCP_SCHEMA } from "./mcp/schema";
 import { MEDICATION_SCHEMA } from "./medication/schema";
 import { NUTRITION_SCHEMA } from "./nutrition/schema";
+import { SHOPPING_SCHEMA } from "./shopping/schema";
 import { SLEEP_SCHEMA } from "./sleep/schema";
 import { TRAINING_SCHEMA } from "./training/schema";
 
@@ -27,4 +28,5 @@ export const SCHEMAS: string[] = [
   COACH_SCHEMA,
   MCP_SCHEMA,
   CALENDAR_SCHEMA,
+  SHOPPING_SCHEMA,
 ];
