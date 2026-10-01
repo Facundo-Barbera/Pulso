@@ -47,6 +47,25 @@ struct CardTitle: View {
             if let systemImage { Image(systemName: systemImage) }
         }
         .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+}
+
+/// A row when its children fit the width, else the same children stacked. For button
+/// pairs and readouts that must not overflow a 375 pt phone or large Dynamic Type.
+/// Don't put a `Spacer` inside: stacked, it would stretch vertically.
+struct AdaptiveStack<Content: View>: View {
+    var horizontalAlignment: HorizontalAlignment = .center
+    var verticalAlignment: VerticalAlignment = .center
+    var spacing: CGFloat = 10
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: verticalAlignment, spacing: spacing) { content }
+            VStack(alignment: horizontalAlignment, spacing: spacing) { content }
+        }
     }
 }
 
@@ -107,6 +126,8 @@ struct HeroCard<Accessory: View>: View {
                     Text(unit).font(.title3.weight(.semibold)).foregroundStyle(.secondary)
                 }
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
             .animation(.snappy, value: value)
             if let caption {
                 Text(caption).font(.subheadline).foregroundStyle(.secondary)
@@ -150,6 +171,7 @@ struct StatTile: View {
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
+            .lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value)
                     .font(.title2.weight(.semibold))
@@ -157,6 +179,8 @@ struct StatTile: View {
                     .contentTransition(.numericText())
                 if let unit { Text(unit).font(.footnote).foregroundStyle(.secondary) }
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
             .animation(.snappy, value: value)
         }
         .padding(14)
@@ -221,9 +245,45 @@ struct GlassChip: View {
             Text(title)
         }
         .font(.caption.weight(.medium))
+        .lineLimit(1)
         .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .glassEffect(tint.map { .regular.tint($0.opacity(0.15)) } ?? .regular, in: .capsule)
+    }
+}
+
+/// Frames a #Preview at 375 pt, the narrowest phone Pulso supports (SE, mini), on the
+/// grouped background with a screen's padding, so a card wider than the phone shows up
+/// in the canvas. Pass `.xxLarge` to check large Dynamic Type too.
+struct NarrowPreview<Content: View>: View {
+    var dynamicType: DynamicTypeSize = .large
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) { content }
+                .padding(.horizontal)
+                .padding(.vertical, 24)
+        }
+        .frame(width: 375)
+        .background(Color(.systemGroupedBackground))
+        .dynamicTypeSize(dynamicType)
+    }
+}
+
+#Preview("Componentes · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        HeroCard(title: "Proteína restante", systemImage: "fork.knife", value: "1.248,5", unit: "kcal", caption: "de 2.400 kcal objetivo diario", tint: Theme.energy)
+        HStack(spacing: 10) {
+            StatTile(title: "Pasos de hoy", value: "12.408", systemImage: "figure.walk", tint: Theme.body)
+            StatTile(title: "Energía activa", value: "1.024", unit: "kcal", systemImage: "flame.fill", tint: Theme.energy)
+        }
+        AdaptiveStack {
+            Button("Copiar el día anterior", systemImage: "doc.on.doc") {}.buttonStyle(.glass)
+            Button("Plan con el Coach", systemImage: "sparkles") {}.buttonStyle(.glassProminent)
+        }
+        GlassChip("Actualizado hace 12 minutos", systemImage: "arrow.triangle.2.circlepath")
+        EmptyStateView(systemImage: "fork.knife", title: "Sin comidas registradas hoy", message: "Anota lo que comes y el Coach ajusta tu plan.", actionTitle: "Añadir comida") {}
     }
 }
