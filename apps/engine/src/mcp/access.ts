@@ -57,6 +57,12 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   log_dose: "write",
   get_adherence: "read",
   get_latest_brief: "read",
+  generate_shopping_list: "write",
+  get_shopping_list: "read",
+  add_shopping_items: "write",
+  update_shopping_item: "write",
+  check_shopping_items: "write",
+  remove_shopping_items: "write",
 };
 
 /** Tools touching the profile or medications: their descriptions say so to outside agents. */
