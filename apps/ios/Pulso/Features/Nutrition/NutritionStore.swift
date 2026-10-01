@@ -12,6 +12,8 @@ final class NutritionStore {
     /// Water ml per day of `week`, by `YYYY-MM-DD`.
     private(set) var weekWater: [String: Double] = [:]
     private(set) var frequent: [FrequentFood] = []
+    /// Snacks and drinks logged most lately, for the "Snack o bebida" sheet.
+    private(set) var frequentSnacks: [FrequentFood] = []
     private(set) var loading = false
 
     private var api: PulsoAPI? { PulsoModel.shared.api }
@@ -43,8 +45,9 @@ final class NutritionStore {
             async let day = api.nutritionDay(key)
             async let week = api.nutritionHistory(days: 7, to: key)
             async let frequent = api.frequentFoods()
+            async let snacks = api.frequentFoods(snacks: true)
             let history: (days: [NutritionSummary], water: [String: Double])
-            (self.day, history, self.frequent) = try await (day, week, frequent)
+            (self.day, history, self.frequent, frequentSnacks) = try await (day, week, frequent, snacks)
             (self.week, weekWater) = history
         } catch {
             PulsoModel.shared.handle(error)

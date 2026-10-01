@@ -31,8 +31,10 @@ extension PulsoAPI {
         return (response.days, response.water ?? [:])
     }
 
-    func frequentFoods() async throws -> [FrequentFood] {
-        let response: FrequentResponse = try await get("api/mobile/nutrition/frequent")
+    /// Foods logged most lately; `snacks` keeps snacks and drinks only.
+    func frequentFoods(snacks: Bool = false) async throws -> [FrequentFood] {
+        let response: FrequentResponse = try await get("api/mobile/nutrition/frequent",
+                                                       query: snacks ? [URLQueryItem(name: "kind", value: "snack")] : [])
         return response.foods
     }
 

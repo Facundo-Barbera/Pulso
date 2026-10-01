@@ -13,7 +13,7 @@ struct NutritionView: View {
     @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
-        case quickAdd, scan, targets, water, waterAmount
+        case quickAdd, snack, scan, targets, water, waterAmount
         var id: String { rawValue }
     }
 
@@ -53,6 +53,7 @@ struct NutritionView: View {
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { sheet in
             switch sheet {
             case .quickAdd: QuickAddView(store: store).presentationDetents([.medium, .large])
+            case .snack: SnackAddView(store: store).presentationDetents([.large])
             case .scan: BarcodeScanView(store: store).presentationDetents([.large])
             case .targets: TargetsView(store: store).presentationDetents([.medium, .large])
             case .water:
@@ -109,13 +110,14 @@ struct NutritionView: View {
         }
     }
 
-    /// The glass quick-add bar floating over Hoy. At large text the scan
-    /// button drops its title so both still fit a 375 pt phone.
+    /// The glass quick-add bar floating over Hoy. At large text the side
+    /// buttons drop their titles (scan first) so all three still fit a 375 pt phone.
     private var addBar: some View {
         GlassEffectContainer(spacing: 12) {
             ViewThatFits(in: .horizontal) {
-                addButtons(scanTitle: true)
-                addButtons(scanTitle: false)
+                addButtons(scanTitle: true, snackTitle: true)
+                addButtons(scanTitle: false, snackTitle: true)
+                addButtons(scanTitle: false, snackTitle: false)
             }
         }
         .controlSize(.large)
@@ -123,19 +125,10 @@ struct NutritionView: View {
         .padding(.bottom, 8)
     }
 
-    private func addButtons(scanTitle: Bool) -> some View {
+    private func addButtons(scanTitle: Bool, snackTitle: Bool) -> some View {
         HStack(spacing: 12) {
-            Button { sheet = .scan } label: {
-                Group {
-                    if scanTitle {
-                        Label("Escanear", systemImage: "barcode.viewfinder")
-                    } else {
-                        Label("Escanear", systemImage: "barcode.viewfinder").labelStyle(.iconOnly)
-                    }
-                }
-                .padding(.horizontal, 6).padding(.vertical, 4)
-            }
-            .buttonStyle(.glass)
+            sideButton("Escanear", "barcode.viewfinder", title: scanTitle) { sheet = .scan }
+            sideButton("Snack o bebida", "cup.and.saucer.fill", title: snackTitle) { sheet = .snack }
             Button { sheet = .quickAdd } label: {
                 Label("Añadir comida", systemImage: "plus")
                     .fontWeight(.semibold)
@@ -144,6 +137,21 @@ struct NutritionView: View {
             }
             .buttonStyle(.glassProminent)
         }
+    }
+
+    private func sideButton(_ text: String, _ symbol: String, title: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Group {
+                if title {
+                    Label(text, systemImage: symbol)
+                } else {
+                    Label(text, systemImage: symbol).labelStyle(.iconOnly)
+                }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 6).padding(.vertical, 4)
+        }
+        .buttonStyle(.glass)
     }
 
     private func copyPrevious() async {
