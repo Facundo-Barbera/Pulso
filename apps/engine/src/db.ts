@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { migrateDevices } from "./devices-schema";
 import { SCHEMAS } from "./schemas";
 import { migrateWorkouts } from "./workouts-schema";
 
@@ -28,6 +29,7 @@ export function db(): Database {
   const database = new Database(path.join(dir, "pulso.sqlite"), { create: true, strict: true });
   database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   for (const schema of SCHEMAS) database.exec(schema);
+  migrateDevices(database);
   migrateWorkouts(database);
   g[KEY] = database;
   return database;
