@@ -80,7 +80,7 @@ struct ExercisePickerSheet: View {
                     onPick(exercise)
                     dismiss()
                 } label: {
-                    LibraryRow(name: exercise.name, equipment: exercise.equipment, thumbnail: exercise.thumbnail, caption: MuscleGroup.label(exercise.muscle))
+                    LibraryRow(name: exercise.name, equipment: exercise.equipment, thumbnail: exercise.thumbnail ?? cachedThumbnail(exercise.id), caption: MuscleGroup.label(exercise.muscle))
                 }
                 .buttonStyle(.plain)
             }
@@ -289,7 +289,7 @@ private struct AlternativeRow: View {
     }
 
     var body: some View {
-        LibraryRow(name: alternative.name, equipment: alternative.equipment, thumbnail: alternative.thumbnail) {
+        LibraryRow(name: alternative.name, equipment: alternative.equipment, thumbnail: alternative.thumbnail ?? cachedThumbnail(alternative.id)) {
             if !reasons.isEmpty || alternative.preferred {
                 ViewThatFits(in: .horizontal) {
                     tags(reasons)

@@ -177,7 +177,7 @@ struct DayEditorView: View {
     }
 
     private func thumbnail(_ exercise: ProgramExercise) -> String? {
-        thumbnails[exercise.exerciseId] ?? ExerciseCatalog.shared.details[exercise.exerciseId]?.media.thumbnail
+        thumbnails[exercise.exerciseId] ?? cachedThumbnail(exercise.exerciseId)
     }
 
     private func add(_ library: LibraryExercise) {

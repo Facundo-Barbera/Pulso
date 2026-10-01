@@ -53,6 +53,12 @@ func equipmentRank(_ id: String) -> Int {
     return preferred.firstIndex(of: id) ?? preferred.count
 }
 
+/// The still the catalog already has for `exerciseId`, for rows the engine sent without one.
+@MainActor
+func cachedThumbnail(_ exerciseId: String) -> String? {
+    ExerciseCatalog.shared.details[exerciseId]?.media.thumbnail
+}
+
 /// A filter capsule on glass, filled with the tint when selected.
 struct FilterChip: View {
     let title: String
