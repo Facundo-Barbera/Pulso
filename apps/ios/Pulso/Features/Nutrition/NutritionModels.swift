@@ -55,6 +55,16 @@ enum MealSlot: String, Codable, CaseIterable, Identifiable {
         default: .cena
         }
     }
+
+    /// A drink goes with breakfast, lunch or dinner when it's that time; between meals it's a snack.
+    static func forDrink(hour: Int) -> MealSlot {
+        switch hour {
+        case 6..<10: .desayuno
+        case 13..<16: .comida
+        case 20..<23: .cena
+        default: .snack
+        }
+    }
 }
 
 /// What macros are counted against. Older engines logged drinks as `g`.
@@ -354,6 +364,7 @@ struct NutritionDay: Codable, Equatable {
     var water: WaterDay?
 }
 
+/// A packaged food. Macros per 100 g, or per 100 ml for a drink; sizes in the same unit.
 struct FoodProduct: Codable, Equatable, Identifiable {
     var barcode: String
     var name: String
@@ -361,9 +372,68 @@ struct FoodProduct: Codable, Equatable, Identifiable {
     var per100g: NutritionMacros
     var servingGrams: Double?
     var imageUrl: String?
+    /// Absent from older engines: those products read as solids.
+    var liquid: Bool? = nil
+    var packageSize: Double? = nil
+    /// "lata" or "botella".
+    var packageKind: String? = nil
     var id: String { barcode }
 
-    func macros(grams: Double) -> NutritionMacros { per100g.scaled(by: grams / 100) }
+    var isLiquid: Bool { liquid ?? false }
+    var unit: FoodUnit { isLiquid ? .ml : .g }
+
+    /// `amount` is g or ml, whichever the product counts in.
+    func macros(grams amount: Double) -> NutritionMacros { per100g.scaled(by: amount / 100) }
+
+    /// A one-tap amount, and how it is logged when it is a measure people say ("1 lata").
+    struct Portion: Identifiable, Equatable {
+        var title: String
+        var amount: Double
+        var measure: Measure?
+        var id: String { title }
+    }
+
+    /// Drinks: the package ("Botella (600 ml)"), the label's serving, a glass and half the package.
+    /// Solids: the serving, half of it and the package; 100 g and 30 g only when the label says nothing.
+    var portions: [Portion] {
+        var portions: [Portion] = []
+        let n = { (x: Double) in x.formatted(.number.precision(.fractionLength(0...1))) }
+        if isLiquid {
+            let kind = packageKind.flatMap(MeasureUnit.init(rawValue:)).flatMap { [.lata, .botella].contains($0) ? $0 : nil }
+            let measure = { (amount: Double, size: Double) in
+                kind.map { Measure(amount: amount, unit: $0, size: size == $0.defaultSize ? nil : size) }
+            }
+            if let size = packageSize {
+                let name = kind == .lata ? "Lata" : kind == .botella ? "Botella" : "Envase"
+                portions.append(Portion(title: "\(name) (\(n(size)) ml)", amount: size, measure: measure(1, size)))
+            }
+            if let serving = servingGrams { portions.append(Portion(title: "Porción (\(n(serving)) ml)", amount: serving)) }
+            portions.append(Portion(title: "Vaso (250 ml)", amount: 250, measure: Measure(amount: 1, unit: .vaso)))
+            if let size = packageSize, size >= 330 {
+                portions.append(Portion(title: "Media (\(n(size / 2)) ml)", amount: size / 2, measure: measure(0.5, size)))
+            }
+        } else {
+            if let serving = servingGrams {
+                portions.append(Portion(title: "Porción (\(n(serving)) g)", amount: serving))
+                portions.append(Portion(title: "½ porción", amount: (serving * 5).rounded() / 10))
+            }
+            if let size = packageSize { portions.append(Portion(title: "Paquete (\(n(size)) g)", amount: size)) }
+            if portions.isEmpty {
+                portions = [Portion(title: "100 g", amount: 100), Portion(title: "30 g", amount: 30)]
+            }
+        }
+        // A glass the size of the package is one button, not two.
+        var seen = Set<Double>()
+        return portions.filter { seen.insert($0.amount).inserted }
+    }
+
+    /// Where the picker starts: a drink's whole package up to a litre, else a serving, else a glass or 100 g.
+    var defaultPortion: Portion {
+        let all = portions
+        if isLiquid, let size = packageSize, size <= 1000, let whole = all.first(where: { $0.amount == size }) { return whole }
+        if let serving = servingGrams, let portion = all.first(where: { $0.amount == serving }) { return portion }
+        return all.first { $0.amount == (isLiquid ? 250 : 100) } ?? Portion(title: "100 g", amount: 100)
+    }
 }
 
 struct FrequentFood: Codable, Equatable, Identifiable {

@@ -6,6 +6,9 @@ import { localDate } from "./dates";
 
 const ML_PER_KG = 35;
 const DEFAULT_GOAL_ML = 2000;
+/** 35 ml/kg overshoots for heavy people (120 kg → 4.2 L); the derived goal stays in a sensible daily range. */
+const MIN_DERIVED_ML = 2000;
+const MAX_DERIVED_ML = 3700;
 const DEFAULTS: WaterSettings = { goalMl: null, unit: "vaso", glassMl: 250, bottleMl: 500 };
 
 type EntryRow = { id: string; date: string; logged_at: number; amount_ml: number; source: WaterEntry["source"] };
@@ -30,10 +33,13 @@ export function setWaterSettings(patch: Partial<WaterSettings>): WaterSettings {
   return next;
 }
 
-/** The daily goal: the person's own, else 35 ml per kg of their latest weight (to 50 ml), else 2 L. */
+/** The daily goal: the person's own, else 35 ml per kg of their latest weight (to 50 ml, within 2–3.7 L), else 2 L. */
 export function waterGoal(settings = getWaterSettings(), weight: number | null = series("weight").at(-1)?.value ?? null): { goalMl: number; goalSource: WaterDay["goalSource"] } {
   if (settings.goalMl) return { goalMl: settings.goalMl, goalSource: "custom" };
-  if (weight) return { goalMl: Math.round((weight * ML_PER_KG) / 50) * 50, goalSource: "weight" };
+  if (weight) {
+    const derived = Math.round((weight * ML_PER_KG) / 50) * 50;
+    return { goalMl: Math.min(MAX_DERIVED_ML, Math.max(MIN_DERIVED_ML, derived)), goalSource: "weight" };
+  }
   return { goalMl: DEFAULT_GOAL_ML, goalSource: "default" };
 }
 

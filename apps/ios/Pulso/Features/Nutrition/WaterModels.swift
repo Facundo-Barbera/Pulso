@@ -17,7 +17,7 @@ enum WaterUnit: String, Codable, CaseIterable, Identifiable {
 }
 
 struct WaterSettings: Codable, Equatable {
-    /// nil = automatic (35 ml/kg of body weight, or 2 L).
+    /// nil = automatic (35 ml/kg of body weight within 2–3.7 L, or 2 L).
     var goalMl: Double?
     var unit: WaterUnit
     var glassMl: Double
@@ -46,13 +46,24 @@ struct WaterSettings: Codable, Equatable {
         }
     }
 
+    /// "1 de 15 vasos", "1,5 de 3 botellas", "750 ml de 2,75 L".
+    func progress(_ ml: Double, of goalMl: Double) -> String {
+        unit == .ml ? "\(Self.litres(ml)) de \(Self.litres(goalMl))" : "\(Self.halves(count(ml)).formatted()) de \(format(goalMl))"
+    }
+
+    /// What one tap on the water card adds: their bottle when they count in bottles, else their glass.
+    var quickAddMl: Double { unit == .botella ? bottleMl : glassMl }
+
     /// Below a litre in ml, from there in litres with up to two decimals.
     static func litres(_ ml: Double) -> String {
         ml < 1000 ? "\(Int(ml.rounded())) ml" : "\((ml / 1000).formatted(.number.precision(.fractionLength(0...2)))) L"
     }
 
+    /// Halves are as precise as anyone counts glasses.
+    private static func halves(_ n: Double) -> Double { (n * 2).rounded() / 2 }
+
     private static func counted(_ n: Double, _ one: String, _ many: String) -> String {
-        let rounded = (n * 2).rounded() / 2 // halves are as precise as anyone counts glasses
+        let rounded = halves(n)
         return "\(rounded.formatted(.number.precision(.fractionLength(0...1)))) \(rounded == 1 ? one : many)"
     }
 }

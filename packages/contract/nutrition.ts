@@ -165,15 +165,21 @@ export type DayAdjustment = {
 /** The active plan as seen on one date: which day applies, which items are already logged, and the day's adjustment. */
 export type PlanForDay = { plan: DietPlan; dayIndex: number; day: PlanDay; eatenItemIds: string[]; adjustment: DayAdjustment | null };
 
-/** A packaged food from Open Food Facts. Macros per 100 g. */
+/** A packaged food from Open Food Facts. Macros per 100 g, or per 100 ml when `liquid`. */
 export type FoodProduct = {
   barcode: string;
   name: string;
   brand: string | null;
   per100g: Macros;
-  /** Grams in one serving, when the label says. */
+  /** Grams (ml when `liquid`) in one serving, when the label says. */
   servingGrams: number | null;
   imageUrl: string | null;
+  /** A drink, counted in ml: the package or serving is in ml/cl/L, or it is filed under beverages. */
+  liquid: boolean;
+  /** Grams (ml when `liquid`) in the package as sold; one unit of a multipack ("6 x 330 ml" → 330). */
+  packageSize: number | null;
+  /** The package, when Open Food Facts knows it, so a drink logs as "1 lata" or "1 botella". */
+  packageKind: "lata" | "botella" | null;
 };
 
 export const WATER_UNITS = ["ml", "vaso", "botella"] as const;
@@ -181,7 +187,7 @@ export const WATER_UNITS = ["ml", "vaso", "botella"] as const;
 export type WaterUnit = (typeof WATER_UNITS)[number];
 
 export type WaterSettings = {
-  /** Daily goal in ml; null means derived (35 ml/kg of body weight, or 2000 ml). */
+  /** Daily goal in ml; null means derived (35 ml/kg of body weight kept within 2000–3700 ml, or 2000 ml). */
   goalMl: number | null;
   unit: WaterUnit;
   glassMl: number;
