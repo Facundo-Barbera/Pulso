@@ -62,6 +62,7 @@ export function startCoachScheduler(run: QueryFn = query, every = TICK_MS): bool
   const scheduler: Scheduler = { timer: setInterval(() => void tick(scheduler), every), run, ticking: null };
   scheduler.timer.unref?.();
   g.__pulso_coach_scheduler__ = scheduler;
+  console.log(`[coach] brief scheduler started (every ${Math.round(every / 60_000)} min)`);
   void tick(scheduler);
   return true;
 }
