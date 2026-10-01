@@ -176,6 +176,8 @@ struct LiveSessionState: Hashable {
     /// Anything worth saving: a set or a cardio block.
     var hasWork: Bool { setsDone > 0 || !cardioLogs.isEmpty }
     var allDone: Bool { !exercises.contains(where: \.pending) }
+    /// Exercises passed over today with nothing logged, by name.
+    var skippedNames: [String] { exercises.filter { $0.skipped && !$0.hasDoneWork }.map(\.name) }
 
     var focused: LiveExercise? { exercises.indices.contains(focus) ? exercises[focus] : nil }
 
@@ -524,7 +526,21 @@ struct LiveSessionState: Hashable {
         } else {
             merged.setFocus(remote.focus)
         }
+        // Skipped from elsewhere (the Coach) while on screen: move on to one still to do.
+        if merged.focused?.skipped == true, local.focused?.skipped != true { merged.advanceIfDone() }
         return (merged, kept)
+    }
+
+    /// The undo toast after the Coach's change: what it skipped by name, else a plain line.
+    /// "El Coach saltó Remo en máquina", "… saltó Remo y Curl", "… saltó Remo, Curl y 2 más".
+    static func coachSummary(before: LiveSessionState, after: LiveSessionState) -> String {
+        let was = Set(before.exercises.filter(\.skipped).map(\.id))
+        let names = after.exercises.filter { $0.skipped && !was.contains($0.id) }.map(\.name)
+        switch names.count {
+        case 0: return "El Coach cambió la sesión"
+        case 1...2: return "El Coach saltó \(TrainingText.list(names))"
+        default: return "El Coach saltó \(names[0]), \(names[1]) y \(names.count - 2) más"
+        }
     }
 
     // MARK: Output

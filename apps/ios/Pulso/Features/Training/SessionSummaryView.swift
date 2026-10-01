@@ -39,6 +39,18 @@ struct SessionSummaryView: View {
                             }
                         }
                     }
+                    if !summary.skipped.isEmpty {
+                        Label {
+                            Text("Saltados: \(TrainingText.list(summary.skipped))")
+                        } icon: {
+                            Image(systemName: "forward.fill").foregroundStyle(.orange)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+                    }
                     if !summary.prs.isEmpty {
                         Card {
                             CardTitle(text: "Récords", systemImage: "trophy")

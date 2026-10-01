@@ -239,6 +239,61 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(s.current?.exercise, 0)
     }
 
+    /// Four strength exercises; the Coach skips the middle two while the first is on screen.
+    private func skippedByCoach() -> (before: LiveSessionState, after: LiveSessionState) {
+        var before = state()
+        before.exercises = [before.exercises[0], before.exercises[1], .fresh(rowing, id: "row", weightKg: 40), .fresh(rowing, id: "row2", weightKg: 40)]
+        before.exercises[3].name = "Remo con barra"
+        before.setFocus(1)
+        var remote = before
+        remote.version = 2
+        remote.exercises[1].skipped = true
+        remote.exercises[2].skipped = true
+        return (before, remote)
+    }
+
+    func testFocusAndNextPassOverSkippedExercises() {
+        let (before, remote) = skippedByCoach()
+        let merged = LiveSessionState.merge(remote: remote, local: before).state
+        XCTAssertEqual(merged.focus, 3, "Skipped while on screen: focus moves on to one still to do")
+        XCTAssertEqual(merged.nextPending(after: 0), 3, "'Siguiente' never lands on a skipped exercise")
+        XCTAssertEqual(merged.current?.exercise, 0)
+        XCTAssertEqual(merged.skippedNames, ["Curl con mancuernas", "Remo en polea"])
+
+        var s = merged
+        for set in s.exercises[0].sets.indices { s.toggle(exercise: 0, set: set, now: t0) }
+        s.setFocus(0)
+        s.skipRest()
+        s.advanceIfDone()
+        XCTAssertEqual(s.focus, 3, "Done with the first, the next is the one after the skipped")
+        XCTAssertEqual(s.current?.exercise, 3)
+
+        // Skipped by hand while looking at it stays on screen to be resumed.
+        var mine = before
+        mine.exercises[1].skipped = true
+        XCTAssertEqual(LiveSessionState.merge(remote: mine, local: mine).state.focus, 1)
+    }
+
+    func testCountsAndTheLiveActivityLeaveSkippedOut() {
+        let (before, remote) = skippedByCoach()
+        let merged = LiveSessionState.merge(remote: remote, local: before).state
+        XCTAssertEqual(before.setsTotal, 3 + 2 + 3 + 3)
+        XCTAssertEqual(merged.setsTotal, 3 + 3)
+        let activity = merged.activityState(now: t0)
+        XCTAssertEqual(activity.setsTotal, 6)
+        XCTAssertEqual(activity.exerciseName, "Press de banca")
+    }
+
+    func testTheUndoToastNamesWhatTheCoachSkipped() {
+        let (before, remote) = skippedByCoach()
+        XCTAssertEqual(LiveSessionState.coachSummary(before: before, after: remote), "El Coach saltó Curl con mancuernas y Remo en polea")
+        var three = remote
+        three.exercises[3].skipped = true
+        three.exercises[0].skipped = true
+        XCTAssertEqual(LiveSessionState.coachSummary(before: before, after: three), "El Coach saltó Press de banca, Curl con mancuernas y 2 más")
+        XCTAssertEqual(LiveSessionState.coachSummary(before: before, after: before), "El Coach cambió la sesión")
+    }
+
     func testTargetEditsRespectDoneSets() {
         var s = state()
         s.toggle(exercise: 0, set: 0, now: t0)

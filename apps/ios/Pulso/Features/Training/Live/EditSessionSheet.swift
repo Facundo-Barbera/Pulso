@@ -44,7 +44,7 @@ final class LiveListDraft: ListDraft {
                 id: ex.id, exerciseId: ex.exerciseId, name: ex.name,
                 detail: ex.isCardio ? ex.prescription : TrainingText.short(sets: ex.sets.count, repMin: ex.repMin, repMax: ex.repMax),
                 isCardio: ex.isCardio, thumbnail: thumbnails[ex.exerciseId] ?? cachedThumbnail(ex.exerciseId), supersetId: ex.supersetId,
-                locked: ex.hasDoneWork, status: ex.skipped ? "Saltado" : ex.done ? "Hecho" : nil
+                locked: ex.hasDoneWork, skipped: ex.skipped, status: ex.skipped ? "Saltado" : ex.done ? "Hecho" : nil
             )
         }
     }
@@ -69,6 +69,10 @@ final class LiveListDraft: ListDraft {
         let new = state.swap(i, to: library, weightKg: LiveHistory.lastWeight(library.id, in: TrainingStore.shared.sessions) ?? 0)
         state.setFocus(focus)
         return state.exercises[new].id
+    }
+
+    func resume(_ id: String) {
+        if let i = index(id) { state.setSkipped(i, false) }
     }
 
     func setSupersets(_ ids: [String?]) {

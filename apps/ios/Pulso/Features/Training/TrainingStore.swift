@@ -6,6 +6,8 @@ import Observation
 struct SessionSummary: Identifiable {
     var session: TrainingSession
     var prs: [TrainingRecord] = []
+    /// Exercises passed over, by name.
+    var skipped: [String] = []
     var uploaded = false
     var savedToHealth = false
 
@@ -160,7 +162,7 @@ final class TrainingStore {
         let cardio = state.exercises.compactMap { ex in ex.cardioLog.map { (log: $0, modality: ex.modality) } }
         await live.close()
         self.live = nil
-        summary = SessionSummary(session: session)
+        summary = SessionSummary(session: session, skipped: state.skippedNames)
         guard state.hasWork else { return }
 
         // Salud refusing or being unavailable doesn't stop the session going to the Mac.

@@ -29,6 +29,8 @@ final class LiveSession {
 
     /// The session before the Coach's last change, while "Deshacer" is offered.
     private(set) var coachUndo: LiveSessionState?
+    /// What the toast says about that change: "El Coach saltó Remo en máquina".
+    private(set) var coachSummary: String?
     /// Bumped when the Coach changed the session, for the haptic.
     private(set) var coachChanges = 0
 
@@ -451,6 +453,7 @@ final class LiveSession {
         await pull()
         guard state.exercises != before.exercises || state.focus != before.focus else { return }
         coachChanges += 1
+        coachSummary = LiveSessionState.coachSummary(before: before, after: state)
         withAnimation(.snappy) { coachUndo = before }
         undoTask?.cancel()
         undoTask = Task { [weak self] in

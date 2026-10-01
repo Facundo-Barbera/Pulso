@@ -18,6 +18,12 @@ enum TrainingText {
         min == max ? repetitions(min) : "\(min) a \(max) repeticiones"
     }
 
+    /// "Remo", "Remo y Curl", "Remo, Curl y Press": names in a sentence.
+    static func list(_ names: [String]) -> String {
+        guard let last = names.last else { return "" }
+        return names.count == 1 ? last : "\(names.dropLast().joined(separator: ", ")) y \(last)"
+    }
+
     /// "8 repeticiones", "1 repetición".
     static func repetitions(_ count: Int) -> String { count == 1 ? "1 repetición" : "\(count) repeticiones" }
 

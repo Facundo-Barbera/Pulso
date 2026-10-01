@@ -16,6 +16,8 @@ struct ListItem: Identifiable, Hashable {
     var supersetId: String?
     /// Has logged work: it can be skipped, not removed.
     var locked = false
+    /// Passed over today (live session only): struck through, with "Retomar".
+    var skipped = false
     var status: String? = nil
 }
 
@@ -54,6 +56,8 @@ protocol ListDraft: AnyObject, Observable {
     /// Returns the id the exercise has after the swap.
     @discardableResult func swap(_ id: String, to library: LibraryExercise) -> String?
     func setSupersets(_ ids: [String?])
+    /// Takes a skipped exercise back into the session.
+    func resume(_ id: String)
     func customization(_ id: String) -> ExerciseCustomization?
     /// Applies what differs between `old` and `new`, so settings changed elsewhere stay.
     func apply(_ new: ExerciseCustomization, was old: ExerciseCustomization, to id: String)
@@ -64,6 +68,7 @@ protocol ListDraft: AnyObject, Observable {
 
 extension ListDraft {
     func moreSettings(_ id: String) -> AnyView? { nil }
+    func resume(_ id: String) {}
 }
 
 extension EditScope {
@@ -214,11 +219,15 @@ struct CustomizeListSheet<Draft: ListDraft>: View {
                 item: item,
                 superset: item.supersetId.flatMap { labels[$0] },
                 selection: pairing.map { $0.contains(item.id) },
-                remove: item.locked ? nil : { withAnimation(.snappy) { draft.remove(item.id) } }
+                remove: item.locked ? nil : { withAnimation(.snappy) { draft.remove(item.id) } },
+                resume: { withAnimation(.snappy) { draft.resume(item.id) } }
             )
         }
         .buttonStyle(.plain)
         .contextMenu {
+            if item.skipped {
+                Button("Retomar", systemImage: "arrow.uturn.backward") { withAnimation(.snappy) { draft.resume(item.id) } }
+            }
             if item.supersetId != nil {
                 Button("Separar de la superserie", systemImage: "link.badge.plus") { unpair(item) }
             }
@@ -347,6 +356,7 @@ private struct ItemRow: View {
     /// While pairing: whether it is chosen.
     let selection: Bool?
     let remove: (() -> Void)?
+    let resume: () -> Void
 
     private var muscles: [Muscle] { ExerciseCatalog.shared.details[item.exerciseId]?.primaryMuscles ?? [] }
 
@@ -360,6 +370,8 @@ private struct ItemRow: View {
             }
             ExerciseMediaView(path: item.thumbnail, cornerRadius: 12)
                 .frame(width: 56, height: 56)
+                .saturation(item.skipped ? 0 : 1)
+                .opacity(item.skipped ? 0.6 : 1)
                 .overlay(alignment: .topLeading) {
                     if let remove, selection == nil {
                         Button(action: remove) {
@@ -378,7 +390,8 @@ private struct ItemRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.name)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .strikethrough(item.skipped, color: .secondary)
+                    .foregroundStyle(item.skipped ? .secondary : .primary)
                     .lineLimit(2)
                 Text(item.detail)
                     .font(.subheadline)
@@ -388,12 +401,17 @@ private struct ItemRow: View {
                 if superset != nil || item.status != nil {
                     HStack(spacing: 6) {
                         if let superset { ReasonTag(text: "Superserie \(superset)") }
-                        if let status = item.status { ReasonTag(text: status, tint: .secondary) }
+                        if let status = item.status { ReasonTag(text: status, tint: item.skipped ? .orange : .secondary) }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if !muscles.isEmpty {
+            if item.skipped, selection == nil {
+                Button("Retomar", action: resume)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.glass)
+                    .tint(Theme.training)
+            } else if !muscles.isEmpty {
                 MuscleBadge(primary: muscles)
                     .accessibilityLabel(muscles.map(\.label).joined(separator: ", "))
             }
