@@ -1,20 +1,22 @@
-import CryptoKit
 import ImageIO
 import SwiftUI
 import UIKit
 
-/// Demonstration media on disk. The engine serves each file once and it never
-/// changes, so a cached copy is used as is: the gym often has no signal.
+/// Demonstration media, in memory only. ExerciseDB's terms forbid storing what it
+/// serves and cap any cache at one hour, so nothing is written to disk and every
+/// entry expires after `ttl` (the engine applies the same limit).
 actor ExerciseMediaCache {
     static let shared = ExerciseMediaCache()
+    static let ttl: TimeInterval = 3600
 
-    private let directory = URL.cachesDirectory.appending(path: "ExerciseMedia", directoryHint: .isDirectory)
+    private var bytes: [String: (data: Data, at: Date)] = [:]
     /// Decoded frames are large (w × h × 4 bytes each), so this cache is bounded by size.
     private let decoded: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = 96 << 20
         return cache
     }()
+    private var decodedAt: [String: Date] = [:]
     private var loading: [String: Task<Data, Error>] = [:]
 
     private static let session: URLSession = {
@@ -24,39 +26,43 @@ actor ExerciseMediaCache {
         return URLSession(configuration: config)
     }()
 
-    private func file(_ path: String) -> URL {
-        let hash = SHA256.hash(data: Data(path.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
-        return directory.appending(path: hash)
-    }
+    private func fresh(_ at: Date?) -> Bool { at.map { Date.now.timeIntervalSince($0) < Self.ttl } ?? false }
 
     func data(for path: String, api: PulsoAPI) async throws -> Data {
-        let file = file(path)
-        if let data = try? Data(contentsOf: file) { return data }
+        if let entry = bytes[path], fresh(entry.at) { return entry.data }
+        bytes[path] = nil
         if let task = loading[path] { return try await task.value }
         guard let request = api.mediaRequest(path) else { throw URLError(.badURL) }
-        let directory = directory
         let task = Task {
             let (data, response) = try await Self.session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try? data.write(to: file, options: .atomic)
             return data
         }
         loading[path] = task
         defer { loading[path] = nil }
-        return try await task.value
+        let data = try await task.value
+        bytes[path] = (data, .now)
+        return data
     }
 
-    /// The image for `path`, animated when it is a GIF. Kept decoded for the session.
+    /// The image for `path`, animated when it is a GIF.
     func image(for path: String, api: PulsoAPI) async throws -> UIImage? {
-        if let image = decoded.object(forKey: path as NSString) { return image }
+        if let image = cached(path) { return image }
         guard let image = AnimatedImage.decode(try await data(for: path, api: api)) else { return nil }
         let frame = image.size.width * image.scale * image.size.height * image.scale * 4
         decoded.setObject(image, forKey: path as NSString, cost: Int(frame) * max(1, image.images?.count ?? 1))
+        decodedAt[path] = .now
         return image
     }
 
-    func cached(_ path: String) -> UIImage? { decoded.object(forKey: path as NSString) }
+    func cached(_ path: String) -> UIImage? {
+        guard fresh(decodedAt[path]) else {
+            decoded.removeObject(forKey: path as NSString)
+            decodedAt[path] = nil
+            return nil
+        }
+        return decoded.object(forKey: path as NSString)
+    }
 }
 
 /// GIF decoding with ImageIO: SwiftUI's `Image` shows only the first frame.
