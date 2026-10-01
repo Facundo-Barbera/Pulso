@@ -8,6 +8,7 @@
     "dev": "bun ./apps/desktop/dev-runner.js",
     "dev:web": "turbo run dev --filter=@pulso/engine",
     "tailnet": "bun ./apps/engine/scripts/tailnet-proxy.mjs",
+    "mcp:client": "bun ./apps/engine/scripts/mcp-client.ts",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

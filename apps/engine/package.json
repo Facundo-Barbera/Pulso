@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "agent:provider": "bun run scripts/agent-provider.ts",
-    "training:media": "bun run scripts/training-media.ts"
+    "training:media": "bun run scripts/training-media.ts",
+    "mcp:client": "bun run scripts/mcp-client.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.286",
