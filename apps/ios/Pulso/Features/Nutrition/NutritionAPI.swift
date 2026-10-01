@@ -57,6 +57,12 @@ extension PulsoAPI {
         return response.meal
     }
 
+    /// "Me lo comí" on a dated slot; the Mac logs what it holds and links it.
+    func eatSlot(_ slotId: String) async throws -> [MealEntry] {
+        let response: MealsResponse = try await call("api/mobile/nutrition/plan/eat", method: "POST", body: ["slotId": slotId])
+        return response.meals
+    }
+
     func setTargets(_ targets: NutritionTargets) async throws -> NutritionTargets? {
         let response: TargetsResponse = try await call("api/mobile/nutrition/targets", method: "PUT", body: targets)
         return response.targets

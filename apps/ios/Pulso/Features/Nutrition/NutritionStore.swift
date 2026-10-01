@@ -137,11 +137,7 @@ final class NutritionStore {
     /// "Me lo comí": logs what the slot holds now (adjusted portions included); the Mac links each entry to it.
     func eat(_ slot: PlanSlot) async -> [MealEntry] {
         guard let api else { return [] }
-        return await value { () async throws -> [MealEntry] in
-            var eaten: [MealEntry] = []
-            for item in slot.current { eaten.append(try await api.eatPlanItem(item.id, date: slot.date)) }
-            return eaten
-        } ?? []
+        return await value { try await api.eatSlot(slot.id) } ?? []
     }
 
     /// Takes back entries just logged, e.g. undoing "Me lo comí".
