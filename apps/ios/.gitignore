@@ -3,3 +3,5 @@ DerivedData/
 xcuserdata/
 # Generated from project.yml by xcodegen (phone.sh and check.sh run it).
 Pulso.xcodeproj/
+# App Store Connect key ids (local only; the repo is public).
+.asc.env
