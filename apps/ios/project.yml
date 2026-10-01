@@ -1,22 +1,23 @@
 # The Pulso iPhone app. `xcodegen generate` (or `bun run ios:generate` from
-# the root) writes Pulso.xcodeproj from this file; the project is committed
-# too, so `xcodebuild` works without xcodegen. Edit this, regenerate, commit both.
+# the root) writes Pulso.xcodeproj from this file. The project is generated,
+# not committed: phone.sh and check.sh regenerate it.
 #
 # Debug is `com.facundo.pulso.dev`, Release `com.facundo.pulso`: two unrelated
 # apps to iOS, each with its own pairing in its own Keychain.
 name: Pulso
 options:
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   xcodeVersion: "26.0"
   generateEmptyDirectories: true
   groupSortPosition: top
+  developmentLanguage: es
 settings:
   base:
     DEVELOPMENT_TEAM: MM74W7WGAM
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     TARGETED_DEVICE_FAMILY: "1"
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1

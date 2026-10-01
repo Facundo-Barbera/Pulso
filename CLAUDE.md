@@ -11,6 +11,15 @@ Pulso is a personal, agentic health app: diet, training, body composition. iOS i
 - `Pulso.xcodeproj` is generated from `project.yml` and not committed. Edit `project.yml` only for entitlements, Info keys or new targets.
 - The UI is in Spanish (the person's language); code and comments are in English.
 
+## iOS design bar
+The person judges the app by how it looks and feels on their iPhone (iOS 27). Target iOS 26+, so no availability checks needed.
+- Native first: Liquid Glass (`.glassEffect`, `GlassEffectContainer`, `.buttonStyle(.glass/.glassProminent)`), large titles, `ScrollView` + cards over plain `List` for dashboards, SF Symbols with `.symbolEffect`, `.contentTransition(.numericText())` for changing numbers, `.sensoryFeedback` haptics, smooth `.animation(.snappy)`/matched transitions.
+- Hierarchy: one hero per screen (big ring, number or chart), then supporting cards. Rounded type (`.fontDesign(.rounded)`) for numbers. Generous spacing; nothing cramped.
+- Color: `Theme` domain colors and the accent only; dark mode first, must look right in light too. Gradients subtle.
+- Empty states are designed (illustration-ish SF Symbol, one line, one action), never a bare "Todavía nada".
+- Spanish everywhere the person reads, dates via `.formatted()` (the app's base language is Spanish).
+- Charts: Swift Charts with soft area gradients, no gridline clutter, selected-point readouts.
+
 ## Checks before committing
 - `bun run test` and `bun run typecheck` from the repo root.
 - `apps/ios/check.sh` — compiles the app and tests (there is no simulator runtime on this Mac).
