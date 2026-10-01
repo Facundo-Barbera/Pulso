@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import type { PlanDay } from "./entreno";
-import { addSet, current, editSet, extendRest, parseLive, removeSet, sessionId, setsDone, setsTotal, skipRest, startSession, stepWeight, toggleSet, toSessionInput, volumeKg } from "./entreno-live";
+import { fromUnit } from "../training/units";
+import { addSet, current, editSet, extendRest, parseLive, removeSet, sessionId, setsDone, setsTotal, setUnit, skipRest, startSession, stepWeight, toggleSet, toSessionInput, volumeKg } from "./entreno-live";
 
-const exercise = (id: string, exerciseId: string, sets: number, weightKg: number | null, step = 2.5) =>
-  ({ id, exerciseId, exerciseName: exerciseId, sets, repMin: 6, repMax: 8, restSeconds: 90, step, notes: null, target: `${sets} × 6–8`, suggestion: weightKg === null ? null : { exerciseId, weightKg, reps: 8, reason: "Sube", lastSessionAt: null } }) as never;
+const exercise = (id: string, exerciseId: string, sets: number, weightKg: number | null, unit = "kg") =>
+  ({ id, exerciseId, exerciseName: exerciseId, sets, repMin: 6, repMax: 8, restSeconds: 90, unit, notes: null, target: `${sets} × 6–8`, suggestion: weightKg === null ? null : { exerciseId, weightKg, reps: 8, reason: "Sube", lastSessionAt: null } }) as never;
 
-const day = { id: "d1", name: "Torso A", exercises: [exercise("p1", "press-banca", 2, 60), exercise("p2", "remo-mancuerna", 2, null, 1)] } as unknown as PlanDay;
+const day = { id: "d1", name: "Torso A", exercises: [exercise("p1", "press-banca", 2, 60), exercise("p2", "remo-mancuerna", 2, null)] } as unknown as PlanDay;
 
 test("a session starts from the day's suggestions, with 0 kg and the bottom of the range without history", () => {
   const s = startSession(day, "prog", 1000, "id-1");
@@ -43,6 +44,24 @@ test("loads step on the exercise's increment and numbers stay in range", () => {
   expect(s.exercises[1]!.sets[0]!.weightKg).toBe(0);
   s = editSet(s, 0, 0, { reps: 7.6, rpe: 14 });
   expect(s.exercises[0]!.sets[0]).toMatchObject({ reps: 8, rpe: 10 });
+});
+
+test("a pound machine steps by 5 lb, and switching unit moves only the sets still to do", () => {
+  const lbDay = { id: "d2", name: "Espalda", exercises: [exercise("p1", "remo-maquina", 2, fromUnit(70, "lb"), "lb")] } as unknown as PlanDay;
+  let s = startSession(lbDay, null, 0, "x");
+  s = stepWeight(s, 0, 0, 1);
+  expect(s.exercises[0]!.sets[0]!.weightKg).toBe(fromUnit(75, "lb"));
+  s = stepWeight(s, 0, 0, -2);
+  expect(s.exercises[0]!.sets[0]!.weightKg).toBe(fromUnit(65, "lb"));
+  s = toggleSet(s, 0, 0, 1);
+  s = setUnit(s, "remo-maquina", "kg");
+  expect(s.exercises[0]!.unit).toBe("kg");
+  // Done: what was lifted. To do: 65 lb (29,48 kg) on the nearest kilo plate.
+  expect(s.exercises[0]!.sets.map((x) => x.weightKg)).toEqual([fromUnit(65, "lb"), 30]);
+  // A session stored before units steps in kg.
+  const old = { ...startSession(day, null, 0, "y") };
+  old.exercises[0] = { ...old.exercises[0]!, unit: undefined };
+  expect(stepWeight(old, 0, 0, 1).exercises[0]!.sets[0]!.weightKg).toBe(62.5);
 });
 
 test("sets can be added and spare ones removed, never a done one or the last", () => {

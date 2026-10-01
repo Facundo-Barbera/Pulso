@@ -4,7 +4,8 @@
  * so a reload resumes; finishing posts `toSessionInput` to the same store the
  * phone writes to. No server imports: the logger is a client component.
  */
-import type { SessionInput } from "@pulso/contract";
+import type { SessionInput, WeightUnit } from "@pulso/contract";
+import { fromUnit, snap, snapKg, stepDown, stepUp } from "../training/units";
 import type { PlanDay } from "./entreno";
 
 export type LiveSet = { weightKg: number; reps: number; rpe: number | null; doneAt: number | null };
@@ -16,7 +17,8 @@ export type LiveExercise = {
   name: string;
   target: string;
   restSeconds: number;
-  step: number;
+  /** Its machine's unit: loads are shown, typed and stepped in it. Sessions stored before units have none: kg. */
+  unit?: WeightUnit;
   notes: string | null;
   /** the engine's double-progression reason */
   hint: string | null;
@@ -59,7 +61,7 @@ export function startSession(day: PlanDay, programId: string | null, now = Date.
       name: ex.exerciseName,
       target: ex.target,
       restSeconds: ex.restSeconds,
-      step: ex.step,
+      unit: ex.unit,
       notes: ex.notes,
       hint: ex.suggestion?.reason ?? null,
       sets: Array.from({ length: ex.sets }, () => ({ weightKg: ex.suggestion?.weightKg ?? 0, reps: ex.suggestion?.reps ?? ex.repMin, rpe: null, doneAt: null })),
@@ -95,11 +97,28 @@ export function editSet(s: LiveState, e: number, i: number, patch: Partial<Pick<
   }));
 }
 
-/** Moves a set's load by whole steps, landing on a multiple of the step. */
+export const unitOfExercise = (ex: Pick<LiveExercise, "unit">): WeightUnit => ex.unit ?? "kg";
+
+/** Moves a set's load by whole steps of its exercise's unit (5 lb, 2.5 kg…), landing on the step grid. */
 export function stepWeight(s: LiveState, e: number, i: number, steps: number): LiveState {
-  const { step } = s.exercises[e]!;
-  const weight = s.exercises[e]!.sets[i]!.weightKg;
-  return editSet(s, e, i, { weightKg: Math.round((weight + steps * step) / step) * step });
+  const unit = unitOfExercise(s.exercises[e]!);
+  let value = snap(s.exercises[e]!.sets[i]!.weightKg, unit);
+  for (let n = 0; n < Math.abs(steps); n++) value = steps > 0 ? stepUp(value, unit) : stepDown(value, unit);
+  return editSet(s, e, i, { weightKg: fromUnit(value, unit) });
+}
+
+/**
+ * Switches an exercise to another unit (its machine's). Sets not done yet move
+ * to that unit's nearest step, so "Hecho" logs a load the machine has; done
+ * sets keep what was lifted.
+ */
+export function setUnit(s: LiveState, exerciseId: string, unit: WeightUnit): LiveState {
+  return {
+    ...s,
+    exercises: s.exercises.map((ex) =>
+      ex.exerciseId !== exerciseId ? ex : { ...ex, unit, sets: ex.sets.map((set) => (set.doneAt === null ? { ...set, weightKg: snapKg(set.weightKg, unit) } : set)) },
+    ),
+  };
 }
 
 /**

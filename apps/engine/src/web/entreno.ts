@@ -3,13 +3,14 @@
  * body stores. The page, `GET /api/web/entreno` and the session logger share
  * these shapes. The numbers match the iPhone's plan screen (TrainingPlan.swift).
  */
-import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, Program, ProgramDay, ProgramExercise, TrainingSession } from "@pulso/contract";
+import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, Program, ProgramDay, ProgramExercise, TrainingSession, WeightUnit } from "@pulso/contract";
 import { listScans } from "../body/store";
 import { localDate } from "../daily/dates";
 import { ANATOMY } from "../training/anatomy";
 import { e1rm } from "../training/math";
 import { idsWithMedia, MEDIA_ROUTE, type MediaKind } from "../training/media";
-import { activeProgramView, exerciseDetail, exercisePerformance, getExercise, listSessions } from "../training/store";
+import { activeProgramView, exerciseDetail, exercisePerformance, getExercise, listSessions, trainingSettings, unitOf } from "../training/store";
+import { formatWeight, toUnit } from "../training/units";
 import { listWorkouts } from "../workouts";
 import { activityLabel } from "./today";
 
@@ -60,10 +61,10 @@ export function dayKcal(day: Pick<ProgramDay, "exercises">, weightKg: number | n
 const kg = new Intl.NumberFormat("es", { maximumFractionDigits: 2 });
 const reps = (ex: Pick<ProgramExercise, "repMin" | "repMax">) => (ex.repMin === ex.repMax ? `${ex.repMin}` : `${ex.repMin}–${ex.repMax}`);
 
-/** "4 series × 6–8 reps × 32,5 kg", the load only when there is a suggestion. */
-export function prescription(ex: Pick<ProgramExercise, "sets" | "repMin" | "repMax">, weightKg: number | null): string {
+/** "4 series × 6–8 reps × 32,5 kg" (or "× 70 lb" on a pound machine), the load only when there is a suggestion. */
+export function prescription(ex: Pick<ProgramExercise, "sets" | "repMin" | "repMax">, weightKg: number | null, unit: WeightUnit = "kg"): string {
   const text = `${ex.sets} ${ex.sets === 1 ? "serie" : "series"} × ${reps(ex)} reps`;
-  return weightKg && weightKg > 0 ? `${text} × ${kg.format(weightKg)} kg` : text;
+  return weightKg && weightKg > 0 ? `${text} × ${formatWeight(weightKg, unit)}` : text;
 }
 
 /** "3 × 6–8 · RIR 2": the short target the logger shows under a name. */
@@ -71,9 +72,6 @@ export function target(ex: Pick<ProgramExercise, "sets" | "repMin" | "repMax" | 
   const effort = ex.targetRir != null ? ` · RIR ${ex.targetRir}` : ex.targetRpe != null ? ` · RPE ${kg.format(ex.targetRpe)}` : "";
   return `${ex.sets} × ${reps(ex)}${effort}`;
 }
-
-/** Load step for the logger's arrow keys: dumbbells and bodyweight load move by 1 kg, plates and stacks by 2.5. */
-export const weightStep = (equipment: ProgramExercise["equipment"]) => (equipment === "dumbbell" || equipment === "bodyweight" ? 1 : 2.5);
 
 /**
  * For each session, the exercises whose best estimated 1RM beat every earlier
@@ -121,7 +119,8 @@ export type PlanExercise = ProgramExercise & {
   suggestion: LoadSuggestion | null;
   /** a record on it in the last two weeks */
   record: boolean;
-  step: number;
+  /** what its machine or plates use; loads are shown, typed and stepped in it */
+  unit: WeightUnit;
 };
 
 export type PlanDay = Omit<ProgramDay, "exercises"> & {
@@ -136,7 +135,7 @@ export type PlanDay = Omit<ProgramDay, "exercises"> & {
 
 export type ProgramHeader = Pick<Program, "id" | "name" | "goal" | "weeks" | "notes"> & { week: number; deload: boolean };
 
-export type HistoryExercise = { exerciseId: string; name: string; record: boolean; sets: { weightKg: number; reps: number; rpe: number | null }[] };
+export type HistoryExercise = { exerciseId: string; name: string; record: boolean; unit: WeightUnit; sets: { weightKg: number; reps: number; rpe: number | null }[] };
 
 export type HistoryEntry = {
   id: string;
@@ -145,7 +144,7 @@ export type HistoryEntry = {
   title: string;
   startedAt: number;
   endedAt: number;
-  /** "18 series · 6.240 kg", "320 kcal · 5,2 km" */
+  /** "18 series · 6.240 kg" (volume in the default unit), "320 kcal · 5,2 km" */
   summary: string | null;
   /** sessions: what was lifted, in the order it was done */
   exercises: HistoryExercise[];
@@ -156,6 +155,8 @@ export type HistoryEntry = {
 };
 
 export type EntrenoOverview = {
+  /** for totals, and exercises without a unit of their own */
+  defaultUnit: WeightUnit;
   program: ProgramHeader | null;
   nextDayId: string | null;
   days: PlanDay[];
@@ -178,25 +179,29 @@ const bodyWeight = () => listScans(30).find((s) => s.weight != null)?.weight ?? 
 
 const SESSIONS = 30;
 
-function sessionEntry(session: TrainingSession, records: Set<string>): HistoryEntry {
+type Units = { defaultUnit: WeightUnit; exerciseUnits: Record<string, WeightUnit> };
+const unitIn = (units: Units, exerciseId: string) => units.exerciseUnits[exerciseId] ?? units.defaultUnit;
+
+function sessionEntry(session: TrainingSession, records: Set<string>, units: Units): HistoryEntry {
   const exercises: HistoryExercise[] = [];
   for (const set of session.sets) {
     let ex = exercises.find((e) => e.exerciseId === set.exerciseId);
     if (!ex) {
-      ex = { exerciseId: set.exerciseId, name: getExercise(set.exerciseId)?.name ?? set.exerciseId, record: records.has(set.exerciseId), sets: [] };
+      ex = { exerciseId: set.exerciseId, name: getExercise(set.exerciseId)?.name ?? set.exerciseId, record: records.has(set.exerciseId), unit: unitIn(units, set.exerciseId), sets: [] };
       exercises.push(ex);
     }
     ex.sets.push({ weightKg: set.weightKg, reps: set.reps, rpe: set.rpe });
   }
   const volume = session.sets.reduce((sum, s) => sum + s.weightKg * s.reps, 0);
-  const parts = [`${session.sets.length} ${session.sets.length === 1 ? "serie" : "series"}`, volume > 0 ? `${number.format(Math.round(volume))} kg` : null];
+  const total = toUnit(volume, units.defaultUnit);
+  const parts = [`${session.sets.length} ${session.sets.length === 1 ? "serie" : "series"}`, volume > 0 ? `${number.format(Math.round(total))} ${units.defaultUnit}` : null];
   return { id: session.id, kind: "session", title: session.name, startedAt: session.startedAt, endedAt: session.endedAt, summary: parts.filter(Boolean).join(" · "), exercises, source: "Pulso", energy: null, distanceKm: null };
 }
 
 /** Logged sessions and Health workouts, newest first, each with its detail. */
-export function trainingHistory(limit = 12, sessions = listSessions(SESSIONS)): HistoryEntry[] {
+export function trainingHistory(limit = 12, sessions = listSessions(SESSIONS), units: Units = trainingSettings()): HistoryEntry[] {
   const records = sessionRecords(sessions);
-  const own = sessions.map((s) => sessionEntry(s, records.get(s.id) ?? new Set()));
+  const own = sessions.map((s) => sessionEntry(s, records.get(s.id) ?? new Set(), units));
   const workouts = listWorkouts(limit).map((w): HistoryEntry => {
     const distanceKm = w.distance != null && w.distance > 0 ? Math.round(w.distance / 10) / 100 : null;
     const parts = [w.energy != null ? `${Math.round(w.energy)} kcal` : null, distanceKm != null ? `${number.format(distanceKm)} km` : null];
@@ -207,10 +212,12 @@ export function trainingHistory(limit = 12, sessions = listSessions(SESSIONS)): 
 
 export function entrenoOverview(now = new Date()): EntrenoOverview {
   const sessions = listSessions(SESSIONS);
-  const history = trainingHistory(12, sessions);
+  const units = trainingSettings();
+  const history = trainingHistory(12, sessions, units);
   const view = activeProgramView(now.getTime());
   const program = view.program;
-  if (!program) return { program: null, nextDayId: null, days: [], history };
+  const { defaultUnit } = units;
+  if (!program) return { defaultUnit, program: null, nextDayId: null, days: [], history };
 
   const week = programWeek(program, now);
   const records = recentRecords(sessions, now.getTime());
@@ -227,19 +234,21 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
     kcal: dayKcal(day, weightKg),
     exercises: day.exercises.map((ex) => {
       const suggestion = view.suggestions[ex.id] ?? null;
+      const unit = unitIn(units, ex.exerciseId);
       return {
         ...ex,
         thumbnail: media.has(ex.exerciseId) ? webMediaUrl(ex.exerciseId, "thumbnail") : null,
         primaryMuscles: ANATOMY[ex.exerciseId]?.primary ?? [],
-        prescription: prescription(ex, suggestion?.weightKg ?? null),
+        prescription: prescription(ex, suggestion?.weightKg ?? null, unit),
         target: target(ex),
         suggestion,
         record: records.has(ex.exerciseId),
-        step: weightStep(ex.equipment),
+        unit,
       };
     }),
   }));
   return {
+    defaultUnit,
     program: { id: program.id, name: program.name, goal: program.goal, weeks: program.weeks, notes: program.notes, week, deload: isDeload(week, program.weeks, program.notes) },
     nextDayId: view.nextDayId,
     days,
@@ -249,7 +258,7 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
 
 // ── One exercise ─────────────────────────────────────────────────────────────
 
-export type ExerciseView = { detail: ExerciseDetail; performance: ExercisePerformance | null };
+export type ExerciseView = { detail: ExerciseDetail; performance: ExercisePerformance | null; unit: WeightUnit };
 
 /** The exercise panel: guide (media through the web route) and performance. */
 export function exerciseView(id: string): ExerciseView | undefined {
@@ -258,5 +267,6 @@ export function exerciseView(id: string): ExerciseView | undefined {
   return {
     detail: { ...detail, media: { ...detail.media, animation: toWeb(detail.media.animation), thumbnail: toWeb(detail.media.thumbnail) } },
     performance: exercisePerformance(id) ?? null,
+    unit: unitOf(id),
   };
 }

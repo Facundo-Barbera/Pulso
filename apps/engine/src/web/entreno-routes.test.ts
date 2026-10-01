@@ -5,8 +5,11 @@ import { GET as exerciseGET } from "@/app/api/web/entreno/exercises/[id]/route";
 import { PUT as notesPUT } from "@/app/api/web/entreno/exercises/[id]/notes/route";
 import { GET as mediaGET } from "@/app/api/web/entreno/media/[...path]/route";
 import { POST as sessionsPOST } from "@/app/api/web/entreno/sessions/route";
+import { PUT as settingsPUT } from "@/app/api/web/entreno/settings/route";
+import { PUT as unitPUT } from "@/app/api/web/entreno/exercises/[id]/unit/route";
 import { clearMediaCache, proposeMedia } from "../training/media";
-import { getSession } from "../training/store";
+import { getSession, saveSession } from "../training/store";
+import { fromUnit } from "../training/units";
 import { gate } from "../tailnet-gate";
 import type { EntrenoOverview, ExerciseView } from "./entreno";
 
@@ -26,6 +29,8 @@ test("a paired browser reads Entreno with `view` and logs sessions or notes only
   expect(gate({ method: "GET", pathname: "/api/web/entreno/media/exercises/press-banca/thumbnail.gif", device: viewer }).allow).toBe(true);
   expect(gate({ method: "POST", pathname: "/api/web/entreno/sessions", device: viewer }).allow).toBe(false);
   expect(gate({ method: "PUT", pathname: "/api/web/entreno/exercises/press-banca/notes", device: viewer }).allow).toBe(false);
+  expect(gate({ method: "PUT", pathname: "/api/web/entreno/exercises/press-banca/unit", device: viewer }).allow).toBe(false);
+  expect(gate({ method: "PUT", pathname: "/api/web/entreno/settings", device: viewer }).allow).toBe(false);
   expect(gate({ method: "POST", pathname: "/api/web/entreno/sessions", device: { scopes: ["view", "edit"] } }).allow).toBe(true);
 });
 
@@ -72,4 +77,27 @@ test("media streams through the web route and refuses anything that is not a map
   expect((await mediaGET(req(), path("exercises", "..", "animation.gif"))).status).toBe(404);
   expect((await mediaGET(req(), path("exercises", "sentadilla-hack", "animation.gif"))).status).toBe(404);
   expect(calls).toBe(1);
+});
+
+test("units from the web: an exercise in pounds reads in pounds in history and its panel; totals use the default", async () => {
+  const t = Date.now() - 3 * 86_400_000;
+  saveSession({ id: "web-lb", name: "Espalda", startedAt: t, endedAt: t + 3_000_000, sets: [{ exerciseId: "jalon-pecho", setIndex: 0, weightKg: fromUnit(100, "lb"), reps: 10, rpe: null, doneAt: t + 60_000 }] });
+  const put = (unit: unknown) => unitPUT(req({ method: "PUT", body: JSON.stringify({ unit }) }), id("jalon-pecho"));
+  expect(await (await put("lb")).json()).toMatchObject({ exerciseUnits: { "jalon-pecho": "lb" } });
+  expect((await put("oz")).status).toBe(400);
+  expect((await unitPUT(req({ method: "PUT", body: JSON.stringify({ unit: "lb" }) }), id("nope"))).status).toBe(404);
+
+  const overview = (await (await overviewGET()).json()) as EntrenoOverview;
+  const entry = overview.history.find((h) => h.id === "web-lb")!;
+  expect(entry.exercises[0]).toMatchObject({ exerciseId: "jalon-pecho", unit: "lb" });
+  expect(entry.summary).toBe("1 serie · 454 kg");
+  expect(((await (await exerciseGET(req(), id("jalon-pecho"))).json()) as ExerciseView).unit).toBe("lb");
+
+  expect((await settingsPUT(req({ method: "PUT", body: JSON.stringify({ defaultUnit: "lb" }) }))).status).toBe(200);
+  const inPounds = (await (await overviewGET()).json()) as EntrenoOverview;
+  expect(inPounds.defaultUnit).toBe("lb");
+  expect(inPounds.history.find((h) => h.id === "web-lb")!.summary).toBe("1 serie · 1000 lb");
+  expect((await settingsPUT(req({ method: "PUT", body: JSON.stringify({ defaultUnit: "st" }) }))).status).toBe(400);
+  await settingsPUT(req({ method: "PUT", body: JSON.stringify({ defaultUnit: "kg" }) }));
+  await put(null);
 });
