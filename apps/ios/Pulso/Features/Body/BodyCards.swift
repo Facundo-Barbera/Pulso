@@ -23,16 +23,21 @@ struct BodyHero: View {
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
+            .lineLimit(1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Peso").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(scan.weight?.decimal() ?? "—")
-                        .font(.system(size: 64, weight: .bold, design: .rounded))
-                        .contentTransition(.numericText())
-                    Text("kg").font(.title3.weight(.semibold)).foregroundStyle(.secondary)
-                    Spacer()
-                    if let delta = delta(.weight) { DeltaBadge(delta: delta, unit: "kg", lowerIsBetter: true) }
+                    Group {
+                        Text(scan.weight?.decimal() ?? "—")
+                            .font(.system(size: 64, weight: .bold, design: .rounded))
+                            .contentTransition(.numericText())
+                        Text("kg").font(.title3.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    Spacer(minLength: 8)
+                    if let delta = delta(.weight) { DeltaBadge(delta: delta, unit: "kg", lowerIsBetter: true).layoutPriority(1) }
                 }
             }
 
@@ -79,12 +84,15 @@ private struct HeroStat: View {
                 Circle().fill(color).frame(width: 7, height: 7)
                 Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
+            // A third of a 375 pt hero leaves ~70 pt inside: "38,4 kg" at large text shrinks rather than wraps.
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value?.decimal() ?? "—").font(.title2.bold()).contentTransition(.numericText())
                 Text(unit).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             if let delta { DeltaBadge(delta: delta, unit: unit, lowerIsBetter: lowerIsBetter, compact: true) }
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
@@ -108,6 +116,7 @@ struct DeltaBadge: View {
         .font(compact ? .caption2.weight(.bold) : .caption.weight(.bold))
         .foregroundStyle(good == nil ? Color.secondary : good! ? Color.green : Color.orange)
         .labelStyle(.titleAndIcon)
+        .lineLimit(1)
     }
 }
 
@@ -136,49 +145,26 @@ struct CompositionCard: View {
         Card {
             CardTitle(text: "Composición", systemImage: "chart.pie")
             if !slices.isEmpty {
-                HStack(spacing: 18) {
-                    Chart(slices) { slice in
-                        SectorMark(angle: .value("kg", slice.kg), innerRadius: .ratio(0.62), angularInset: 2)
-                            .cornerRadius(5)
-                            .foregroundStyle(slice.color)
+                // Donut beside the legend needs ~320 pt ("Resto magro … 12,3 kg"); a 375 pt card has ~310.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 18) {
+                        donut
+                        legend
                     }
-                    .chartBackground { _ in
-                        if let lean = scan.leanMass {
-                            VStack(spacing: 0) {
-                                Text(lean.decimal()).font(.title3.bold())
-                                Text("kg magro").font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .frame(width: 128, height: 128)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(slices) { slice in
-                            HStack {
-                                RoundedRectangle(cornerRadius: 3).fill(slice.color).frame(width: 10, height: 10)
-                                Text(slice.name).font(.subheadline)
-                                Spacer()
-                                Text("\(slice.kg.decimal()) kg").font(.subheadline.weight(.semibold)).monospacedDigit()
-                            }
-                        }
-                        if let water = scan.totalBodyWater {
-                            Divider()
-                            HStack {
-                                Image(systemName: "drop.fill").foregroundStyle(Theme.fat).frame(width: 10)
-                                Text("Agua").font(.subheadline)
-                                Spacer()
-                                Text("\(water.decimal()) L").font(.subheadline.weight(.semibold)).monospacedDigit()
-                            }
-                        }
+                    VStack(spacing: 16) {
+                        donut
+                        legend
                     }
                 }
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], spacing: 10) {
+            // Two columns on a 375 pt phone so "1.650 kcal" fits a tile; three from ~390 pt.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
                 ForEach(tiles, id: \.0) { title, value in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(title).font(.caption).foregroundStyle(.secondary)
-                        Text(value).font(.headline).monospacedDigit()
+                        Text(title).font(.caption).foregroundStyle(.secondary).minimumScaleFactor(0.8)
+                        Text(value).font(.headline).monospacedDigit().minimumScaleFactor(0.7)
                     }
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                     .background(.background.tertiary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -186,6 +172,49 @@ struct CompositionCard: View {
             }
         }
         .fontDesign(.rounded)
+    }
+
+    private var donut: some View {
+        Chart(slices) { slice in
+            SectorMark(angle: .value("kg", slice.kg), innerRadius: .ratio(0.62), angularInset: 2)
+                .cornerRadius(5)
+                .foregroundStyle(slice.color)
+        }
+        .chartBackground { _ in
+            if let lean = scan.leanMass {
+                VStack(spacing: 0) {
+                    Text(lean.decimal()).font(.title3.bold())
+                    Text("kg magro").font(.caption2).foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: 70)
+            }
+        }
+        .frame(width: 128, height: 128)
+    }
+
+    private var legend: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(slices) { slice in
+                HStack {
+                    RoundedRectangle(cornerRadius: 3).fill(slice.color).frame(width: 10, height: 10)
+                    Text(slice.name).font(.subheadline)
+                    Spacer(minLength: 8)
+                    Text("\(slice.kg.decimal()) kg").font(.subheadline.weight(.semibold)).monospacedDigit()
+                }
+            }
+            if let water = scan.totalBodyWater {
+                Divider()
+                HStack {
+                    Image(systemName: "drop.fill").foregroundStyle(Theme.fat).frame(width: 10)
+                    Text("Agua").font(.subheadline)
+                    Spacer(minLength: 8)
+                    Text("\(water.decimal()) L").font(.subheadline.weight(.semibold)).monospacedDigit()
+                }
+            }
+        }
+        .lineLimit(1)
     }
 
     private var tiles: [(String, String)] {
@@ -207,6 +236,9 @@ struct CompositionCard: View {
 /// Lean and fat per segment, as paired bars.
 struct SegmentalCard: View {
     let scan: BodyScan
+    /// Fixed 88/40 pt columns truncated "Pierna der." and "12,34" at large text; they scale with it.
+    @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 88
+    @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 40
 
     private let rows: [(String, KeyPath<Segmental, Double>)] = [
         ("Brazo der.", \.rightArm), ("Brazo izq.", \.leftArm), ("Tronco", \.trunk), ("Pierna der.", \.rightLeg), ("Pierna izq.", \.leftLeg),
@@ -228,7 +260,7 @@ struct SegmentalCard: View {
                 let fat = scan.segmentalFat?[keyPath: key]
                 let scale = key == \Segmental.trunk ? trunkMax : limbMax
                 HStack(spacing: 10) {
-                    Text(name).font(.subheadline).frame(width: 88, alignment: .leading)
+                    Text(name).font(.subheadline).lineLimit(1).minimumScaleFactor(0.8).frame(width: nameWidth, alignment: .leading)
                     VStack(alignment: .leading, spacing: 4) {
                         bar(lean, of: scale, color: Theme.protein)
                         bar(fat, of: scale, color: Theme.fat)
@@ -252,7 +284,8 @@ struct SegmentalCard: View {
                     Capsule().fill(color.gradient).frame(width: Swift.max(geo.size.width * value / max, 4))
                 }
                 .frame(height: 8)
-                Text(value.decimal(2)).font(.caption.weight(.semibold)).monospacedDigit().frame(width: 40, alignment: .trailing)
+                Text(value.decimal(2)).font(.caption.weight(.semibold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.8).frame(width: valueWidth, alignment: .trailing)
             }
         }
     }
@@ -276,12 +309,16 @@ struct BodyHistoryCard: View {
                         Text(scan.date.formatted(date: .abbreviated, time: .shortened)).font(.subheadline.weight(.medium))
                         Text(scan.source == "inbody" ? "InBody \(scan.device ?? "")" : "Manual").font(.caption).foregroundStyle(.secondary)
                     }
-                    Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(scan.weight.map { "\($0.decimal()) kg" } ?? "—").font(.subheadline.weight(.semibold))
                         Text(scan.percentBodyFat.map { "\($0.decimal())% grasa" } ?? "").font(.caption).foregroundStyle(.secondary)
                     }
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .layoutPriority(1)
                 }
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
@@ -297,5 +334,29 @@ struct BodyHistoryCard: View {
             }
         }
         .fontDesign(.rounded)
+    }
+}
+
+// MARK: - Previews
+
+private let previewScan = BodyScan(
+    id: "1", measuredAt: 1_790_838_000_000, source: "inbody", device: "770",
+    weight: 103.4, skeletalMuscleMass: 38.45, bodyFatMass: 27.85, percentBodyFat: 26.9,
+    bmi: 31.2, visceralFatLevel: 12, bmr: 1_948, totalBodyWater: 55.35, ecwRatio: 0.385, inbodyScore: 78,
+    protein: 14.85, mineral: 5.12, smi: 10.4, waistHipRatio: 0.96, phaseAngle: 6.1,
+    segmentalLean: Segmental(rightArm: 4.12, leftArm: 4.05, trunk: 31.84, rightLeg: 11.42, leftLeg: 11.38),
+    segmentalFat: Segmental(rightArm: 2.24, leftArm: 2.31, trunk: 14.65, rightLeg: 4.12, leftLeg: 4.18)
+)
+
+#Preview("Cuerpo · 375 pt · XXL") {
+    var previous = previewScan
+    previous.weight = 104.6
+    previous.percentBodyFat = 27.8
+    previous.skeletalMuscleMass = 38.1
+    return NarrowPreview(dynamicType: .xxLarge) {
+        BodyHero(scan: previewScan, previous: previous)
+        CompositionCard(scan: previewScan)
+        SegmentalCard(scan: previewScan)
+        BodyHistoryCard(scans: [previewScan, previous]) { _ in }
     }
 }

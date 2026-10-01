@@ -59,11 +59,15 @@ struct BodyTrendCard: View {
     @ViewBuilder private func readout(_ p: BodyProjection) -> some View {
         let point = selected.flatMap { date in nearest(to: date, in: p) }
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text((point?.value ?? p.current ?? p.observed.last?.value ?? 0).decimal())
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .contentTransition(.numericText())
-            Text(metric.unit).font(.headline).foregroundStyle(.secondary)
-            Spacer()
+            Group {
+                Text((point?.value ?? p.current ?? p.observed.last?.value ?? 0).decimal())
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .contentTransition(.numericText())
+                Text(metric.unit).font(.headline).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 1) {
                 if let point {
                     Text(point.date.formatted(date: .abbreviated, time: .omitted)).font(.caption.weight(.semibold))
@@ -73,6 +77,8 @@ struct BodyTrendCard: View {
                     Text("tendencia").font(.caption2).foregroundStyle(.secondary)
                 }
             }
+            .lineLimit(1)
+            .layoutPriority(1)
         }
     }
 
@@ -129,6 +135,9 @@ struct BodyTrendCard: View {
                     Text(h.value.decimal()).font(.headline).monospacedDigit()
                     Text("\(h.low.decimal())–\(h.high.decimal())").font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .glassEffect(.regular, in: .rect(cornerRadius: 12))

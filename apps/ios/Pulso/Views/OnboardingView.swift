@@ -74,8 +74,7 @@ private struct WelcomeStep: View {
     @State private var appeared = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 24)
+        StepScaffold {
             BrandMark(size: 112)
                 .scaleEffect(appeared ? 1 : 0.6)
                 .opacity(appeared ? 1 : 0)
@@ -95,7 +94,7 @@ private struct WelcomeStep: View {
             }
             .padding(.top, 36)
             .padding(.horizontal, 28)
-            Spacer(minLength: 24)
+        } actions: {
             PrimaryButton(title: "Empezar", action: next)
         }
         .onAppear { withAnimation(.spring(duration: 0.7, bounce: 0.4).delay(0.1)) { appeared = true } }
@@ -108,8 +107,7 @@ private struct HealthStep: View {
     @State private var failed: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 24)
+        StepScaffold {
             Image(systemName: "heart.fill")
                 .font(.system(size: 54, weight: .semibold))
                 .foregroundStyle(.white)
@@ -140,9 +138,9 @@ private struct HealthStep: View {
                 .padding(.top, 24)
                 .padding(.horizontal, 32)
             if let failed {
-                Text(failed).font(.footnote).foregroundStyle(Theme.protein).padding(.top, 8)
+                Text(failed).font(.footnote).foregroundStyle(Theme.protein).multilineTextAlignment(.center).padding(.top, 8)
             }
-            Spacer(minLength: 24)
+        } actions: {
             PrimaryButton(title: "Permitir acceso", busy: asking) {
                 Task { await ask() }
             }
@@ -167,6 +165,33 @@ private struct HealthStep: View {
 }
 
 // MARK: - Pieces
+
+/// A step's content centered above its pinned call to action. When it doesn't fit
+/// (a 667 pt-tall SE, or large Dynamic Type) the content scrolls instead of being
+/// squeezed and clipped, and the button stays reachable.
+private struct StepScaffold<Content: View, Actions: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ViewThatFits(in: .vertical) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 24)
+                    content
+                    Spacer(minLength: 24)
+                }
+                ScrollView {
+                    VStack(spacing: 0) { content }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            actions
+        }
+    }
+}
 
 /// One icon + title + line row of the welcome and Health steps.
 private struct Feature: View {
@@ -201,7 +226,7 @@ struct PrimaryButton: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 if busy { ProgressView().tint(.white) }
-                Text(title)
+                Text(title).lineLimit(1)
             }
             .font(.headline)
             .frame(maxWidth: .infinity)
@@ -232,4 +257,13 @@ private struct OnboardingBackground: View {
         }
         .ignoresSafeArea()
     }
+}
+
+#Preview("Bienvenida · SE 375 × 667", traits: .fixedLayout(width: 375, height: 667)) {
+    WelcomeStep {}
+}
+
+#Preview("Salud · SE 375 × 667 · XXL", traits: .fixedLayout(width: 375, height: 667)) {
+    HealthStep {}
+        .dynamicTypeSize(.xxLarge)
 }

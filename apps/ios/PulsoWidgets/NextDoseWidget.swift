@@ -34,7 +34,7 @@ struct NextDoseWidgetView: View {
                 Label("Próxima dosis", systemImage: "pills.fill").font(.caption.weight(.semibold))
                 if let dose {
                     Text(dose.name).font(.headline).lineLimit(1).widgetAccentable()
-                    Text("\(dose.due.formatted(date: .omitted, time: .shortened)) · \(dose.doseText)").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(dose.due.formatted(date: .omitted, time: .shortened)) · \(dose.doseText)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 } else {
                     Text("Nada pendiente").font(.headline)
                 }
@@ -56,7 +56,7 @@ struct NextDoseWidgetView: View {
             VStack(alignment: .leading, spacing: 4) {
                 WidgetHeader(title: "Medicación", systemImage: "pills.fill", color: color)
                 Spacer(minLength: 0)
-                Text(dose.name).font(.headline).lineLimit(2).minimumScaleFactor(0.8)
+                Text(dose.name).font(.headline).lineLimit(2).minimumScaleFactor(0.7)
                 due(dose)
                 Spacer(minLength: 0)
                 takeButton(dose)
@@ -68,20 +68,22 @@ struct NextDoseWidgetView: View {
 
     @ViewBuilder private var medium: some View {
         if let dose {
-            HStack(spacing: 14) {
+            // ~297 pt inside on a 375 pt phone: a 56 pt icon and a 110 pt button left ~100 pt for
+            // the name and "PRÓXIMA DOSIS", which truncated. Slimmer icon and button.
+            HStack(spacing: 12) {
                 Image(systemName: "pills.fill")
-                    .font(.title)
+                    .font(.title2)
                     .foregroundStyle(color.gradient)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 44, height: 44)
                     .background(color.opacity(0.15), in: Circle())
                 VStack(alignment: .leading, spacing: 3) {
                     WidgetHeader(title: "Próxima dosis", systemImage: "clock", color: color)
-                    Text(dose.name).font(.headline).lineLimit(1)
+                    Text(dose.name).font(.headline).lineLimit(2).minimumScaleFactor(0.8)
                     due(dose)
-                    if let more = moreToday { Text(more).font(.caption2).foregroundStyle(.secondary) }
+                    if let more = moreToday { Text(more).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                takeButton(dose).frame(width: 110)
+                takeButton(dose).frame(width: 96)
             }
         } else {
             empty
@@ -92,8 +94,10 @@ struct NextDoseWidgetView: View {
         HStack(spacing: 4) {
             Text(isLate(dose) ? "Atrasada" : dose.due.formatted(date: .omitted, time: .shortened))
                 .foregroundStyle(isLate(dose) ? Theme.energy : .primary)
-            Text("· \(dose.doseText)").foregroundStyle(.secondary).lineLimit(1)
+                .layoutPriority(1)
+            Text("· \(dose.doseText)").foregroundStyle(.secondary)
         }
+        .lineLimit(1)
         .font(.caption.weight(.semibold))
     }
 
@@ -101,6 +105,7 @@ struct NextDoseWidgetView: View {
         Button(intent: TakeDoseIntent(dose)) {
             Label("Tomada", systemImage: "checkmark")
                 .font(.caption.weight(.bold))
+                .lineLimit(1)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
@@ -124,4 +129,33 @@ struct NextDoseWidgetView: View {
     NextDoseWidget()
 } timeline: {
     SnapshotEntry(date: .now, snapshot: .preview, paired: true)
+    SnapshotEntry(date: .now, snapshot: .longDose, paired: true)
+}
+
+#Preview(as: .systemMedium) {
+    NextDoseWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .longDose, paired: true)
+}
+
+#Preview(as: .accessoryRectangular) {
+    NextDoseWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .longDose, paired: true)
+}
+
+#Preview(as: .accessoryInline) {
+    NextDoseWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .longDose, paired: true)
+}
+
+private extension WidgetSnapshot {
+    /// A long Spanish name and dose, to check nothing spills out of a widget.
+    static var longDose: WidgetSnapshot {
+        var snapshot = WidgetSnapshot.preview
+        snapshot.nextDose?.name = "Vitamina D3 + K2 2000 UI con aceite de oliva"
+        snapshot.nextDose?.doseText = "2 comprimidos masticables"
+        return snapshot
+    }
 }

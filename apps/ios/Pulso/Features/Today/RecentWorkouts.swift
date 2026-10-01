@@ -89,13 +89,16 @@ struct WorkoutRow: View {
                 .frame(width: 38, height: 38)
                 .background(Theme.training.opacity(0.16), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(workout.name).font(.subheadline.weight(.semibold))
-                Text(workout.details).font(.caption).foregroundStyle(.secondary).fontDesign(.rounded)
+                Text(workout.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(workout.details).font(.caption).foregroundStyle(.secondary).fontDesign(.rounded).lineLimit(2)
             }
-            Spacer()
+            Spacer(minLength: 8)
+            // The day keeps its width; the name and details give way first.
             Text(showsDay ? workout.start.formatted(.relative(presentation: .named)) : workout.start.formatted(date: .omitted, time: .shortened))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .layoutPriority(1)
         }
     }
 }

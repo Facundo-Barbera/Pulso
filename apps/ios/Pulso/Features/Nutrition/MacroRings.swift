@@ -86,6 +86,10 @@ struct MacroHero: View {
                 Text("kcal").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
         }
+        // The innermost ring leaves ~100 pt; "quedan 1.250" at large text must shrink to stay inside it.
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .frame(maxWidth: 90)
         .animation(.snappy, value: totals.kcal)
     }
 
@@ -104,6 +108,9 @@ struct MacroHero: View {
                 }
             }
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.horizontal, 4)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
         .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -123,6 +130,7 @@ struct MacroLine: View {
         }
         .font(.caption.monospacedDigit())
         .fontDesign(.rounded)
+        .lineLimit(1)
     }
 
     private func part(_ letter: String, _ value: Double, _ color: Color) -> some View {

@@ -34,7 +34,8 @@ struct NutritionView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.bottom, 90)
+            // The add bar is a safe-area inset, so the scroll already ends above it.
+            .padding(.bottom, 24)
             .animation(.snappy, value: store.day)
         }
         .background(Color(.systemGroupedBackground))
@@ -55,8 +56,10 @@ struct NutritionView: View {
             if let toast {
                 Text(toast)
                     .font(.subheadline.weight(.semibold))
+                    .multilineTextAlignment(.center)
                     .padding(.horizontal, 18).padding(.vertical, 10)
                     .glassEffect()
+                    .padding(.horizontal)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -109,25 +112,41 @@ struct NutritionView: View {
         }
     }
 
-    /// The glass quick-add bar floating over the content.
+    /// The glass quick-add bar floating over the content. At large text the scan
+    /// button drops its title so both still fit a 375 pt phone.
     private var addBar: some View {
         GlassEffectContainer(spacing: 12) {
-            HStack(spacing: 12) {
-                Button { sheet = .scan } label: {
-                    Label("Escanear", systemImage: "barcode.viewfinder")
-                        .padding(.horizontal, 6).padding(.vertical, 4)
-                }
-                .buttonStyle(.glass)
-                Button { sheet = .quickAdd } label: {
-                    Label("Añadir comida", systemImage: "plus")
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 6).padding(.vertical, 4)
-                }
-                .buttonStyle(.glassProminent)
+            ViewThatFits(in: .horizontal) {
+                addButtons(scanTitle: true)
+                addButtons(scanTitle: false)
             }
         }
         .controlSize(.large)
+        .padding(.horizontal)
         .padding(.bottom, 8)
+    }
+
+    private func addButtons(scanTitle: Bool) -> some View {
+        HStack(spacing: 12) {
+            Button { sheet = .scan } label: {
+                Group {
+                    if scanTitle {
+                        Label("Escanear", systemImage: "barcode.viewfinder")
+                    } else {
+                        Label("Escanear", systemImage: "barcode.viewfinder").labelStyle(.iconOnly)
+                    }
+                }
+                .padding(.horizontal, 6).padding(.vertical, 4)
+            }
+            .buttonStyle(.glass)
+            Button { sheet = .quickAdd } label: {
+                Label("Añadir comida", systemImage: "plus")
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6).padding(.vertical, 4)
+            }
+            .buttonStyle(.glassProminent)
+        }
     }
 
     private var emptyDay: some View {
@@ -139,7 +158,9 @@ struct NutritionView: View {
                     .symbolEffect(.bounce, value: store.dateKey)
                 Text(store.isToday ? "Aún no registraste nada hoy" : "Nada registrado este día")
                     .font(.headline)
-                HStack {
+                    .multilineTextAlignment(.center)
+                // Side by side these need ~410 pt; a 375 pt card has ~310, so they stack.
+                AdaptiveStack {
                     Button("Copiar el día anterior", systemImage: "doc.on.doc") { Task { await copyPrevious() } }
                         .buttonStyle(.glass)
                     if store.day?.plan == nil {
@@ -149,6 +170,7 @@ struct NutritionView: View {
                         .buttonStyle(.glassProminent)
                     }
                 }
+                .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
@@ -205,7 +227,7 @@ private struct MealRow: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
-                    Text(meal.name).font(.body.weight(.medium)).lineLimit(1)
+                    Text(meal.name).font(.body.weight(.medium)).lineLimit(2)
                     if let icon = sourceIcon {
                         Image(systemName: icon).font(.caption2).foregroundStyle(.tertiary)
                     }
@@ -216,12 +238,16 @@ private struct MealRow: View {
                     Text(Date(timeIntervalSince1970: meal.eatenAt / 1000), format: .dateTime.hour().minute())
                 }
                 .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 8)
+            // The numbers keep their width; a long food name wraps instead.
             VStack(alignment: .trailing, spacing: 3) {
                 Text("\(Int(meal.kcal)) kcal").font(.subheadline.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
                 MacroLine(macros: meal.macros)
             }
+            .lineLimit(1)
+            .layoutPriority(1)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -293,9 +319,9 @@ private struct PlanCard: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         CardTitle(text: "Plan · \(plan.day.label)", systemImage: "list.bullet.clipboard")
-                        Text(plan.plan.name).font(.headline).foregroundStyle(.primary)
+                        Text(plan.plan.name).font(.headline).foregroundStyle(.primary).lineLimit(2)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     Gauge(value: Double(eatenCount), in: 0...Double(max(items.count, 1))) {
                         EmptyView()
                     } currentValueLabel: {
@@ -343,13 +369,15 @@ private struct PlanItemRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).strikethrough(eaten, color: .secondary).foregroundStyle(eaten ? .secondary : .primary)
-                HStack(spacing: 6) {
+                // "1,5 porciones · 1.250 kcal" plus the macros is wider than a 375 pt card: macros go below.
+                AdaptiveStack(horizontalAlignment: .leading, spacing: 6) {
                     Text("\(foodQuantityText(item.quantity, item.unit)) · \(Int(item.kcal)) kcal")
                     MacroLine(macros: item.macros)
                 }
                 .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 8)
             Button(action: onEat) {
                 Image(systemName: eaten ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
@@ -361,5 +389,34 @@ private struct PlanItemRow: View {
             .disabled(eaten)
             .accessibilityLabel(eaten ? "Comido" : "Marcar como comido")
         }
+    }
+}
+
+// MARK: - Previews
+
+private let previewMeals = [
+    MealEntry(id: "1", date: "2026-10-01", eatenAt: 1_790_838_000_000, slot: .comida, name: "Pechuga de pollo a la plancha con arroz integral y verduras salteadas",
+              quantity: 1.5, unit: .serving, kcal: 1_248, protein: 96, carbs: 142, fat: 31, fiber: 9, source: "plan"),
+    MealEntry(id: "2", date: "2026-10-01", eatenAt: 1_790_839_000_000, slot: .comida, name: "Yogur griego natural",
+              quantity: 250, unit: .g, kcal: 245, protein: 22.5, carbs: 10, fat: 12.5, fiber: 0, source: "barcode"),
+]
+
+private let previewSummary = NutritionSummary(
+    date: "2026-10-01",
+    totals: NutritionMacros(kcal: 2_874, protein: 186, carbs: 312, fat: 104, fiber: 31),
+    targets: NutritionTargets(kcal: 2_400, protein: 160, carbs: 280, fat: 80, fiber: 30),
+    bySlot: ["comida": NutritionMacros(kcal: 1_493, protein: 118.5, carbs: 152, fat: 43.5, fiber: 9)],
+    entries: 2
+)
+
+#Preview("Dieta · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        Card { MacroHero(summary: previewSummary) {} }
+        SlotCard(slot: .comida, meals: previewMeals, totals: previewSummary.bySlot["comida"]) { _ in }
+        Card {
+            PlanItemRow(item: DietPlanItem(id: "p1", name: "Avena con plátano, nueces y miel", quantity: 1.5, unit: .serving,
+                                           kcal: 1_250, protein: 32, carbs: 168, fat: 41, fiber: 12), eaten: false) {}
+        }
+        Card { AdherenceChart(days: [previewSummary]) }
     }
 }

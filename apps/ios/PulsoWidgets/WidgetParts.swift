@@ -13,6 +13,8 @@ struct WidgetHeader: View {
             .tracking(0.5)
             .foregroundStyle(color)
             .lineLimit(1)
+            // "SIGUIENTE ENTRENO" is wider than a small widget on a 375 pt phone (~123 pt inside).
+            .minimumScaleFactor(0.75)
     }
 }
 

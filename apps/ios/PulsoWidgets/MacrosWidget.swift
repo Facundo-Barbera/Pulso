@@ -36,6 +36,8 @@ struct MacrosWidgetView: View {
                 Text("\(kcalText) kcal").font(.title3.weight(.bold)).fontDesign(.rounded).widgetAccentable()
                 Text("\(proteinText) g de proteína").font(.caption2).foregroundStyle(.secondary)
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .containerBackground(for: .widget) {}
         case .accessoryInline:
@@ -64,6 +66,7 @@ struct MacrosWidgetView: View {
                 Text(hasTargets ? "kcal restantes" : "kcal hoy")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
                 bar("Proteína", "\(proteinText) g", macros.proteinProgress, Theme.protein)
             }
@@ -74,20 +77,25 @@ struct MacrosWidgetView: View {
 
     @ViewBuilder private var medium: some View {
         if let macros {
-            HStack(spacing: 18) {
+            // On a 375 pt phone the medium widget is ~297 pt inside: two 86 pt rings and 18 pt gaps
+            // left ~89 pt for the text, which wrapped word by word. Smaller rings, tighter gaps.
+            HStack(spacing: 12) {
                 ring("kcal", kcalText, macros.kcalProgress, Theme.energy)
                 ring("g proteína", proteinText, macros.proteinProgress, Theme.protein)
                 VStack(alignment: .leading, spacing: 6) {
                     WidgetHeader(title: "Dieta", systemImage: "fork.knife", color: Theme.energy)
                     Text(hasTargets ? "Lo que te queda hoy" : "Lo que comiste hoy")
                         .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
                     if let target = macros.kcalTarget {
                         Text("\(WidgetStyle.number(macros.kcal)) de \(WidgetStyle.number(target)) kcal")
                             .font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(2)
                     } else {
-                        Text("Fijá tus objetivos en Dieta").font(.caption).foregroundStyle(.secondary)
+                        Text("Fijá tus objetivos en Dieta").font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
+                .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
@@ -99,20 +107,23 @@ struct MacrosWidgetView: View {
         WidgetRing(progress: progress, color: color, lineWidth: 9) {
             VStack(spacing: 0) {
                 Text(value).font(.system(.headline, design: .rounded, weight: .bold)).minimumScaleFactor(0.6)
-                Text(unit).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                Text(unit).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary).minimumScaleFactor(0.8)
             }
+            .lineLimit(1)
             .padding(.horizontal, 6)
         }
-        .frame(width: 86, height: 86)
+        .frame(width: 76, height: 76)
     }
 
     private func bar(_ label: String, _ value: String, _ progress: Double, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                Spacer()
+                Spacer(minLength: 4)
                 Text(value).font(.caption.weight(.semibold)).fontDesign(.rounded)
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             Capsule()
                 .fill(color.opacity(0.18))
                 .frame(height: 6)
@@ -126,6 +137,31 @@ struct MacrosWidgetView: View {
 }
 
 #Preview(as: .systemMedium) {
+    MacrosWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .preview, paired: true)
+}
+
+#Preview(as: .systemSmall) {
+    MacrosWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .preview, paired: true)
+    SnapshotEntry(date: .now, snapshot: nil, paired: false)
+}
+
+#Preview(as: .accessoryRectangular) {
+    MacrosWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .preview, paired: true)
+}
+
+#Preview(as: .accessoryCircular) {
+    MacrosWidget()
+} timeline: {
+    SnapshotEntry(date: .now, snapshot: .preview, paired: true)
+}
+
+#Preview(as: .accessoryInline) {
     MacrosWidget()
 } timeline: {
     SnapshotEntry(date: .now, snapshot: .preview, paired: true)

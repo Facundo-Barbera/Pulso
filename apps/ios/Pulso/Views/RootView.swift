@@ -90,6 +90,7 @@ struct OfflineBanner: View {
                 Text("Revisa que esté despierta y con Tailscale").font(.caption).foregroundStyle(.secondary)
             }
             .lineLimit(1)
+            .minimumScaleFactor(0.8)
             Spacer(minLength: 8)
             Button {
                 Task { await model.checkConnection() }
@@ -97,9 +98,10 @@ struct OfflineBanner: View {
                 if model.checking {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("Reintentar").font(.subheadline.weight(.semibold))
+                    Text("Reintentar").font(.subheadline.weight(.semibold)).lineLimit(1)
                 }
             }
+            .layoutPriority(1)
             .disabled(model.checking)
         }
         .padding(.horizontal, 16)

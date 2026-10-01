@@ -34,7 +34,7 @@ struct QuickAddView: View {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(food.name).font(.subheadline.weight(.semibold)).lineLimit(1)
                                             Text("\(foodQuantityText(food.quantity, food.unit)) · \(Int(food.kcal)) kcal")
-                                                .font(.caption).foregroundStyle(.secondary)
+                                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                         }
                                     }
                                     .buttonStyle(.glass)
@@ -57,7 +57,8 @@ struct QuickAddView: View {
                             ForEach(FoodUnit.allCases, id: \.self) { Text($0.label).tag($0) }
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 160)
+                        .frame(maxWidth: 180)
+                        .layoutPriority(1)
                     }
                 }
                 Section {
@@ -118,6 +119,9 @@ struct QuickAddView: View {
 struct TargetsView: View {
     let store: NutritionStore
     @Environment(\.dismiss) private var dismiss
+    /// "kcal" no longer fits a fixed 34 pt at large text; the column grows with it.
+    @ScaledMetric private var unitWidth: CGFloat = 38
+    @ScaledMetric private var fieldWidth: CGFloat = 80
     @State private var targets = NutritionTargets(kcal: 2000, protein: 140, carbs: 220, fat: 65, fiber: 28)
 
     var body: some View {
@@ -154,13 +158,13 @@ struct TargetsView: View {
     private func row(_ title: String, _ unit: String, _ value: Binding<Double>, _ color: Color) -> some View {
         HStack {
             Circle().fill(color).frame(width: 8, height: 8)
-            Text(title)
-            Spacer()
+            Text(title).lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 8)
             TextField(title, value: value, format: .number.precision(.fractionLength(0)))
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
-                .frame(width: 80)
-            Text(unit).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
+                .frame(maxWidth: fieldWidth)
+            Text(unit).foregroundStyle(.secondary).lineLimit(1).frame(width: unitWidth, alignment: .leading)
         }
     }
 }

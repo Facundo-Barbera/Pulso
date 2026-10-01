@@ -6,6 +6,8 @@ struct BodyScanForm: View {
     @State private var draft: BodyScan
     @State private var saving = false
     @Environment(\.dismiss) private var dismiss
+    /// A fixed 44 pt truncated "kg/m²" at large text.
+    @ScaledMetric(relativeTo: .footnote) private var unitWidth: CGFloat = 44
     private let fromQR: Bool
 
     init(store: BodyStore, scan: BodyScan?) {
@@ -99,7 +101,7 @@ struct BodyScanForm: View {
                 .multilineTextAlignment(.trailing)
                 .monospacedDigit()
                 .frame(maxWidth: 110)
-            Text(unit).foregroundStyle(.secondary).frame(width: 44, alignment: .leading).font(.footnote)
+            Text(unit).foregroundStyle(.secondary).lineLimit(1).frame(width: unitWidth, alignment: .leading).font(.footnote)
         }
     }
 }

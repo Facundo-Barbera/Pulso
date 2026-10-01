@@ -34,11 +34,14 @@ struct ReadinessHero: View {
                         .contentTransition(.numericText())
                     Text("recuperación").font(.caption).foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .padding(.horizontal, 20)
             }
             .frame(width: 180, height: 180)
 
             VStack(spacing: 6) {
-                Text(readiness?.title ?? "Calculando…").font(.title3.weight(.semibold))
+                Text(readiness?.title ?? "Calculando…").font(.title3.weight(.semibold)).multilineTextAlignment(.center)
                 if let explanation = readiness?.explanation {
                     Text(explanation)
                         .font(.subheadline)
@@ -76,9 +79,12 @@ private struct FactorPill: View {
     var body: some View {
         VStack(spacing: 3) {
             Image(systemName: symbol).font(.caption).foregroundStyle(Readiness.color(score: factor.score))
+            // A third of a 375 pt card is ~95 pt: "7 h 45 min" at large text has to shrink, not wrap.
             Text(value).font(.subheadline.weight(.semibold)).fontDesign(.rounded).contentTransition(.numericText())
-            Text(factor.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Text(factor.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
         }
+        .padding(.horizontal, 6)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
         .glassEffect(.regular.tint(Readiness.color(score: factor.score).opacity(0.12)), in: .rect(cornerRadius: 14))
@@ -159,7 +165,14 @@ struct ActivityCard: View {
                 .font(.subheadline.weight(.semibold))
                 .fontDesign(.rounded)
                 .contentTransition(.numericText())
-            Text("\(label) · \(format(target))").font(.caption2).foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text("\(label) · \(format(target))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
     }
@@ -197,6 +210,8 @@ struct SleepCard<Destination: View>: View {
                         .font(.title.weight(.bold))
                         .fontDesign(.rounded)
                         .contentTransition(.numericText())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     Spacer()
                     Text("Meta 8 h").font(.caption).foregroundStyle(.secondary)
                 }
@@ -253,14 +268,20 @@ private struct StagesBar: View {
                 }
             }
             .frame(height: 16)
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                GridRow {
-                    legend(stages[0])
-                    legend(stages[1])
+            // Two columns need ~280 pt; at large text on a 375 pt phone they don't fit, so one column.
+            ViewThatFits(in: .horizontal) {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                    GridRow {
+                        legend(stages[0])
+                        legend(stages[1])
+                    }
+                    GridRow {
+                        legend(stages[2])
+                        legend(stages[3])
+                    }
                 }
-                GridRow {
-                    legend(stages[2])
-                    legend(stages[3])
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(stages, id: \.label) { legend($0) }
                 }
             }
         }
@@ -273,6 +294,7 @@ private struct StagesBar: View {
             Text(Format.duration(minutes: stage.minutes)).fontDesign(.rounded).fontWeight(.medium)
         }
         .font(.caption)
+        .lineLimit(1)
     }
 }
 
@@ -332,8 +354,8 @@ private struct Sparkline: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title).font(.subheadline.weight(.medium))
-                Spacer()
+                Text(title).font(.subheadline.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 8)
                 if let shown {
                     Text(Int(shown.value.rounded()), format: .number)
                         .font(.title3.weight(.bold))
@@ -345,6 +367,7 @@ private struct Sparkline: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            .lineLimit(1)
             if points.count < 2 {
                 Text("Hacen falta unos días de datos del Apple Watch.")
                     .font(.caption)
@@ -396,5 +419,43 @@ enum Format {
         let total = Int(minutes.rounded())
         let h = total / 60, m = total % 60
         return h == 0 ? "\(m) min" : m == 0 ? "\(h) h" : "\(h) h \(m) min"
+    }
+}
+
+// MARK: - Previews
+
+private let previewReadiness = Readiness(
+    date: "2026-10-01", score: 100, level: "high",
+    factors: [
+        ReadinessFactor(key: "hrv", label: "Variabilidad", value: 112, baseline: 74, score: 95, detail: "Muy por encima de tu media"),
+        ReadinessFactor(key: "resting_hr", label: "Pulso en reposo", value: 104, baseline: 56, score: 30, detail: "Alto"),
+        ReadinessFactor(key: "sleep", label: "Sueño de anoche", value: 587, baseline: 450, score: 90, detail: "Dormiste más que tu media"),
+    ],
+    explanation: "Dormiste más de nueve horas, tu variabilidad cardíaca está muy por encima de tu media de las últimas cuatro semanas y el pulso en reposo bajó.",
+    baselineDays: 28
+)
+
+private let previewDay = DailyMetrics(
+    date: "2026-10-01", steps: 18_412, activeEnergy: 1_245, exerciseMinutes: 128,
+    sleepMinutes: 587, sleepDeep: 105, sleepCore: 312, sleepRem: 170, sleepAwake: 64
+)
+
+#Preview("Hoy · 375 pt") {
+    NarrowPreview {
+        ReadinessHero(readiness: previewReadiness)
+        ActivityCard(day: previewDay)
+        SleepCard(day: previewDay, onSync: {})
+    }
+}
+
+#Preview("Hoy · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        ReadinessHero(readiness: previewReadiness)
+        ActivityCard(day: previewDay)
+        SleepCard(day: previewDay, onSync: {})
+        RecentWorkoutsCard(workouts: [
+            Workout(id: "1", source: "watch", activity: "cross_training", startedAt: 1_790_800_000_000, endedAt: 1_790_804_500_000, energy: 812, distance: 10_250),
+            Workout(id: "2", source: "watch", activity: "functional_strength", startedAt: 1_790_700_000_000, endedAt: 1_790_703_900_000, energy: 430),
+        ], onSync: {})
     }
 }

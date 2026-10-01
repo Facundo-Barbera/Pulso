@@ -62,13 +62,14 @@ struct InBodyScanFlow: View {
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.multicolor)
-                HStack {
+                AdaptiveStack {
                     Button("Reintentar", systemImage: "arrow.clockwise") { phase = .scanning }
                         .buttonStyle(.glass)
                     Button("Cargar a mano", systemImage: "square.and.pencil") { phase = .manual }
                         .buttonStyle(.glassProminent)
                         .tint(Theme.body)
                 }
+                .lineLimit(1)
             default:
                 Label("Apunta al QR de tu hoja o pantalla de InBody", systemImage: "qrcode.viewfinder")
             }

@@ -18,7 +18,7 @@ struct AdherenceSection: View {
         }
         Card {
             CardTitle(text: "Por medicamento", systemImage: "flame")
-            PerMedicationChart(medications: report.medications)
+            PerMedicationBars(medications: report.medications)
         }
     }
 }
@@ -35,6 +35,8 @@ private struct RateStat: View {
                 .contentTransition(.numericText())
             Text(label).font(.caption).foregroundStyle(.secondary)
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -53,6 +55,8 @@ private struct StreakStat: View {
                 .symbolEffect(.bounce, value: current)
             Text("racha · mejor \(best)").font(.caption).foregroundStyle(.secondary)
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -110,20 +114,34 @@ private struct AdherenceHeatmap: View {
             .frame(height: 170)
             .sensoryFeedback(.selection, trigger: selected)
 
-            HStack {
-                if let selected, let date = LocalClock.day(selected.date) {
-                    Text(date.formatted(.dateTime.weekday(.wide).day().month()))
-                        .font(.caption.weight(.semibold))
-                    Text(selected.due == 0 ? "sin tomas" : "\(selected.taken) de \(selected.due) tomas")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Últimos 30 días · toca un día").font(.caption).foregroundStyle(.secondary)
+            // "miércoles, 30 de septiembre · 2 de 3 tomas" plus the legend needs ~320 pt: legend goes below.
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    readout
+                    Spacer(minLength: 8)
+                    legend
                 }
-                Spacer()
-                legend
+                VStack(alignment: .leading, spacing: 6) {
+                    readout
+                    legend
+                }
             }
+            .lineLimit(1)
             .animation(.snappy, value: selected)
+        }
+    }
+
+    @ViewBuilder private var readout: some View {
+        if let selected, let date = LocalClock.day(selected.date) {
+            HStack(spacing: 6) {
+                Text(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+                    .font(.caption.weight(.semibold))
+                Text(selected.due == 0 ? "sin tomas" : "\(selected.taken) de \(selected.due) tomas")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text("Últimos 30 días · toca un día").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -144,37 +162,61 @@ private struct AdherenceHeatmap: View {
     }
 }
 
-/// Each med's 30-day rate as a soft bar, with its current streak alongside.
-private struct PerMedicationChart: View {
+/// Each med's 30-day rate as a soft bar, with its current streak alongside. Name above
+/// the bar rather than as a chart axis label: a long name ("Vitamina D3 + K2 2000 UI")
+/// as an axis label ate the plot and squeezed the bars to nothing on a 375 pt phone.
+private struct PerMedicationBars: View {
     let medications: [MedicationAdherence]
 
     var body: some View {
-        Chart(medications) { med in
-            BarMark(
-                x: .value("Adherencia", med.last30.rate ?? 0),
-                y: .value("Medicamento", med.name),
-                height: .fixed(16)
-            )
-            .clipShape(Capsule())
-            .foregroundStyle(LinearGradient(colors: [Theme.body.opacity(0.5), Theme.body], startPoint: .leading, endPoint: .trailing))
-            .annotation(position: .trailing, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text((med.last30.rate ?? 0).formatted(.percent.precision(.fractionLength(0))))
-                        .font(.caption.weight(.semibold))
-                        .fontDesign(.rounded)
-                    if med.currentStreak > 0 {
-                        Label("\(med.currentStreak)", systemImage: "flame.fill")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Theme.energy)
+        VStack(spacing: 14) {
+            ForEach(medications) { med in
+                let rate = med.last30.rate ?? 0
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(med.name).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Spacer(minLength: 8)
+                        if med.currentStreak > 0 {
+                            Label("\(med.currentStreak)", systemImage: "flame.fill")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Theme.energy)
+                        }
+                        Text(rate.formatted(.percent.precision(.fractionLength(0))))
+                            .font(.caption.weight(.semibold))
+                            .fontDesign(.rounded)
+                            .monospacedDigit()
                     }
+                    Capsule()
+                        .fill(Theme.body.opacity(0.15))
+                        .frame(height: 10)
+                        .overlay(alignment: .leading) {
+                            GeometryReader { geo in
+                                Capsule()
+                                    .fill(LinearGradient(colors: [Theme.body.opacity(0.5), Theme.body], startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: rate > 0 ? max(geo.size.width * min(rate, 1), 10) : 0)
+                            }
+                        }
                 }
+                .accessibilityElement(children: .combine)
             }
         }
-        .chartXScale(domain: 0...1.35)
-        .chartXAxis(.hidden)
-        .chartYAxis {
-            AxisMarks(position: .leading) { _ in AxisValueLabel().font(.subheadline) }
-        }
-        .frame(height: CGFloat(max(medications.count, 1)) * 40)
+    }
+}
+
+#Preview("Adherencia · 375 pt · XXL") {
+    let window = AdherenceWindow(due: 60, taken: 57, rate: 0.95)
+    let days = (0..<30).map { offset in
+        let date = Calendar.current.date(byAdding: .day, value: offset - 29, to: .now)!
+        return AdherenceDay(date: LocalClock.date(date), due: 2, taken: offset % 6 == 0 ? 1 : 2)
+    }
+    return NarrowPreview(dynamicType: .xxLarge) {
+        AdherenceSection(report: AdherenceReport(
+            overall: .init(last7: window, last30: window, currentStreak: 128, bestStreak: 212),
+            medications: [
+                MedicationAdherence(medicationId: "1", name: "Vitamina D3 + K2 2000 UI con aceite de oliva", last7: window, last30: window, currentStreak: 128, bestStreak: 212),
+                MedicationAdherence(medicationId: "2", name: "Magnesio", last7: window, last30: AdherenceWindow(due: 30, taken: 12, rate: 0.4), currentStreak: 0, bestStreak: 9),
+            ],
+            days: days
+        ))
     }
 }

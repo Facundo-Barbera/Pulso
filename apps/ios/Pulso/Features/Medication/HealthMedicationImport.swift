@@ -99,10 +99,13 @@ struct HealthMedicationImport: View {
                         .disabled(exists)
                     }
                     .safeAreaInset(edge: .bottom) {
+                        // On a bar, so the note doesn't sit unreadably over the list rows scrolling under it.
                         Text("Salud no comparte los horarios: añádelos luego en cada medicamento.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding()
+                            .background(.bar)
                     }
                 } else {
                     ProgressView("Abriendo Salud…")
