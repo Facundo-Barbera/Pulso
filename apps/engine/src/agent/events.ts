@@ -1,5 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentStreamEvent, AgentToolUse } from "@pulso/contract";
+import { summarizeResult } from "./results";
 
 /** What a turn has produced so far, built up from the SDK's messages. */
 export type TurnState = {
@@ -67,7 +68,9 @@ export function translate(message: SDKMessage, state: TurnState): AgentStreamEve
         const tool = index === undefined ? undefined : state.tools[index];
         if (!tool || tool.status !== "running") continue;
         tool.status = block.is_error ? "error" : "done";
-        events.push({ type: "tool", name: tool.name, status: tool.status });
+        const result = block.is_error ? null : summarizeResult(tool.name, block.content);
+        if (result) tool.result = result;
+        events.push(result ? { type: "tool", name: tool.name, status: tool.status, result } : { type: "tool", name: tool.name, status: tool.status });
       }
       return events;
     }

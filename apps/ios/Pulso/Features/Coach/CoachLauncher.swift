@@ -37,6 +37,26 @@ final class CoachLauncher {
         defer { pending = nil }
         return pending
     }
+
+    // The other direction: a result card in the chat asks RootView to show the tab
+    // where the thing lives ("hoy", "entreno", "dieta", "cuerpo").
+
+    struct TabRequest: Identifiable, Equatable {
+        let id = UUID()
+        let tab: String
+    }
+
+    private(set) var tabRequest: TabRequest?
+
+    func show(tab: String) {
+        tabRequest = TabRequest(tab: tab)
+    }
+
+    /// Hands the requested tab to RootView, once.
+    func takeTab() -> String? {
+        defer { tabRequest = nil }
+        return tabRequest?.tab
+    }
 }
 
 /// `@Environment(\.askCoach) private var askCoach` → `askCoach("Arma mi plan de comidas")`.

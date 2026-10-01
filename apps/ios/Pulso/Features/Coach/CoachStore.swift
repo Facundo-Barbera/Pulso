@@ -130,9 +130,10 @@ final class ChatStore {
             break
         case let .text(delta):
             messages[index].text += delta
-        case let .tool(name, status):
+        case let .tool(name, status, result):
             if let i = messages[index].tools.lastIndex(where: { $0.name == name && $0.status == .running }), status != .running {
                 messages[index].tools[i].status = status
+                messages[index].tools[i].result = result
             } else if status == .running {
                 messages[index].tools.append(AgentToolUse(name: name, status: status))
             }

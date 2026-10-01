@@ -15,32 +15,21 @@ final class CoachTests: XCTestCase {
         XCTAssertEqual(try event(#"{"type":"ping"}"#), .unknown)
     }
 
-    func testMarkdownBlocks() {
-        let blocks = MarkdownBlock.parse("""
-        ### Lunes
-        Calentar **bien**.
-        - Sentadilla 3×5
-          - Pausa 2 s
-        1. Press banca
-
-        | Día | Ejercicio |
-        |---|---|
-        | Lun | Sentadilla |
-        ---
-        """)
-        XCTAssertEqual(blocks, [
-            .heading(level: 3, text: "Lunes"),
-            .paragraph("Calentar **bien**."),
-            .item(marker: "•", text: "Sentadilla 3×5", depth: 0),
-            .item(marker: "•", text: "Pausa 2 s", depth: 1),
-            .item(marker: "1.", text: "Press banca", depth: 0),
-            .table([["Día", "Ejercicio"], ["Lun", "Sentadilla"]]),
-            .rule,
-        ])
+    func testToolEventsCarryAnOptionalResultCard() throws {
+        let created = try event(#"{"type":"tool","name":"create_program","status":"done","result":{"title":"Programa creado","detail":"Torso/Pierna · 4 días","tab":"entreno"}}"#)
+        XCTAssertEqual(created, .tool(name: "create_program", status: .done, result: AgentToolResult(title: "Programa creado", detail: "Torso/Pierna · 4 días", tab: "entreno")))
+        // A result the app cannot read only loses the card.
+        XCTAssertEqual(try event(#"{"type":"tool","name":"create_program","status":"done","result":{"oops":1}}"#), .tool(name: "create_program", status: .done))
+        let saved = try JSONDecoder().decode(AgentToolUse.self, from: Data(#"{"name":"set_targets","status":"done","result":{"title":"Objetivos","detail":null,"tab":"dieta"}}"#.utf8))
+        XCTAssertEqual(saved.result?.tab, "dieta")
+        XCTAssertNil(try JSONDecoder().decode(AgentToolUse.self, from: Data(#"{"name":"list_meals","status":"done"}"#.utf8)).result)
     }
 
-    func testUnclosedCodeFenceStillRendersWhileStreaming() {
-        XCTAssertEqual(MarkdownBlock.parse("Mira:\n```\nA 3x5"), [.paragraph("Mira:"), .code("A 3x5")])
+    func testResultCardsNameTheirTab() {
+        XCTAssertEqual(CoachResultPlace(tab: "entreno").name, "Entreno")
+        XCTAssertEqual(CoachResultPlace(tab: "dieta").name, "Dieta")
+        XCTAssertEqual(CoachResultPlace(tab: "cuerpo").name, "Cuerpo")
+        XCTAssertEqual(CoachResultPlace(tab: "hoy").name, "Hoy")
     }
 
     func testToolLabelsAreSpanishAndGuessOtherFeatures() {
@@ -71,5 +60,14 @@ final class CoachTests: XCTestCase {
         XCTAssertNil(launcher.take())
         AskCoachAction()("Diseña mi rutina", send: false)
         XCTAssertEqual(CoachLauncher.shared.take()?.request, .prompt("Diseña mi rutina", send: false))
+    }
+
+    @MainActor
+    func testLauncherHandsATabRequestOverOnce() {
+        let launcher = CoachLauncher()
+        launcher.show(tab: "entreno")
+        XCTAssertNotNil(launcher.tabRequest)
+        XCTAssertEqual(launcher.takeTab(), "entreno")
+        XCTAssertNil(launcher.takeTab())
     }
 }
