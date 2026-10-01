@@ -39,6 +39,16 @@ struct SessionSummaryView: View {
                             }
                         }
                     }
+                    ForEach(summary.cutShort, id: \.self) { line in
+                        Label {
+                            Text("Terminado antes: \(line)")
+                        } icon: {
+                            Image(systemName: "stopwatch").foregroundStyle(Theme.energy)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if !summary.skipped.isEmpty {
                         Label {
                             Text("Saltados: \(TrainingText.list(summary.skipped))")

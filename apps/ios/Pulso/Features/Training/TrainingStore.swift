@@ -11,6 +11,8 @@ struct SessionSummary: Identifiable {
     var uploadFailed = false
     /// Exercises passed over, by name.
     var skipped: [String] = []
+    /// Cardio blocks ended early, done against planned: "Cinta · 12 de 20 min".
+    var cutShort: [String] = []
     var uploaded = false
     var savedToHealth = false
 
@@ -170,7 +172,7 @@ final class TrainingStore {
         if state.hasWork { queue.add(session) }
         await live.close()
         self.live = nil
-        summary = SessionSummary(session: session, skipped: state.skippedNames)
+        summary = SessionSummary(session: session, skipped: state.skippedNames, cutShort: state.exercises.compactMap(\.cutShortSummary))
         guard state.hasWork else {
             if let api = PulsoModel.shared.api { Task { try? await api.deleteLiveSession(discard: true) } }
             return

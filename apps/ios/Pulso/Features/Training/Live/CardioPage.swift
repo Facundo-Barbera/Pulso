@@ -19,7 +19,7 @@ struct CardioPage: View {
                 VStack(alignment: .leading, spacing: 20) {
                     CardioHeader(exercise: exercise)
                     if let log = exercise.cardioLog {
-                        CardioDone(log: log) { logging = true }
+                        CardioDone(log: log, cutShort: exercise.cutShort, amount: exercise.cutShortAmount) { logging = true }
                     } else {
                         TimelineView(.periodic(from: .now, by: 0.25)) { context in
                             CardioHero(
@@ -262,6 +262,9 @@ private struct IntervalStrip: View {
 /// After logging: what was done, editable.
 private struct CardioDone: View {
     let log: CardioLog
+    /// Ended early by the Coach: "Terminado antes · 12 de 20 min" and why.
+    var cutShort: CutShort? = nil
+    var amount: String? = nil
     let edit: () -> Void
 
     var body: some View {
@@ -269,6 +272,16 @@ private struct CardioDone: View {
             Label("Bloque hecho", systemImage: "checkmark.seal.fill")
                 .font(.headline)
                 .foregroundStyle(Theme.training)
+            if let cutShort {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(["Terminado antes", amount].compactMap(\.self).joined(separator: " · "), systemImage: "stopwatch")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.energy)
+                    if let reason = cutShort.reason, !reason.isEmpty {
+                        Text(reason).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
             HStack(spacing: 10) {
                 StatTile(title: "Tiempo", value: CardioCue.clock(log.durationSeconds), systemImage: "clock", tint: Theme.energy)
                 if let km = log.distanceKm { StatTile(title: "Distancia", value: km.formatted(), unit: "km", systemImage: "point.topleft.down.to.point.bottomright.curvepath", tint: Theme.energy) }

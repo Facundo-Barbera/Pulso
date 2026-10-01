@@ -15,6 +15,12 @@ struct LiveSet: Identifiable, Hashable {
     var done: Bool { doneAt != nil }
 }
 
+/// A cardio block the Coach ended early ("terminar antes"): done, not skipped.
+struct CutShort: Hashable {
+    var at: Date
+    var reason: String? = nil
+}
+
 /// One exercise of the session: the program's prescription as changed for today.
 struct LiveExercise: Identifiable, Hashable {
     /// The `ProgramExercise.id` it came from, or a fresh id for one added today.
@@ -38,6 +44,8 @@ struct LiveExercise: Identifiable, Hashable {
     var cardio: CardioTarget? = nil
     /// Filled when a cardio block ends.
     var cardioLog: CardioLog? = nil
+    /// Set when the Coach ended the block early; its log is the time done until then.
+    var cutShort: CutShort? = nil
     /// Passed over today; stays in the list, greyed.
     var skipped = false
     /// Consecutive exercises sharing it are a superset: a set of each, then the rest.
@@ -81,6 +89,17 @@ struct LiveExercise: Identifiable, Hashable {
         return parts.isEmpty ? nil : parts.joined(separator: ". ") + "."
     }
 
+    /// "12 de 20 min" for a block ended early: done against planned.
+    var cutShortAmount: String? {
+        guard cutShort != nil, let log = cardioLog else { return nil }
+        let done = Int((log.durationSeconds / 60).rounded())
+        guard let planned = cardio?.totalSeconds.map({ Int(($0 / 60).rounded()) }), planned > 0 else { return "\(done) min" }
+        return "\(done) de \(planned) min"
+    }
+
+    /// "Cinta · 12 de 20 min"
+    var cutShortSummary: String? { cutShortAmount.map { "\(name) · \($0)" } }
+
     /// The effort rated for this exercise (on its sets), 1–10.
     var effort: Int? { sets.last { $0.done && $0.rpe != nil }?.rpe.map { Int($0.rounded()) } }
 
@@ -115,6 +134,9 @@ struct LiveSessionState: Hashable {
     var focus = 0
     var restStartedAt: Date?
     var restEndsAt: Date?
+    /// The stopwatch of the cardio block being done. This phone's: synced so the
+    /// engine (and the Coach's "terminar antes") can time the block too.
+    var cardioClock: CardioClock?
     /// The engine's version this copy is based on; it bumps it on every write.
     var version = 0
     var updatedAt: Date
@@ -123,7 +145,7 @@ struct LiveSessionState: Hashable {
     static func newId() -> String { UUID().uuidString.lowercased() }
 
     init(id: String = LiveSessionState.newId(), programId: String?, dayId: String?, name: String, startedAt: Date, exercises: [LiveExercise], focus: Int = 0,
-         restStartedAt: Date? = nil, restEndsAt: Date? = nil, version: Int = 0, updatedAt: Date? = nil, threadId: String? = nil) {
+         restStartedAt: Date? = nil, restEndsAt: Date? = nil, cardioClock: CardioClock? = nil, version: Int = 0, updatedAt: Date? = nil, threadId: String? = nil) {
         self.id = id
         self.programId = programId
         self.dayId = dayId
@@ -133,6 +155,7 @@ struct LiveSessionState: Hashable {
         self.focus = focus
         self.restStartedAt = restStartedAt
         self.restEndsAt = restEndsAt
+        self.cardioClock = cardioClock
         self.version = version
         self.updatedAt = updatedAt ?? startedAt
         self.threadId = threadId
@@ -401,13 +424,24 @@ struct LiveSessionState: Hashable {
         } else {
             setFocus(min(index, exercises.count - 1))
         }
+        stopWhatEnded()
     }
 
-    /// Skipping the exercise on screen moves on to the next one.
+    /// Skipping the exercise on screen moves on to the next one; a skipped block's clock stops.
     mutating func setSkipped(_ index: Int, _ skipped: Bool) {
         guard exercises.indices.contains(index) else { return }
         exercises[index].skipped = skipped
         if skipped && index == focus { advanceIfDone() }
+        stopWhatEnded()
+    }
+
+    /// After a skip, removal, swap or log (here or by the Coach): a clock only
+    /// times a cardio block still to do, and a rest only runs while something is left.
+    mutating func stopWhatEnded() {
+        if let clock = cardioClock, !exercises.contains(where: { $0.id == clock.exerciseId && $0.isCardio && !$0.skipped && $0.cardioLog == nil }) {
+            cardioClock = nil
+        }
+        if restEndsAt != nil, current == nil, allDone { skipRest() }
     }
 
     /// New targets for today. Set count can't drop below the sets done; the load
@@ -442,6 +476,8 @@ struct LiveSessionState: Hashable {
     @discardableResult
     mutating func swap(_ index: Int, to library: LibraryExercise, weightKg: Double) -> Int {
         guard exercises.indices.contains(index) else { return focus }
+        // Another machine: the old one's stopwatch doesn't carry over.
+        if cardioClock?.exerciseId == exercises[index].id { cardioClock = nil }
         var old = exercises[index]
         let left = old.sets.filter { !$0.done }
         let reps = left.first?.reps ?? old.repMin
@@ -485,10 +521,12 @@ struct LiveSessionState: Hashable {
 
     // MARK: Cardio
 
+    /// Logs a block and stops its clock.
     mutating func logCardio(_ index: Int, _ log: CardioLog) {
         guard exercises.indices.contains(index), exercises[index].isCardio else { return }
         exercises[index].cardioLog = log.sanitized
         exercises[index].skipped = false
+        stopWhatEnded()
     }
 
     mutating func clearCardioLog(_ index: Int) {
@@ -519,6 +557,25 @@ struct LiveSessionState: Hashable {
                 kept = true
             }
         }
+        // The Coach ended a block early ("terminar antes"): it is done, timed up to then by this
+        // phone's clock when it was timing it (more precise than the engine's synced copy),
+        // else by the synced clock, keeping what was typed for the block.
+        for e in merged.exercises.indices {
+            guard let cut = merged.exercises[e].cutShort else { continue }
+            let ex = merged.exercises[e]
+            let mine = local.cardioClock?.exerciseId == ex.id ? local.cardioClock : nil
+            let synced = remote.cardioClock?.exerciseId == ex.id ? remote.cardioClock : nil
+            merged.exercises[e].skipped = false
+            guard mine != nil || ex.cardioLog == nil else { continue }
+            let typed = localExercises[ex.id]?.cardioLog ?? ex.cardioLog
+            let seconds = (mine ?? synced)?.elapsed(at: cut.at) ?? 0
+            merged.exercises[e].cardioLog = CardioLog(
+                exerciseId: ex.exerciseId, durationSeconds: seconds.rounded(), distanceKm: typed?.distanceKm, level: typed?.level,
+                inclinePercent: typed?.inclinePercent, avgHr: typed?.avgHr, kcal: typed?.kcal, doneAt: Self.ms(cut.at)
+            )
+            if merged.exercises[e] != ex { kept = true }
+        }
+        merged.cardioClock = local.cardioClock
         merged.restStartedAt = local.restStartedAt
         merged.restEndsAt = local.restEndsAt
         if let focusedId = local.focused?.id, let index = merged.exercises.firstIndex(where: { $0.id == focusedId }) {
@@ -528,7 +585,22 @@ struct LiveSessionState: Hashable {
         }
         // Skipped from elsewhere (the Coach) while on screen: move on to one still to do.
         if merged.focused?.skipped == true, local.focused?.skipped != true { merged.advanceIfDone() }
+        merged.stopWhatEnded()
+        if merged.cardioClock != remote.cardioClock { kept = true }
         return (merged, kept)
+    }
+
+    /// "Deshacer" after the Coach's change: the exercises as they were, keeping what was
+    /// logged since. A block it ended early runs on, as if never cut: its clock kept counting.
+    static func undoingCoach(before: LiveSessionState, current: LiveSessionState) -> LiveSessionState {
+        var restored = merge(remote: before, local: current).state
+        if let clock = before.cardioClock, current.exercises.first(where: { $0.id == clock.exerciseId })?.cutShort != nil,
+           let e = restored.exercises.firstIndex(where: { $0.id == clock.exerciseId }) {
+            restored.exercises[e].cardioLog = nil
+            restored.exercises[e].cutShort = nil
+            restored.cardioClock = clock
+        }
+        return restored
     }
 
     /// The undo toast after the Coach's change: what it skipped by name, else a plain line.
@@ -624,7 +696,7 @@ extension LiveSet: Codable {
 
 extension LiveExercise: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, skipped, supersetId
+        case id, exerciseId, name, equipment, kind, modality, repMin, repMax, targetRpe, targetRir, restSeconds, notes, hint, sets, cardio, cardioLog, cutShort, skipped, supersetId
     }
 
     init(from decoder: Decoder) throws {
@@ -645,6 +717,7 @@ extension LiveExercise: Codable {
         sets = try c.decodeIfPresent([LiveSet].self, forKey: .sets) ?? []
         cardio = try c.decodeIfPresent(CardioTarget.self, forKey: .cardio)
         cardioLog = try c.decodeIfPresent(CardioLog.self, forKey: .cardioLog)
+        cutShort = (try? c.decodeIfPresent(CutShortJSON.self, forKey: .cutShort))?.value
         skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
         supersetId = try c.decodeIfPresent(String.self, forKey: .supersetId)
     }
@@ -667,8 +740,54 @@ extension LiveExercise: Codable {
         try c.encode(sets, forKey: .sets)
         try c.encode(cardio, forKey: .cardio)
         try c.encode(cardioLog.map(CardioLogJSON.init), forKey: .cardioLog)
+        try c.encode(cutShort.map(CutShortJSON.init), forKey: .cutShort)
         try c.encode(skipped, forKey: .skipped)
         try c.encode(supersetId, forKey: .supersetId)
+    }
+}
+
+/// `{ at: epoch ms, reason: string | null }`.
+private struct CutShortJSON: Codable {
+    let value: CutShort
+
+    init(_ value: CutShort) { self.value = value }
+
+    private enum CodingKeys: String, CodingKey { case at, reason }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        value = CutShort(at: LiveSessionState.date(try c.decode(Double.self, forKey: .at)), reason: try c.decodeIfPresent(String.self, forKey: .reason))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(LiveSessionState.ms(value.at), forKey: .at)
+        try c.encode(value.reason, forKey: .reason)
+    }
+}
+
+/// The contract's `LiveCardioClock`: `{ exerciseId, runningSince: epoch ms | null, accumulatedSeconds }`.
+private struct CardioClockJSON: Codable {
+    let value: CardioClock
+
+    init(_ value: CardioClock) { self.value = value }
+
+    private enum CodingKeys: String, CodingKey { case exerciseId, runningSince, accumulatedSeconds }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        value = CardioClock(
+            exerciseId: try c.decode(String.self, forKey: .exerciseId),
+            runningSince: try c.decodeIfPresent(Double.self, forKey: .runningSince).map(LiveSessionState.date),
+            accumulated: try c.decodeIfPresent(Double.self, forKey: .accumulatedSeconds) ?? 0
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(value.exerciseId, forKey: .exerciseId)
+        try c.encode(value.runningSince.map(LiveSessionState.ms), forKey: .runningSince)
+        try c.encode(value.accumulated, forKey: .accumulatedSeconds)
     }
 }
 
@@ -694,7 +813,7 @@ private struct CardioLogJSON: Encodable {
 
 extension LiveSessionState: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, programId, dayId, name, startedAt, exercises, focus, restStartedAt, restEndsAt, version, updatedAt, threadId
+        case id, programId, dayId, name, startedAt, exercises, focus, restStartedAt, restEndsAt, cardioClock, version, updatedAt, threadId
     }
 
     /// `version` is required: a file without it is the older format (see `decodeStored`).
@@ -710,6 +829,7 @@ extension LiveSessionState: Codable {
         focus = try c.decodeIfPresent(Int.self, forKey: .focus) ?? 0
         restStartedAt = try c.decodeIfPresent(Double.self, forKey: .restStartedAt).map(Self.date)
         restEndsAt = try c.decodeIfPresent(Double.self, forKey: .restEndsAt).map(Self.date)
+        cardioClock = (try? c.decodeIfPresent(CardioClockJSON.self, forKey: .cardioClock))?.value
         updatedAt = try c.decodeIfPresent(Double.self, forKey: .updatedAt).map(Self.date) ?? startedAt
         threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
         setFocus(focus)
@@ -726,6 +846,7 @@ extension LiveSessionState: Codable {
         try c.encode(focus, forKey: .focus)
         try c.encode(restStartedAt.map(Self.ms), forKey: .restStartedAt)
         try c.encode(restEndsAt.map(Self.ms), forKey: .restEndsAt)
+        try c.encode(cardioClock.map(CardioClockJSON.init), forKey: .cardioClock)
         try c.encode(version, forKey: .version)
         try c.encode(Self.ms(updatedAt), forKey: .updatedAt)
         try c.encode(threadId, forKey: .threadId)

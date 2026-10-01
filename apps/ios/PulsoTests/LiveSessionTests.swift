@@ -50,7 +50,8 @@ final class LiveSessionTests: XCTestCase {
         s.logCardio(2, CardioLog(exerciseId: "cinta", durationSeconds: 480, distanceKm: 1.6, doneAt: 1_500_000))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
 
-        XCTAssertEqual(Set(json.keys), ["id", "programId", "dayId", "name", "startedAt", "exercises", "focus", "restStartedAt", "restEndsAt", "version", "updatedAt", "threadId"])
+        XCTAssertEqual(Set(json.keys), ["id", "programId", "dayId", "name", "startedAt", "exercises", "focus", "restStartedAt", "restEndsAt", "cardioClock", "version", "updatedAt", "threadId"])
+        XCTAssertTrue(json["cardioClock"] is NSNull)
         XCTAssertEqual(json["startedAt"] as? Double, 1_000_000)
         XCTAssertEqual(json["restStartedAt"] as? Double, 1_060_000)
         XCTAssertEqual(json["restEndsAt"] as? Double, 1_180_000)
@@ -60,7 +61,8 @@ final class LiveSessionTests: XCTestCase {
 
         let exercises = try XCTUnwrap(json["exercises"] as? [[String: Any]])
         XCTAssertEqual(Set(exercises[0].keys), ["id", "exerciseId", "name", "equipment", "kind", "modality", "repMin", "repMax", "targetRpe", "targetRir",
-                                               "restSeconds", "notes", "hint", "sets", "cardio", "cardioLog", "skipped", "supersetId"])
+                                               "restSeconds", "notes", "hint", "sets", "cardio", "cardioLog", "cutShort", "skipped", "supersetId"])
+        XCTAssertTrue(exercises[0]["cutShort"] is NSNull)
         XCTAssertEqual(exercises[0]["id"] as? String, "pe1")
         XCTAssertEqual(exercises[0]["equipment"] as? String, "barbell")
         XCTAssertTrue(exercises[0]["modality"] is NSNull)
@@ -114,6 +116,117 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertNil(s.exercises[0].modality)
         XCTAssertEqual(s.exercises[1].cardio?.durationMinutes, 20)
         XCTAssertEqual(s.focused?.name, "Elíptica")
+        XCTAssertNil(s.cardioClock, "An engine without the clock sends none")
+        XCTAssertNil(s.exercises[1].cutShort)
+    }
+
+    func testTheClockAndACutShortTravelInTheContractShape() throws {
+        var s = state()
+        s.cardioClock = CardioClock(exerciseId: "pe3", runningSince: t0, accumulated: 12.5)
+        s.exercises[2].cutShort = CutShort(at: t0.addingTimeInterval(60))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+        let clock = try XCTUnwrap(json["cardioClock"] as? [String: Any])
+        XCTAssertEqual(Set(clock.keys), ["exerciseId", "runningSince", "accumulatedSeconds"])
+        XCTAssertEqual(clock["exerciseId"] as? String, "pe3")
+        XCTAssertEqual(clock["runningSince"] as? Double, 1_000_000)
+        XCTAssertEqual(clock["accumulatedSeconds"] as? Double, 12.5)
+        let cut = try XCTUnwrap((json["exercises"] as? [[String: Any]])?[2]["cutShort"] as? [String: Any])
+        XCTAssertEqual(cut["at"] as? Double, 1_060_000)
+        XCTAssertTrue(cut["reason"] is NSNull)
+        XCTAssertEqual(try JSONDecoder().decode(LiveSessionState.self, from: JSONEncoder().encode(s)), s)
+        s.cardioClock?.pause(at: t0.addingTimeInterval(30))
+        let paused = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+        XCTAssertTrue((paused["cardioClock"] as? [String: Any])?["runningSince"] is NSNull)
+    }
+
+    // MARK: Cardio ended early, skipped or swapped
+
+    /// The treadmill planned for 20 min, timed on this phone: 2 min done, then running since t0.
+    private func timedTreadmill() -> LiveSessionState {
+        var s = state()
+        s.exercises[2].cardio = CardioTarget(durationMinutes: 20, zone: 2)
+        s.setFocus(2)
+        s.cardioClock = CardioClock(exerciseId: "pe3", runningSince: t0, accumulated: 120)
+        return s
+    }
+
+    func testTheCoachEndingABlockEarlyLogsItWithThisPhonesClock() {
+        let local = timedTreadmill()
+        var remote = local
+        remote.version = 3
+        // The engine logged it from its synced copy, a little behind this phone's.
+        remote.cardioClock = nil
+        remote.exercises[2].cutShort = CutShort(at: t0.addingTimeInterval(600), reason: "Le molesta la rodilla")
+        remote.exercises[2].cardioLog = CardioLog(exerciseId: "cinta", durationSeconds: 690, doneAt: LiveSessionState.ms(t0.addingTimeInterval(600)))
+
+        let (merged, kept) = LiveSessionState.merge(remote: remote, local: local)
+        XCTAssertEqual(merged.exercises[2].cardioLog?.durationSeconds, 720, "2 min before plus 10 running, by this phone's clock")
+        XCTAssertEqual(merged.exercises[2].cardioLog?.doneAt, LiveSessionState.ms(t0.addingTimeInterval(600)))
+        XCTAssertNil(merged.cardioClock, "Its clock stops")
+        XCTAssertTrue(merged.exercises[2].done)
+        XCTAssertFalse(merged.exercises[2].skipped, "Done, not skipped")
+        XCTAssertTrue(kept, "The phone's timing goes back to the engine")
+        XCTAssertEqual(merged.exercises[2].cutShortSummary, "Cinta · 12 de 20 min")
+        XCTAssertEqual(merged.session(endedAt: t0.addingTimeInterval(700)).cardio?.first?.durationSeconds, 720, "Salud and the Mac get the real minutes")
+
+        // Once settled, the next adopt changes nothing.
+        XCTAssertFalse(LiveSessionState.merge(remote: merged, local: merged).keptLocal)
+
+        // "Deshacer": the block runs on as if never cut.
+        let undone = LiveSessionState.undoingCoach(before: local, current: merged)
+        XCTAssertNil(undone.exercises[2].cardioLog)
+        XCTAssertNil(undone.exercises[2].cutShort)
+        XCTAssertEqual(undone.cardioClock, local.cardioClock)
+    }
+
+    func testWithoutAClockHereTheSyncedOneTimesTheCut() {
+        var local = state()
+        local.exercises[2].cardio = CardioTarget(durationMinutes: 20)
+        var remote = local
+        remote.version = 2
+        remote.cardioClock = CardioClock(exerciseId: "pe3", runningSince: t0)
+        remote.exercises[2].cutShort = CutShort(at: t0.addingTimeInterval(480))
+        XCTAssertEqual(LiveSessionState.merge(remote: remote, local: local).state.exercises[2].cardioLog?.durationSeconds, 480)
+        remote.exercises[2].cardioLog = CardioLog(exerciseId: "cinta", durationSeconds: 470, doneAt: 1)
+        XCTAssertEqual(LiveSessionState.merge(remote: remote, local: local).state.exercises[2].cardioLog?.durationSeconds, 470, "The engine's log stands")
+    }
+
+    func testSkippingRemovingOrSwappingABlockStopsItsClock() {
+        var skipped = timedTreadmill()
+        skipped.setSkipped(1, true)
+        XCTAssertNotNil(skipped.cardioClock, "Another exercise's skip leaves the block running")
+        skipped.setSkipped(2, true)
+        XCTAssertNil(skipped.cardioClock)
+        XCTAssertNil(skipped.exercises[2].cardioLog, "Skipped, not done")
+
+        // By the Coach: the engine's copy says skipped.
+        let local = timedTreadmill()
+        var remote = local
+        remote.version = 2
+        remote.exercises[2].skipped = true
+        XCTAssertNil(LiveSessionState.merge(remote: remote, local: local).state.cardioClock)
+
+        var removed = timedTreadmill()
+        removed.remove(at: 2)
+        XCTAssertNil(removed.cardioClock)
+
+        var swapped = timedTreadmill()
+        swapped.swap(2, to: LibraryExercise(id: "eliptica", name: "Elíptica", muscle: "cardio", secondary: [], equipment: "machine", kind: "cardio", modality: "elliptical"), weightKg: 0)
+        XCTAssertNil(swapped.cardioClock, "Another machine starts its own clock")
+
+        var logged = timedTreadmill()
+        logged.logCardio(2, CardioLog(exerciseId: "cinta", durationSeconds: 900, doneAt: 1))
+        XCTAssertNil(logged.cardioClock)
+    }
+
+    func testTheRestEndsWhenNothingIsLeft() {
+        var s = state()
+        for set in 0..<3 { s.toggle(exercise: 0, set: set, now: t0) }
+        XCTAssertNotNil(s.restEndsAt)
+        s.setSkipped(1, true)
+        XCTAssertNotNil(s.restEndsAt, "The treadmill is still to do")
+        s.setSkipped(2, true)
+        XCTAssertNil(s.restEndsAt, "Nothing left to rest for")
     }
 
     func testRestoresASessionSavedByTheEarlierBuild() throws {

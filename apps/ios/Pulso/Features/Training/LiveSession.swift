@@ -16,17 +16,14 @@ final class LiveSession {
     private(set) var state: LiveSessionState {
         didSet {
             TrainingFiles.save(state, to: TrainingFiles.live)
+            if state.cardioClock != oldValue.cardioClock { Self.saveClock(state.cardioClock) }
             updateActivity()
         }
     }
 
-    /// The stopwatch of the cardio block being done, if any.
-    private(set) var clock: CardioClock? {
-        didSet {
-            if let clock { TrainingFiles.save(clock, to: TrainingFiles.cardio) } else { TrainingFiles.remove(TrainingFiles.cardio) }
-            updateActivity()
-        }
-    }
+    /// The stopwatch of the cardio block being done, if any. Part of the session,
+    /// so it reaches the engine with every save; still kept in its own file too.
+    var clock: CardioClock? { state.cardioClock }
 
     /// The session before the Coach's last change, while "Deshacer" is offered.
     private(set) var coachUndo: LiveSessionState?
@@ -47,10 +44,17 @@ final class LiveSession {
     /// Conflicts in a row; reset by a push that lands.
     @ObservationIgnored private var conflicts = 0
 
+    /// `clock` is for a session saved before the clock was part of it.
     init(state: LiveSessionState, clock: CardioClock? = nil) {
+        var state = state
+        if state.cardioClock == nil { state.cardioClock = clock }
         self.state = state
-        self.clock = clock
         TrainingFiles.save(state, to: TrainingFiles.live)
+        Self.saveClock(state.cardioClock)
+    }
+
+    private static func saveClock(_ clock: CardioClock?) {
+        if let clock { TrainingFiles.save(clock, to: TrainingFiles.cardio) } else { TrainingFiles.remove(TrainingFiles.cardio) }
     }
 
     /// The session left running when the app was last killed, if any. It may
@@ -144,21 +148,17 @@ final class LiveSession {
 
     func move(fromOffsets source: IndexSet, toOffset destination: Int) { mutate { $0.move(fromOffsets: source, toOffset: destination) } }
 
+    /// Skipping a block stops its clock (and its cues); with nothing left the rest ends too.
     func setSkipped(_ index: Int, _ skipped: Bool) {
         mutate { $0.setSkipped(index, skipped) }
-        if skipped, state.exercises.indices.contains(index), clock?.exerciseId == state.exercises[index].id {
-            clock = nil
-            armCardio()
-        }
+        armRest()
+        armCardio()
     }
 
     func remove(at index: Int) {
-        let removedId = state.exercises.indices.contains(index) ? state.exercises[index].id : nil
         mutate { $0.remove(at: index) }
-        if let removedId, clock?.exerciseId == removedId, !state.exercises.contains(where: { $0.id == removedId }) {
-            clock = nil
-            armCardio()
-        }
+        armRest()
+        armCardio()
     }
 
     func updateTarget(_ index: Int, sets: Int, repMin: Int, repMax: Int, weightKg: Double?, restSeconds: Int) {
@@ -186,10 +186,7 @@ final class LiveSession {
         let original = state.exercises[index]
         let weight = LiveHistory.lastWeight(library.id, in: TrainingStore.shared.sessions) ?? 0
         mutate { $0.swap(index, to: library, weightKg: weight) }
-        if clock?.exerciseId == original.id, original.cardioLog == nil {
-            clock = nil
-            armCardio()
-        }
+        armCardio()
         if scope == .always { persistSwap(programExerciseId: original.id, to: library.id) }
     }
 
@@ -200,10 +197,11 @@ final class LiveSession {
         withAnimation(.snappy) {
             mutate {
                 $0.exercises = merged.exercises
+                $0.cardioClock = merged.cardioClock
                 $0.setFocus(merged.focus)
+                $0.stopWhatEnded()
             }
         }
-        if let clock, !state.exercises.contains(where: { $0.id == clock.exerciseId && $0.isCardio && $0.cardioLog == nil }) { self.clock = nil }
         armRest()
         armCardio()
     }
@@ -258,25 +256,26 @@ final class LiveSession {
         let id = state.exercises[index].id
         var next = clock?.exerciseId == id ? clock ?? CardioClock(exerciseId: id) : CardioClock(exerciseId: id)
         next.start()
-        clock = next
-        if state.resting() { mutate { $0.skipRest() }; armRest() }
+        mutate {
+            $0.cardioClock = next
+            $0.skipRest()
+        }
+        armRest()
         armCardio()
     }
 
     func pauseCardio() {
-        clock?.pause()
+        mutate { $0.cardioClock?.pause() }
         armCardio()
     }
 
     /// Logs the block, stops its stopwatch and moves on.
     func finishCardio(_ index: Int, log: CardioLog) {
         guard state.exercises.indices.contains(index) else { return }
-        let id = state.exercises[index].id
         mutate {
             $0.logCardio(index, log)
             $0.advanceIfDone()
         }
-        if clock?.exerciseId == id { clock = nil }
         armCardio()
     }
 
@@ -434,8 +433,8 @@ final class LiveSession {
 
     private func adopt(_ remote: LiveSessionState) {
         let (merged, keptLocal) = LiveSessionState.merge(remote: remote, local: state)
+        // A block the Coach ended or skipped comes back without its clock: that stops its cues.
         withAnimation(.snappy) { state = merged }
-        if let clock, !state.exercises.contains(where: { $0.id == clock.exerciseId && $0.cardioLog == nil }) { self.clock = nil }
         armRest()
         armCardio()
         if keptLocal {
@@ -470,11 +469,12 @@ final class LiveSession {
     func undoCoach() {
         guard let before = coachUndo else { return }
         undoTask?.cancel()
-        let restored = LiveSessionState.merge(remote: before, local: state).state
+        let restored = LiveSessionState.undoingCoach(before: before, current: state)
         withAnimation(.snappy) {
             coachUndo = nil
             mutate {
                 $0.exercises = restored.exercises
+                $0.cardioClock = restored.cardioClock
                 $0.setFocus(before.focus)
             }
         }
