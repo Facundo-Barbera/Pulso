@@ -58,14 +58,24 @@ export const programShape = {
   days: z.array(programDayShape).min(1).max(7).describe("Training days in rotation order."),
 };
 
+/**
+ * An optional reading (RPE, heart rate, distance…): one out of range or not a
+ * number is dropped rather than refusing the whole workout it came with.
+ */
+const reading = (min: number, max: number) =>
+  z
+    .number()
+    .nullish()
+    .transform((v) => (v != null && Number.isFinite(v) && v >= min && v <= max ? v : null));
+
 const cardioLog = z.object({
   exerciseId: z.string(),
   durationSeconds: z.number().min(0).max(86_400),
-  distanceKm: z.number().min(0).max(500).nullish().transform((v) => v ?? null),
-  level: z.number().min(0).max(100).nullish().transform((v) => v ?? null),
-  inclinePercent: z.number().min(0).max(50).nullish().transform((v) => v ?? null),
-  avgHr: z.number().min(20).max(250).nullish().transform((v) => v ?? null),
-  kcal: z.number().min(0).max(10_000).nullish().transform((v) => v ?? null),
+  distanceKm: reading(0, 500),
+  level: reading(0, 100),
+  inclinePercent: reading(0, 50),
+  avgHr: reading(20, 250),
+  kcal: reading(0, 10_000),
   doneAt: z.number().finite(),
 });
 
@@ -85,7 +95,7 @@ export const sessionInput = z.object({
         setIndex: z.number().int().min(0),
         weightKg: z.number().min(0).max(1000),
         reps: z.number().int().min(0).max(200),
-        rpe: z.number().min(1).max(10).nullish().transform((v) => v ?? null),
+        rpe: reading(1, 10),
         doneAt: z.number().finite(),
       }),
     )
@@ -97,7 +107,7 @@ const liveSet = z.object({
   id: z.string().min(1).max(64),
   weightKg: z.number().min(0).max(1000),
   reps: z.number().int().min(0).max(200),
-  rpe: z.number().min(1).max(10).nullish().transform((v) => v ?? null),
+  rpe: reading(1, 10),
   doneAt: z.number().finite().nullable(),
 });
 
@@ -130,6 +140,10 @@ export const liveSessionInput = z.object({
           cardio: cardioTargetShape.nullish().transform((v) => v ?? null),
           cardioLog: cardioLog.nullish().transform((v) => v ?? null),
           skipped: z.boolean().default(false),
+          cutShort: z
+            .object({ at: z.number().finite(), reason: z.string().max(200).nullish().transform((v) => v ?? null) })
+            .nullish()
+            .transform((v) => v ?? null),
           supersetId: supersetIdShape.transform((v) => v ?? null),
         }),
       )
@@ -137,6 +151,10 @@ export const liveSessionInput = z.object({
     focus: z.number().int().min(0).default(0),
     restStartedAt: z.number().finite().nullish().transform((v) => v ?? null),
     restEndsAt: z.number().finite().nullish().transform((v) => v ?? null),
+    cardioClock: z
+      .object({ exerciseId: z.string().min(1).max(64), runningSince: z.number().finite().nullable(), accumulatedSeconds: z.number().finite().min(0) })
+      .nullish()
+      .transform((v) => v ?? null),
     version: z.number().int().min(0).default(0),
     updatedAt: z.number().finite().default(0),
     threadId: z.string().nullish().transform((v) => v ?? null),
