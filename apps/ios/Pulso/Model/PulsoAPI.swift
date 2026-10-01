@@ -20,6 +20,8 @@ struct WorkoutInput: Codable, Equatable {
     var endedAt: Double
     var energy: Double?
     var distance: Double?
+    var sourceBundle: String?
+    var sourceName: String?
 }
 
 /// The Mac's `/api/mobile/*` routes. One bearer token, JSON both ways, short

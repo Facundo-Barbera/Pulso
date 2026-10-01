@@ -19,10 +19,22 @@ export type Workout = {
   energy: number | null;
   /** meters */
   distance: number | null;
+  /** HealthKit source app, e.g. `com.apple.health.<uuid>` for the Watch or a gym app's bundle id. */
+  sourceBundle: string | null;
+  /** Display name of that source, e.g. "Apple Watch de Facundo". */
+  sourceName: string | null;
 };
 
-/** What the phone sends from HealthKit. */
-export type WorkoutInput = Omit<Workout, "id" | "source"> & { externalId: string };
+/**
+ * What the phone sends from HealthKit. Apple Health often holds one session
+ * twice (two apps); the engine returns only the canonical one, so clients
+ * never need to merge.
+ */
+export type WorkoutInput = Omit<Workout, "id" | "source" | "sourceBundle" | "sourceName"> & {
+  externalId: string;
+  sourceBundle?: string | null;
+  sourceName?: string | null;
+};
 
 export type PairRequest = { code: string; name: string };
 export type PairResponse = { deviceId: string; name: string; token: string };

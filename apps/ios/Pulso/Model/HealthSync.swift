@@ -41,7 +41,9 @@ enum HealthSync {
             startedAt: workout.startDate.timeIntervalSince1970 * 1000,
             endedAt: workout.endDate.timeIntervalSince1970 * 1000,
             energy: energy,
-            distance: distance
+            distance: distance,
+            sourceBundle: workout.sourceRevision.source.bundleIdentifier,
+            sourceName: workout.sourceRevision.source.name
         )
     }
 

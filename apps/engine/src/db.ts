@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SCHEMAS } from "./schemas";
+import { migrateWorkouts } from "./workouts-schema";
 
 /** Pulso's home, like Telar's: `PULSO_HOME`, or ~/Library/Application Support/Pulso (shared with the Electron shell's userData). */
 export function pulsoHome(): string {
@@ -27,6 +28,7 @@ export function db(): Database {
   const database = new Database(path.join(dir, "pulso.sqlite"), { create: true, strict: true });
   database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   for (const schema of SCHEMAS) database.exec(schema);
+  migrateWorkouts(database);
   g[KEY] = database;
   return database;
 }
