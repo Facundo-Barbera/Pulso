@@ -129,3 +129,23 @@ describe("regularity", () => {
 test("formatDuration", () => {
   expect([formatDuration(45), formatDuration(480), formatDuration(450), formatDuration(-48)]).toEqual(["45 min", "8 h", "7 h 30 min", "48 min"]);
 });
+
+describe("one source holding the same minute twice", () => {
+  const seg = (stage: SleepSegmentInput["stage"], from: number, to: number): SleepSegmentInput => ({ start: at("2026-01-02", from), end: at("2026-01-02", to), stage, source: "Watch", sourceKind: "watch", tzOffsetMin: TZ });
+
+  test("a sample written twice counts once", () => {
+    const n = buildNight("2026-01-02", stored([seg("core", 0, 120), seg("core", 0, 120), seg("awake", 120, 130), seg("awake", 120, 130)]))!;
+    expect(n.minutes).toMatchObject({ core: 120, awake: 10, asleep: 120 });
+  });
+
+  test("unspecified sleep under staged sleep adds only the time the stages don't cover", () => {
+    const n = buildNight("2026-01-02", stored([seg("asleep", 0, 300), seg("deep", 0, 60), seg("core", 60, 200), seg("rem", 200, 240)]))!;
+    expect(n.minutes).toMatchObject({ deep: 60, core: 140, rem: 40, unspecified: 60, asleep: 300 });
+    expect(n.segments.reduce((a, s) => a + s.end - s.start, 0)).toBe(300 * 60_000);
+  });
+
+  test("overlapping stages from one source keep the earlier one's minutes", () => {
+    const n = buildNight("2026-01-02", stored([seg("core", 0, 100), seg("deep", 90, 150)]))!;
+    expect(n.minutes).toMatchObject({ core: 100, deep: 50, asleep: 150 });
+  });
+});

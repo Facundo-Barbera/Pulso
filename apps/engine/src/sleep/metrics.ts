@@ -44,11 +44,14 @@ export function formatDuration(totalMin: number): string {
 
 /** Prefer Apple Watch, then a source with stages, then the one that saw the most sleep. */
 export function pickSource(bySource: Map<string, StoredSegment[]>): string | undefined {
-  const rank = (segs: StoredSegment[]) => [
-    segs.some((s) => s.sourceKind === "watch") ? 1 : 0,
-    segs.some((s) => s.stage === "core" || s.stage === "deep" || s.stage === "rem") ? 1 : 0,
-    segs.filter((s) => ASLEEP.has(s.stage)).reduce((a, s) => a + s.end - s.start, 0),
-  ];
+  const rank = (raw: StoredSegment[]) => {
+    const segs = dedupeSegments(raw);
+    return [
+      segs.some((s) => s.sourceKind === "watch") ? 1 : 0,
+      segs.some((s) => s.stage === "core" || s.stage === "deep" || s.stage === "rem") ? 1 : 0,
+      segs.filter((s) => ASLEEP.has(s.stage)).reduce((a, s) => a + s.end - s.start, 0),
+    ];
+  };
   const beats = (a: number[], b: number[]) => {
     const i = a.findIndex((x, k) => x !== b[k]);
     return i >= 0 && a[i]! > b[i]!;
@@ -61,12 +64,36 @@ export function pickSource(bySource: Map<string, StoredSegment[]>): string | und
   return best?.[0];
 }
 
+/** Staged sleep is more precise than "asleep", so it keeps the time they share. */
+const SLEEP_RANK: Partial<Record<SleepStage, number>> = { core: 2, deep: 2, rem: 2, asleep: 1 };
+
+/**
+ * One source can still hold the same minute twice (an app writing both
+ * "asleep" and stages, or a sample stored twice). Every minute counts once:
+ * sleep stages are clipped against each other (staged first), and awake/in-bed
+ * only against samples of their own stage.
+ */
+export function dedupeSegments(segs: StoredSegment[]): StoredSegment[] {
+  const taken = new Map<string, [number, number][]>();
+  const kept: StoredSegment[] = [];
+  const ordered = [...segs].sort((a, b) => (SLEEP_RANK[b.stage] ?? 0) - (SLEEP_RANK[a.stage] ?? 0) || a.start - b.start || a.end - b.end);
+  for (const s of ordered) {
+    const group = SLEEP_RANK[s.stage] ? "sleep" : s.stage;
+    const used = taken.get(group) ?? [];
+    let pieces: [number, number][] = [[s.start, s.end]];
+    for (const [from, to] of used) pieces = pieces.flatMap(([a, b]) => (to <= a || from >= b ? [[a, b]] : [[a, Math.min(b, from)], [Math.max(a, to), b]]) as [number, number][]).filter(([a, b]) => b > a);
+    taken.set(group, [...used, ...pieces]);
+    for (const [start, end] of pieces) kept.push({ ...s, start, end });
+  }
+  return kept;
+}
+
 /** One night from the preferred source's samples. Undefined when nothing in it is actual sleep. */
 export function buildNight(night: string, all: StoredSegment[]): BaseNight | undefined {
   const bySource = new Map<string, StoredSegment[]>();
   for (const s of all) bySource.set(s.source, [...(bySource.get(s.source) ?? []), s]);
   const source = pickSource(bySource);
-  const segs = [...(bySource.get(source ?? "") ?? [])].sort((a, b) => a.start - b.start);
+  const segs = dedupeSegments(bySource.get(source ?? "") ?? []).sort((a, b) => a.start - b.start);
   const asleep = segs.filter((s) => ASLEEP.has(s.stage));
   if (!asleep.length) return undefined;
 
