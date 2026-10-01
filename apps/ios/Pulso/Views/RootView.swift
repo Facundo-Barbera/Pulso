@@ -37,6 +37,8 @@ struct RootView: View {
                 }
                 .modifier(OfflineAccessory(model: model))
                 .onChange(of: launcher.pending?.id) { _, id in if id != nil { tab = "coach" } }
+                // The Coach's result cards ("Abrir en Entreno") ask for another tab.
+                .onChange(of: launcher.tabRequest?.id) { _, id in if id != nil, let next = launcher.takeTab() { tab = next } }
                 // A session started from Siri, a widget or another tab shows where it lives.
                 .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
                 .transition(.opacity)
