@@ -77,6 +77,8 @@ private struct NightPicker: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .foregroundStyle(.primary)
                 .contentTransition(.opacity)
             }
@@ -117,6 +119,9 @@ private struct SleepHero: View {
                         .contentTransition(.numericText(value: night.score.value))
                     Text("puntuación").font(.subheadline).foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .padding(.horizontal, 24)
             }
             .frame(width: 200, height: 200)
             .animation(.snappy, value: night.score.value)
@@ -189,14 +194,27 @@ private struct HypnogramCard: View {
             .frame(height: 170)
 
             if night.stagePct != nil {
-                HStack(spacing: 0) {
-                    StageStat(stage: .awake, minutes: night.minutes.awake, total: nil)
-                    StageStat(stage: .rem, minutes: night.minutes.rem, total: night.minutes.asleep)
-                    StageStat(stage: .core, minutes: night.minutes.core, total: night.minutes.asleep)
-                    StageStat(stage: .deep, minutes: night.minutes.deep, total: night.minutes.asleep)
+                // Four columns of "1 h 45 min" need ~330 pt; a 375 pt card has ~310, so 2 × 2 there.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        stat(.awake); stat(.rem); stat(.core); stat(.deep)
+                    }
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+                        GridRow { stat(.awake); stat(.rem) }
+                        GridRow { stat(.core); stat(.deep) }
+                    }
                 }
                 .padding(.top, 4)
             }
+        }
+    }
+
+    private func stat(_ stage: SleepStage) -> StageStat {
+        switch stage {
+        case .awake: StageStat(stage: .awake, minutes: night.minutes.awake, total: nil)
+        case .rem: StageStat(stage: .rem, minutes: night.minutes.rem, total: night.minutes.asleep)
+        case .core: StageStat(stage: .core, minutes: night.minutes.core, total: night.minutes.asleep)
+        default: StageStat(stage: .deep, minutes: night.minutes.deep, total: night.minutes.asleep)
         }
     }
 }
@@ -221,6 +239,7 @@ private struct StageStat: View {
                     .foregroundStyle(.tertiary)
             }
         }
+        .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -254,13 +273,15 @@ private struct ScoreFactorsCard: View {
             CardTitle(text: "Puntuación", systemImage: "gauge.with.dots.needle.67percent")
             ForEach(score.factors) { factor in
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
+                    HStack(alignment: .firstTextBaseline) {
                         Text(factor.label).font(.subheadline.weight(.medium))
-                        Spacer()
+                        Spacer(minLength: 8)
                         Text("\(Int(factor.points))/\(Int(factor.maxPoints))")
                             .font(.system(.subheadline, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
                             .contentTransition(.numericText())
+                            .lineLimit(1)
+                            .layoutPriority(1)
                     }
                     ProgressView(value: factor.points, total: max(factor.maxPoints, 1))
                         .tint(Theme.sleep)
@@ -300,13 +321,14 @@ private struct TrendCard: View {
         Card {
             HStack {
                 CardTitle(text: "Tendencia", systemImage: "chart.xyaxis.line")
-                Spacer()
+                Spacer(minLength: 8)
+                // Capped rather than .fixedSize(), so at large text it shares the row instead of pushing past it.
                 Picker("Noches", selection: $range) {
                     Text("14 n").tag(14)
                     Text("30 n").tag(30)
                 }
                 .pickerStyle(.segmented)
-                .fixedSize()
+                .frame(maxWidth: 140)
             }
             Picker("Métrica", selection: $metric) {
                 ForEach(Metric.allCases, id: \.self) { Text($0.rawValue) }
@@ -382,23 +404,16 @@ private struct ConsistencyCard: View {
     var body: some View {
         Card {
             CardTitle(text: "Horarios", systemImage: "bed.double.fill")
-            HStack(alignment: .firstTextBaseline) {
-                if let regularity = summary.regularity {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("\(Int(regularity))")
-                            .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                            .contentTransition(.numericText())
-                        Text("regularidad").font(.caption).foregroundStyle(.secondary)
-                    }
+            // Regularity beside "Te despiertas 07:15 ±25 min" needs ~330 pt at large text: stacked below that.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    regularity
+                    Spacer(minLength: 12)
+                    clocks(alignment: .trailing)
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    if let bed = summary.avgBedtimeMin {
-                        clockRow("moon.fill", "Te acuestas", bed, summary.bedtimeSdMin)
-                    }
-                    if let wake = summary.avgWakeMin {
-                        clockRow("sunrise.fill", "Te despiertas", wake, summary.wakeSdMin)
-                    }
+                VStack(alignment: .leading, spacing: 10) {
+                    regularity
+                    clocks(alignment: .leading)
                 }
             }
 
@@ -438,6 +453,28 @@ private struct ConsistencyCard: View {
         }
     }
 
+    @ViewBuilder private var regularity: some View {
+        if let regularity = summary.regularity {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(Int(regularity))")
+                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .contentTransition(.numericText())
+                Text("regularidad").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func clocks(alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 4) {
+            if let bed = summary.avgBedtimeMin {
+                clockRow("moon.fill", "Te acuestas", bed, summary.bedtimeSdMin)
+            }
+            if let wake = summary.avgWakeMin {
+                clockRow("sunrise.fill", "Te despiertas", wake, summary.wakeSdMin)
+            }
+        }
+    }
+
     private func clockRow(_ icon: String, _ label: String, _ minutes: Double, _ sd: Double?) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon).symbolRenderingMode(.multicolor)
@@ -446,6 +483,7 @@ private struct ConsistencyCard: View {
             if let sd { Text("±\(Int(sd)) min").foregroundStyle(.tertiary) }
         }
         .font(.caption)
+        .lineLimit(1)
     }
 }
 
@@ -460,24 +498,32 @@ private struct DebtCard: View {
         let current = target ?? summary.targetMin
         Card {
             CardTitle(text: "Deuda de sueño", systemImage: "hourglass")
-            HStack(alignment: .firstTextBaseline) {
-                Text(summary.debtMin < 1 ? "Al día" : sleepDuration(summary.debtMin))
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                    .foregroundStyle(summary.debtMin >= 120 ? Theme.sleepAwake : .primary)
-                    .contentTransition(.numericText())
-                Spacer()
-                Text("últimas \(summary.nights) noches").font(.caption).foregroundStyle(.secondary)
+            // "10 h 45 min" in large title is ~210 pt; with the caption beside it a 375 pt card overflows.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    debt
+                    Spacer(minLength: 8)
+                    nightsCaption
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    debt
+                    nightsCaption
+                }
             }
             Gauge(value: min(summary.debtMin, 600), in: 0...600) { EmptyView() }
                 .gaugeStyle(.accessoryLinearCapacity)
                 .tint(Gradient(colors: [Theme.sleepREM, Theme.sleepAwake]))
             Divider().padding(.vertical, 4)
+            // Label and value stacked: in one line beside the stepper they need ~330 pt.
             Stepper(value: Binding(get: { current }, set: { target = $0 }), in: 300...660, step: 15) {
-                HStack {
-                    Text("Objetivo por noche")
-                    Spacer()
-                    Text(sleepDuration(current)).fontDesign(.rounded).fontWeight(.semibold).contentTransition(.numericText())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Objetivo por noche").font(.subheadline).foregroundStyle(.secondary)
+                    Text(sleepDuration(current))
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .contentTransition(.numericText())
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             }
             .sensoryFeedback(.selection, trigger: current)
             .task(id: target) {
@@ -486,6 +532,19 @@ private struct DebtCard: View {
                 if !Task.isCancelled { setTarget(target) }
             }
         }
+    }
+
+    private var debt: some View {
+        Text(summary.debtMin < 1 ? "Al día" : sleepDuration(summary.debtMin))
+            .font(.system(.largeTitle, design: .rounded).weight(.bold))
+            .foregroundStyle(summary.debtMin >= 120 ? Theme.sleepAwake : .primary)
+            .contentTransition(.numericText())
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+
+    private var nightsCaption: some View {
+        Text("últimas \(summary.nights) noches").font(.caption).foregroundStyle(.secondary).lineLimit(1)
     }
 }
 
@@ -510,5 +569,42 @@ private struct SleepEmptyState: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Previews
+
+private let previewNight: SleepNight = {
+    let bed = 1_790_808_600_000.0 // 23:30 the night before
+    let stages: [(SleepStage, Double)] = [(.core, 50), (.deep, 45), (.core, 60), (.rem, 35), (.awake, 12), (.core, 70), (.deep, 40), (.rem, 55), (.core, 80), (.rem, 60), (.awake, 8)]
+    var start = bed
+    let segments = stages.map { stage, minutes in
+        defer { start += minutes * 60_000 }
+        return SleepSegment(start: start, end: start + minutes * 60_000, stage: stage)
+    }
+    return SleepNight(
+        night: "2026-10-01", source: "watch", inBedStart: bed, inBedEnd: start, asleepStart: bed, asleepEnd: start,
+        minutes: SleepMinutes(inBed: 515, asleep: 495, awake: 20, core: 260, deep: 85, rem: 150, unspecified: 0),
+        efficiency: 0.96, stagePct: SleepStagePct(core: 0.53, deep: 0.17, rem: 0.30), bedtimeMin: -30, wakeMin: 485,
+        score: SleepScore(value: 100, factors: [
+            SleepScoreFactor(key: "duration", label: "Duración respecto a tu objetivo de sueño", points: 40, maxPoints: 40, detail: "8 h 15 min de 8 h"),
+        ], explanation: "Dormiste más de ocho horas con mucho sueño profundo y REM, y te despertaste poco."),
+        insights: ["Te acostaste 40 minutos más tarde que tu media de las últimas dos semanas."],
+        segments: segments
+    )
+}()
+
+private let previewSummary = SleepSummary(
+    nights: 14, targetMin: 510, avgBedtimeMin: -25, avgWakeMin: 455, bedtimeSdMin: 48, wakeSdMin: 35,
+    regularity: 82, debtMin: 645, insights: []
+)
+
+#Preview("Sueño · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        SleepHero(night: previewNight)
+        HypnogramCard(night: previewNight)
+        ScoreFactorsCard(score: previewNight.score)
+        ConsistencyCard(nights: [previewNight], summary: previewSummary)
+        DebtCard(summary: previewSummary) { _ in }
     }
 }
