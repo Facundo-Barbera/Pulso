@@ -16,7 +16,7 @@ export type Who = { local: boolean; name: string | null };
 /**
  * The frame every page sits in: a sidebar on wide screens (collapsible to an
  * icon rail, remembered in a cookie so the server renders it right and nothing
- * shifts), a bottom tab bar on narrow ones, ⌘1–⌘8 for the sections, ⌘K for
+ * shifts), a bottom tab bar on narrow ones, ⌘1–⌘9 for the sections, ⌘K for
  * the command palette and ⌘\ to fold the sidebar.
  */
 export function Shell({ collapsed: initiallyCollapsed, who, children }: { collapsed: boolean; who: Who; children: React.ReactNode }) {
