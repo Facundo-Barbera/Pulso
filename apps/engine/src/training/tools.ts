@@ -18,6 +18,7 @@ import {
   nextDay,
   saveSession,
   setExerciseUnit,
+  setSessionAdjustment,
   setTrainingSettings,
   suggestDay,
   trainingSettings,
@@ -314,6 +315,34 @@ export const trainingTools = [
           notes: notes ?? null,
           sets: sets.map((s, i) => ({ ...s, rpe: s.rpe ?? null, setIndex: i, doneAt: Math.round(start + step * (i + 1)) })),
         });
+      }),
+  ),
+  tool(
+    "set_session_adjustment",
+    "Adjust the person's NEXT session of a program day, for that session only (the program stays): less load, fewer sets, reps within the range, a swap, skipping an exercise, or a short cardio warm-up first — or record that it stays as planned (noChange). Use it when reviewing the upcoming workout, or when the person asks to make the next one easier. Guardrails, enforced (a refusal says what to fix): loadPercent from −40 to 0 against what progression suggests, never under 60 % of the last load lifted; at most 2 sets fewer per exercise and never more; reps within the prescribed range; swaps keep the kind (strength for strength); skip at most half the day; one cardio warm-up of up to 15 min (action add, a cardio library id). The person sees `rationale` on the next-workout card and can set the adjustment aside with \"Entrenar normal\". Returns the session as it will be done.",
+    {
+      dayId: z.string().describe("Program day id from get_active_program (usually nextDayId)."),
+      noChange: z.boolean().default(false).describe("True when the plan stays as it is."),
+      rationale: z.string().min(1).max(240).describe('ONE calm Spanish sentence, no jargon: what you noticed and what changes. E.g. "Llevas 9 días sin entrenar: hoy un 10 % menos de peso."'),
+      changes: z
+        .array(
+          z.object({
+            action: z.enum(["adjust", "swap", "skip", "add"]),
+            programExerciseId: z.string().nullish().describe("The day's exercise id (ProgramExercise.id); null for add."),
+            loadPercent: z.number().min(-40).max(0).nullish().describe("Load change against progression's suggestion, %."),
+            sets: z.number().int().min(1).max(10).nullish(),
+            reps: z.number().int().min(1).max(50).nullish(),
+            toExerciseId: z.string().nullish().describe("swap: library id instead; add: a cardio library id."),
+            cardio: cardioTargetShape.nullish().describe("add: the warm-up's target, e.g. { durationMinutes: 8, zone: 1 }."),
+          }),
+        )
+        .max(20)
+        .default([]),
+    },
+    async ({ dayId, noChange, rationale, changes }) =>
+      guard(() => {
+        const adjusted = setSessionAdjustment({ dayId, noChange, rationale, changes: changes.map((c) => ({ ...c, programExerciseId: c.programExerciseId ?? null })) });
+        return { id: adjusted.id, dayId: adjusted.dayId, noChange: adjusted.noChange, rationale: adjusted.rationale, exercises: adjusted.day.exercises.map((e) => ({ id: e.id, name: e.exerciseName, sets: e.sets, suggestion: adjusted.suggestions[e.id] ?? null })) };
       }),
   ),
 ];

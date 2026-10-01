@@ -68,6 +68,7 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   set_exercise_unit: "write",
   get_live_session: "read",
   edit_live_session: "write",
+  set_session_adjustment: "write",
   list_body_scans: "read",
   add_body_scan: "write",
   body_projection: "read",

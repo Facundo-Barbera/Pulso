@@ -8,12 +8,14 @@ import type {
   Equipment,
   Exercise,
   ExerciseDetail,
+  ExerciseChange,
   ExerciseHistory,
   ExercisePerformance,
   HistoryPoint,
   HrZone,
   HrZoneRange,
   LoadSuggestion,
+  NextAdjustment,
   PersonalRecord,
   Program,
   ProgramDay,
@@ -39,6 +41,7 @@ import { mediaFor, mediaSourceOf } from "./media";
 import { supersetIds } from "./superset";
 import { TECHNIQUE } from "./technique";
 import { VIDEOS } from "./videos";
+import { AdjustmentError, adjustmentFor, adjustmentThread, applyChanges, decide, getAdjustment, insertDecided, lastSessionId, type Lookup, setDismissed, validateChanges } from "./adjust";
 import { programWeeks } from "./weeks";
 
 /** A caller error: the message says what to fix. */
@@ -647,12 +650,59 @@ export function activeProgramView(now = Date.now()): ActiveProgramResponse {
   const extras = { hrZones: hrZones(now), settings: trainingSettings(), blocks };
   if (!program) return { program: null, nextDayId: null, suggestions: {}, ...extras };
   const complete = blocks.find((b) => b.programId === program.id)?.weekComplete ?? false;
-  return {
-    program,
-    nextDayId: complete ? null : (nextDay(program, now)?.id ?? null),
-    suggestions: Object.assign({}, ...program.days.map(suggestDay)),
-    ...extras,
-  };
+  const next = complete ? undefined : nextDay(program, now);
+  const suggestions: Record<string, LoadSuggestion> = Object.assign({}, ...program.days.map(suggestDay));
+  return { program, nextDayId: next?.id ?? null, suggestions, ...extras, adjustment: next ? nextAdjustment(program.id, next, suggestions) : null };
+}
+
+// ── Adjusting the next session ───────────────────────────────────────────────
+
+/** The top load of an exercise's last session, kg; null without one. */
+function lastTopKg(exerciseId: string): number | null {
+  const [last] = listSessions(1, exerciseId);
+  const loads = last?.sets.filter((s) => s.exerciseId === exerciseId).map((s) => s.weightKg) ?? [];
+  return loads.length ? Math.max(...loads) : null;
+}
+
+const LOOKUP: Lookup = {
+  exercise: (id) => getExercise(id),
+  lastTopKg,
+  suggest: (ex) => suggestFor(ex),
+  unit: (id) => unitOf(id),
+};
+
+/** The upcoming session of `day` with its adjustment applied, when there is one. */
+function nextAdjustment(programId: string, day: ProgramDay, suggestions: Record<string, LoadSuggestion>): NextAdjustment | null {
+  const adjustment = adjustmentFor(programId, day.id);
+  if (!adjustment) return null;
+  const own = Object.fromEntries(day.exercises.filter((e) => suggestions[e.id]).map((e) => [e.id, suggestions[e.id]!]));
+  const applied = adjustment.status === "ready" && !adjustment.noChange ? applyChanges(day, own, adjustment.changes, LOOKUP) : { day, suggestions: own };
+  return { ...adjustment, ...applied };
+}
+
+/**
+ * The Coach's decision on the next session of `dayId` (its review, or asked
+ * in a chat): checked against the guardrails, then stored for that session
+ * only. Returns it applied.
+ */
+export function setSessionAdjustment(input: { dayId: string; noChange: boolean; rationale: string; changes: ExerciseChange[] }, now = Date.now()): NextAdjustment {
+  const program = activeProgramToday(now);
+  const day = program?.days.find((d) => d.id === input.dayId);
+  if (!program || !day) throw new TrainingError(`Day ${input.dayId} is not in the active program. Use day ids from get_active_program.`);
+  const rationale = input.rationale.trim();
+  if (!rationale) throw new TrainingError("rationale: one sentence for the person.");
+  const suggestions = suggestDay(day);
+  try {
+    if (!input.noChange) validateChanges(day, input.changes, suggestions, LOOKUP);
+  } catch (error) {
+    if (error instanceof AdjustmentError) throw new TrainingError(error.message);
+    throw error;
+  }
+  const decision = { decidedBy: "coach" as const, noChange: input.noChange || input.changes.length === 0, rationale, changes: input.changes };
+  const since = lastSessionId();
+  const current = adjustmentFor(program.id, day.id, since);
+  const saved = current ? decide(current.id, decision, now) : insertDecided(program.id, day.id, since, decision, now);
+  return nextAdjustment(program.id, day, suggestions) ?? { ...saved, day, suggestions };
 }
 
 // ── Preferences and heart-rate zones ─────────────────────────────────────────
@@ -717,4 +767,18 @@ export function hrZones(now = Date.now()): HrZoneRange[] | null {
     .at(-1);
   const floor = resting ?? 0;
   return ZONES.map(([zone, lo, hi]) => ({ zone, minBpm: Math.round(floor + lo * (max - floor)), maxBpm: Math.round(floor + hi * (max - floor)) }));
+}
+
+/** "Entrenar normal" (`dismissed`) or back to the Coach's plan, for the next session. Returns the program view. */
+export function dismissAdjustment(id: string, dismissed: boolean, now = Date.now()): ActiveProgramResponse {
+  if (!getAdjustment(id)) throw new TrainingError(`No adjustment ${id}.`);
+  setDismissed(id, dismissed, now);
+  return activeProgramView(now);
+}
+
+/** "Ver por qué": the Coach thread about the next session's adjustment, made on first use. */
+export function adjustmentThreadId(id: string, now = Date.now()): string {
+  const view = activeProgramView(now);
+  if (!view.adjustment || view.adjustment.id !== id) throw new TrainingError("That adjustment is not the next session's any more.");
+  return adjustmentThread(view.adjustment);
 }

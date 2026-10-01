@@ -37,6 +37,13 @@ export function snap(kg: number, unit: WeightUnit): number {
   return Math.max(0, Math.round(v / step) * step);
 }
 
+/** A computed load (a percentage of another) on the nearest step of the equipment, back in kg. */
+export function nearestStepKg(kg: number, unit: WeightUnit): number {
+  const v = toUnit(kg, unit);
+  const step = stepAt(v, unit);
+  return fromUnit(Math.max(0, Math.round(v / step) * step), unit);
+}
+
 /** `snap` back in kg, exact: what to store for a weight that sits on the unit's steps. */
 export const snapKg = (kg: number, unit: WeightUnit) => fromUnit(snap(kg, unit), unit);
 
