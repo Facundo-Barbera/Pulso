@@ -30,7 +30,7 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(s.setsTotal, 5)
         XCTAssertEqual(s.focus, 0)
         XCTAssertEqual(s.version, 0)
-        XCTAssertEqual(s.exercises[0].target, "3 series × 6–8 reps × 80 kg")
+        XCTAssertEqual(s.exercises[0].target, "3 series de 6 a 8 repeticiones con 80 kg")
     }
 
     func testHandSetLoadPrefillsWithoutASuggestion() {
@@ -45,7 +45,7 @@ final class LiveSessionTests: XCTestCase {
     func testEncodesExactlyTheContractShape() throws {
         var s = state()
         s.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(60))
-        s.setRpe(exercise: 0, set: 0, to: 8.5)
+        s.setEffort(exercise: 0, to: 8)
         s.logCardio(2, CardioLog(exerciseId: "cinta", durationSeconds: 480, distanceKm: 1.6, doneAt: 1_500_000))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
 
@@ -69,7 +69,7 @@ final class LiveSessionTests: XCTestCase {
         let sets = try XCTUnwrap(exercises[0]["sets"] as? [[String: Any]])
         XCTAssertEqual(Set(sets[0].keys), ["id", "weightKg", "reps", "rpe", "doneAt"])
         XCTAssertEqual(sets[0]["doneAt"] as? Double, 1_060_000)
-        XCTAssertEqual(sets[0]["rpe"] as? Double, 8.5)
+        XCTAssertEqual(sets[0]["rpe"] as? Double, 8)
         XCTAssertTrue(sets[1]["doneAt"] is NSNull)
         XCTAssertTrue(sets[1]["rpe"] is NSNull)
 
@@ -323,12 +323,41 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(same, local)
     }
 
+    // MARK: Logging all and effort
+
+    func testCompleteAllLogsTheRestInOrderWithOneRest() {
+        var s = state()
+        s.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(10))
+        s.setWeight(exercise: 0, set: 2, to: 85)
+        s.completeAll(exercise: 0, now: t0.addingTimeInterval(200))
+        XCTAssertTrue(s.exercises[0].done)
+        XCTAssertEqual(s.exercises[0].sets.map(\.weightKg), [80, 80, 85], "Each set is logged as it stands")
+        let saved = s.session(endedAt: t0.addingTimeInterval(400)).sets.filter { $0.exerciseId == "press-banca" }
+        XCTAssertEqual(saved.map(\.setIndex), [0, 1, 2])
+        XCTAssertEqual(saved.map(\.weightKg), [80, 80, 85])
+        XCTAssertEqual(s.restStartedAt, t0.addingTimeInterval(200))
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(200 + Double(s.exercises[0].restSeconds)))
+    }
+
+    func testEffortGoesOnTheDoneSetsOnly() {
+        var s = state()
+        s.toggle(exercise: 0, set: 0, now: t0)
+        s.toggle(exercise: 0, set: 1, now: t0.addingTimeInterval(1))
+        s.setEffort(exercise: 0, to: 7)
+        XCTAssertEqual(s.exercises[0].sets.map(\.rpe), [7, 7, nil])
+        XCTAssertEqual(s.exercises[0].effort, 7)
+        s.setEffort(exercise: 0, to: 14)
+        XCTAssertEqual(s.exercises[0].effort, 10)
+        s.setEffort(exercise: 0, to: nil)
+        XCTAssertNil(s.exercises[0].effort)
+    }
+
     // MARK: Cardio and the saved session
 
     func testSessionIncludesCardioAndRpe() {
         var s = state()
         s.toggle(exercise: 0, set: 0, now: t0.addingTimeInterval(20))
-        s.setRpe(exercise: 0, set: 0, to: 9)
+        s.setEffort(exercise: 0, to: 9)
         let log = CardioLog(exerciseId: "cinta", durationSeconds: 480, distanceKm: 1.6, level: nil, inclinePercent: 1, avgHr: 152, kcal: 90, doneAt: 1_700_000)
         s.logCardio(2, log)
         s.logCardio(0, log)
@@ -417,7 +446,8 @@ final class LiveSessionTests: XCTestCase {
         ]
         let last = LiveHistory.last("press-banca", in: sessions)
         XCTAssertEqual(last?.sets.map(\.weightKg), [82.5, 80])
-        XCTAssertEqual(last.map { LiveHistory.line($0.sets) }, "\(82.5.formatted()) × 6 · 80 × 7")
+        XCTAssertEqual(LiveHistory.set(1, of: last)?.weightKg, 80)
+        XCTAssertNil(LiveHistory.set(2, of: last))
         XCTAssertEqual(LiveHistory.best("press-banca", in: sessions)?.heaviestKg, 85)
         // 82,5 × 6 → 99 beats 85 × 3 → 93,5.
         XCTAssertEqual(LiveHistory.best("press-banca", in: sessions)?.e1rm ?? 0, 99, accuracy: 0.01)

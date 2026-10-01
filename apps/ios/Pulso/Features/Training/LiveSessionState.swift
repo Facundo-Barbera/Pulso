@@ -49,26 +49,29 @@ struct LiveExercise: Identifiable, Hashable {
     /// Neither done nor skipped: where focus moves next.
     var pending: Bool { !skipped && !done }
 
-    var reps: String { repMin == repMax ? "\(repMin)" : "\(repMin)–\(repMax)" }
-
-    /// "3 × 6–8 · RIR 2", or the cardio target.
+    /// "3 series de 6 a 8 repeticiones", or the cardio target.
     var prescription: String {
-        if isCardio { return cardio?.summary ?? "Cardio" }
-        var text = "\(sets.count) × \(reps)"
-        if let targetRir { text += " · RIR \(targetRir)" } else if let targetRpe { text += " · RPE \(targetRpe.formatted())" }
-        return text
+        isCardio ? cardio?.summary ?? "Cardio" : TrainingText.target(sets: sets.count, repMin: repMin, repMax: repMax)
     }
 
-    /// The load of the next set to do (or the last one), for "series × reps × kg".
+    /// The load of the next set to do (or the last one).
     var workingWeight: Double { (sets.first { !$0.done } ?? sets.last)?.weightKg ?? 0 }
 
-    /// "4 series × 6–8 reps × 80 kg"
+    /// "4 series de 6 a 8 repeticiones con 80 kg"
     var target: String {
-        if isCardio { return prescription }
-        var text = "\(sets.count) \(sets.count == 1 ? "serie" : "series") × \(reps) reps"
-        if workingWeight > 0 { text += " × \(workingWeight.formatted()) kg" }
-        return text
+        if isCardio || workingWeight <= 0 { return prescription }
+        return "\(prescription) con \(workingWeight.formatted()) kg"
     }
+
+    /// "Acaba cada serie pudiendo hacer 2 más. Descansa 3 min.", the one line of advice.
+    var guidance: String? {
+        guard !isCardio else { return nil }
+        let parts = [TrainingText.effort(rir: targetRir, rpe: targetRpe), restSeconds > 0 ? "Descansa \(TrainingText.rest(restSeconds))" : nil].compactMap(\.self)
+        return parts.isEmpty ? nil : parts.joined(separator: ". ") + "."
+    }
+
+    /// The effort rated for this exercise (on its sets), 1–10.
+    var effort: Int? { sets.last { $0.done && $0.rpe != nil }?.rpe.map { Int($0.rounded()) } }
 
     /// A new exercise from the library, its sets prefilled with `weightKg`.
     static func fresh(_ library: LibraryExercise, id: String = LiveSessionState.newId(), weightKg: Double, sets: Int = 3, repMin: Int = 8, repMax: Int = 12, restSeconds: Int = 90) -> LiveExercise {
@@ -199,6 +202,23 @@ struct LiveSessionState: Hashable {
         for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
             exercises[e].sets[later].weightKg = weight
         }
+        startRest(after: e, now: now)
+    }
+
+    /// "Registrar todas": checks off every set left as it stands, in order, with
+    /// one rest after the last.
+    mutating func completeAll(exercise e: Int, now: Date = .now) {
+        guard exercises.indices.contains(e) else { return }
+        let open = exercises[e].sets.indices.filter { !exercises[e].sets[$0].done }
+        guard !open.isEmpty else { return }
+        // A millisecond apart, so the saved order is the list's order.
+        for (i, s) in open.enumerated() { exercises[e].sets[s].doneAt = now.addingTimeInterval(Double(i) / 1000) }
+        exercises[e].skipped = false
+        startRest(after: e, now: now)
+    }
+
+    /// The rest after a set of `e`; none once the whole session is done.
+    private mutating func startRest(after e: Int, now: Date) {
         if current == nil && allDone {
             restStartedAt = nil
             restEndsAt = nil
@@ -230,9 +250,12 @@ struct LiveSessionState: Hashable {
         exercises[e].sets[s].reps = max(0, reps)
     }
 
-    mutating func setRpe(exercise e: Int, set s: Int, to rpe: Double?) {
-        guard has(e, s) else { return }
-        exercises[e].sets[s].rpe = rpe
+    /// The effort felt on the whole exercise, 1–10 (nil clears), kept on each done set.
+    mutating func setEffort(exercise e: Int, to value: Int?) {
+        guard exercises.indices.contains(e) else { return }
+        for s in exercises[e].sets.indices where exercises[e].sets[s].done {
+            exercises[e].sets[s].rpe = value.map { Double(min(max($0, EffortLevel.range.lowerBound), EffortLevel.range.upperBound)) }
+        }
     }
 
     /// One more set, copying the last one's load and reps (or the target's bottom).
@@ -486,7 +509,7 @@ struct LiveSessionState: Hashable {
     }
 
     static func target(_ set: LiveSet) -> String {
-        set.weightKg > 0 ? "\(set.weightKg.formatted()) kg × \(set.reps)" : "\(set.reps) reps"
+        TrainingText.load(set.weightKg, reps: set.reps)
     }
 
     static func ms(_ date: Date) -> Double { (date.timeIntervalSince1970 * 1000).rounded() }

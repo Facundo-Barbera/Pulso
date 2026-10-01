@@ -91,11 +91,17 @@ final class LiveSession {
         if !state.resting() { mutate { $0.advanceIfDone() } }
     }
 
+    func completeAll(exercise e: Int) {
+        mutate { $0.completeAll(exercise: e) }
+        armRest()
+        if !state.resting() { mutate { $0.advanceIfDone() } }
+    }
+
+    func setEffort(exercise e: Int, to value: Int?) { mutate { $0.setEffort(exercise: e, to: value) } }
     func adjustWeight(exercise e: Int, set s: Int, by steps: Double) { mutate { $0.adjustWeight(exercise: e, set: s, by: steps) } }
     func adjustReps(exercise e: Int, set s: Int, by delta: Int) { mutate { $0.adjustReps(exercise: e, set: s, by: delta) } }
     func setWeight(exercise e: Int, set s: Int, to kg: Double) { mutate { $0.setWeight(exercise: e, set: s, to: kg) } }
     func setReps(exercise e: Int, set s: Int, to reps: Int) { mutate { $0.setReps(exercise: e, set: s, to: reps) } }
-    func setRpe(exercise e: Int, set s: Int, to rpe: Double?) { mutate { $0.setRpe(exercise: e, set: s, to: rpe) } }
     func addSet(exercise e: Int) { mutate { $0.addSet(exercise: e) } }
     func removeSet(exercise e: Int, set s: Int) { mutate { $0.removeSet(exercise: e, set: s) } }
 
