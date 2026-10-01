@@ -30,7 +30,7 @@ function RecipeSheet({ recipe, prep, onClose }: { recipe: Recipe; prep: PrepBatc
 /**
  * A cooking session on its day: «Cocinar: Pollo con arroz ×4». The name opens
  * the recipe; «Ya lo cociné» marks the batch cooked (its ingredients leave the
- * list and the pantry), with «Deshacer» in the toast.
+ * list), with «Deshacer» in the toast.
  */
 export function PrepChip({ prep, recipe, today, compact = false }: { prep: PrepBatch; recipe: Recipe | null; today: string; compact?: boolean }) {
   const actions = usePlanActions();

@@ -2,7 +2,6 @@
 
 import { SHOPPING_CATEGORIES, SHOPPING_CATEGORY_LABELS, type ShoppingCategory, type ShoppingItem, type ShoppingItemPatch, type ShoppingList as List } from "@pulso/contract";
 import { Apple, Beef, Check, ClipboardCopy, Croissant, Egg, Home, Package, RefreshCw, ShoppingBasket, ShoppingCart, Snowflake, Sparkles, Wine, X, type LucideIcon } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 import { Card, CardTitle } from "../../../../_ui/card";
 import { cn } from "../../../../_ui/cn";
@@ -29,9 +28,9 @@ const day = new Intl.DateTimeFormat("es", { day: "numeric", month: "short", time
 const fmtDay = (date: string) => day.format(new Date(`${date}T00:00:00Z`));
 
 /**
- * What is left to buy for the plan's horizon, by aisle. Ticking an item (bought)
- * or «Ya tengo» moves it to the Despensa, with «Deshacer» in the toast; the
- * person's own items can be added and removed. The plan keeps the list current
+ * What is left to buy for the plan's horizon, by aisle. Clicking an item ticks it
+ * (struck through, sinking to the bottom of its aisle); «Ya tengo» puts it aside,
+ * with «Deshacer» in the toast; the person's own items can be added and removed. The plan keeps the list current
  * as it changes; «Actualizar» rebuilds it from today. Every write returns the whole list.
  */
 export function ShoppingList({ initial, horizonDays }: { initial: List; horizonDays: number }) {
@@ -62,13 +61,10 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
       items: l.items.map((i) => (i.id === item.id ? { ...i, ...change, ...(change.checked ? { pantry: false } : {}), ...(change.pantry ? { checked: false } : {}) } : i)),
     }));
 
-  /** Bought or already at home: off the list and into the Despensa. */
-  async function stock(item: ShoppingItem, how: "checked" | "pantry") {
-    if (!(await patch(item, { [how]: true }))) return;
-    notify({
-      message: how === "checked" ? `${item.name}: comprado, a la despensa.` : `${item.name}: ya lo tienes, a la despensa.`,
-      undo: () => patch(item, { [how]: false }),
-    });
+  /** Already at home this time: off what is left to buy, kept in «Ya tengo». */
+  async function have(item: ShoppingItem) {
+    if (!(await patch(item, { pantry: true }))) return;
+    notify({ message: `${item.name}: ya lo tienes.`, undo: () => patch(item, { pantry: false }) });
   }
 
   async function generate() {
@@ -94,14 +90,18 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
     }
   }
 
-  const toBuy = list.items.filter((i) => !i.pantry && !i.checked);
-  const atHome = list.items.length - toBuy.length;
-  const aisles = SHOPPING_CATEGORIES.map((c) => ({ category: c, items: toBuy.filter((i) => i.category === c) })).filter((a) => a.items.length > 0);
+  const toBuy = list.items.filter((i) => !i.pantry);
+  const atHome = list.items.filter((i) => i.pantry);
+  const aisles = SHOPPING_CATEGORIES.map((c) => ({
+    category: c,
+    // Bought items sink to the bottom of their aisle.
+    items: toBuy.filter((i) => i.category === c).sort((a, b) => Number(a.checked) - Number(b.checked)),
+  })).filter((a) => a.items.length > 0);
   const pending = list.total - list.done;
   const generated = list.items.some((i) => i.source === "plan");
 
   const rangeControl = (
-    <button onClick={generate} disabled={busy} className={generated ? buttonSoft : buttonPrimary} title={`Lo que falta para los próximos ${days} días del plan, menos lo que hay en la despensa`}>
+    <button onClick={generate} disabled={busy} className={generated ? buttonSoft : buttonPrimary} title={`Lo que pide el plan para los próximos ${days} días`}>
       <RefreshCw className={cn("size-4", busy && "motion-safe:animate-spin")} />
       {generated ? "Actualizar" : `Generar para ${days} días`}
     </button>
@@ -129,7 +129,7 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
           icon={ShoppingCart}
           color={BODY}
           title="Genera tu lista desde tu plan"
-          line={list.hasPlan ? `Sumamos lo que falta para los próximos ${days} días del plan, menos lo que ya tienes en la despensa.` : "Aún no tienes un plan de dieta activo. Pídeselo al Coach y la lista sale de ahí."}
+          line={list.hasPlan ? `Sumamos los ingredientes de los próximos ${days} días del plan y los ordenamos por pasillo.` : "Aún no tienes un plan de dieta activo. Pídeselo al Coach y la lista sale de ahí."}
           action={list.hasPlan ? undefined : { href: "/coach", label: "Pedir un plan al Coach" }}
         />
         <div className="mx-auto flex max-w-md flex-col items-center gap-4">
@@ -163,12 +163,6 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
               {list.from && list.to ? `Lo que falta del ${fmtDay(list.from)} al ${fmtDay(list.to)}` : "Sólo lo que añadiste a mano"}
               {list.planName && ` · ${list.planName}`}
             </p>
-            {atHome > 0 && (
-              <Link href="/dieta/compras?vista=despensa" className="text-muted-foreground hover:text-foreground mt-1 inline-flex min-h-8 items-center gap-1.5 text-[13px]">
-                <Home className="size-3.5" />
-                {atHome} {atHome === 1 ? "cosa ya está" : "cosas ya están"} en la despensa
-              </Link>
-            )}
             {list.stale && list.hasPlan && (
               <p className="text-training mt-2 flex items-center gap-1.5 text-[13px] font-medium">
                 <Sparkles className="size-3.5" />
@@ -190,7 +184,7 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
 
       {aisles.length === 0 && (
         <Card className="mt-5">
-          <EmptyState compact icon={Check} color={BODY} title="Nada más que comprar" line="Todo lo del plan está en la despensa. Si el plan cambia, la lista se pone al día sola." />
+          <EmptyState compact icon={Check} color={BODY} title="Nada más que comprar" line="Ya tienes todo lo que pide el plan. Si el plan cambia, la lista se pone al día sola." />
         </Card>
       )}
       <div className="mt-5 grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -202,19 +196,19 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
               <ul className="-mx-2 -my-1">
                 {items.map((item) => (
                   <li key={item.id} className="group hover:bg-muted/50 relative flex min-h-11 items-center gap-1 rounded-xl px-2">
-                    <button onClick={() => stock(item, "checked")} className="group/tick focus-visible:ring-ring flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2" aria-label={`Comprado: ${item.name}`}>
-                      <span className="border-border group-hover/tick:border-body grid size-6 shrink-0 place-items-center rounded-full border-2 transition-colors">
-                        <Check className="text-body size-3.5 opacity-0 transition-opacity group-hover/tick:opacity-60" strokeWidth={3} />
+                    <button onClick={() => patch(item, { checked: !item.checked })} aria-pressed={item.checked} className="focus-visible:ring-ring flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2">
+                      <span className={cn("grid size-6 shrink-0 place-items-center rounded-full border-2 transition-colors", item.checked ? "border-body bg-body text-background" : "border-border")}>
+                        {item.checked && <Check className="size-3.5" strokeWidth={3} />}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-[14px]">
+                      <span className={cn("min-w-0 flex-1 truncate text-[14px] transition-colors", item.checked && "text-muted-foreground line-through")}>
                         {item.name}
                         {item.note && <span className="text-muted-foreground"> · {item.note}</span>}
                       </span>
-                      {item.amount && <span className="text-muted-foreground shrink-0 text-[13px] tabular">{item.amount}</span>}
+                      {item.amount && <span className={cn("text-muted-foreground shrink-0 text-[13px] tabular", item.checked && "line-through")}>{item.amount}</span>}
                     </button>
                     {/* On the desktop the actions float over the amount while hovered, so the amounts line up. */}
                     <span className="flex shrink-0 rounded-lg transition-opacity md:absolute md:inset-y-1 md:right-1 md:items-center md:bg-[color-mix(in_oklab,var(--muted)_50%,var(--card))] md:pl-10 md:opacity-0 md:group-has-[:focus-visible]:opacity-100 md:group-hover:opacity-100">
-                      <button onClick={() => stock(item, "pantry")} className="text-muted-foreground hover:text-foreground hover:bg-muted grid size-9 place-items-center rounded-lg" aria-label={`Ya tengo ${item.name}`} title="Ya tengo">
+                      <button onClick={() => have(item)} className="text-muted-foreground hover:text-foreground hover:bg-muted grid size-9 place-items-center rounded-lg" aria-label={`Ya tengo ${item.name}`} title="Ya tengo">
                         <Home className="size-3.5" />
                       </button>
                       {item.source === "manual" && (
@@ -229,6 +223,21 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
             </Card>
           );
         })}
+        {atHome.length > 0 && (
+          <Card delay={40 + aisles.length * 40}>
+            <CardTitle icon={Home} color="var(--muted-foreground)" title="Ya tengo" />
+            <ul className="-mx-2 -my-1">
+              {atHome.map((item) => (
+                <li key={item.id} className="flex min-h-11 items-center gap-3 px-2">
+                  <span className="text-muted-foreground min-w-0 flex-1 truncate text-[14px]">{item.name}</span>
+                  <button onClick={() => patch(item, { pantry: false })} className="text-primary hover:bg-primary/10 min-h-9 rounded-lg px-2.5 text-[13px] font-medium">
+                    Lo necesito
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
       </div>
     </>
   );
