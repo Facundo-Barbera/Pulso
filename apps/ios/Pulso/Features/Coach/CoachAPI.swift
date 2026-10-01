@@ -32,6 +32,14 @@ struct AgentAttachment: Codable, Identifiable, Equatable, Hashable {
     var height: Double
 }
 
+/// A packaged product scanned into a message (`AgentProduct`): its code and what
+/// Open Food Facts said about it when it was sent (nil when unknown or unreachable).
+struct AgentProduct: Codable, Equatable {
+    static let limit = 4
+    var barcode: String
+    var product: FoodProduct?
+}
+
 struct AgentMessage: Codable, Identifiable, Equatable {
     enum Role: String, Codable { case user, assistant }
     enum Status: String, Codable { case streaming, done, error }
@@ -45,12 +53,14 @@ struct AgentMessage: Codable, Identifiable, Equatable {
     var createdAt: Double
     /// Photos on a user message, in the order they were sent.
     var attachments: [AgentAttachment] = []
+    /// Scanned products on a user message, in the order they were added.
+    var products: [AgentProduct] = []
 }
 
 extension AgentMessage {
-    private enum Keys: String, CodingKey { case id, threadId, role, text, tools, status, error, createdAt, attachments }
+    private enum Keys: String, CodingKey { case id, threadId, role, text, tools, status, error, createdAt, attachments, products }
 
-    /// `attachments` may be missing (an engine from before photos).
+    /// `attachments` and `products` may be missing (an engine from before them).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -62,6 +72,7 @@ extension AgentMessage {
         error = try c.decodeIfPresent(String.self, forKey: .error)
         createdAt = try c.decode(Double.self, forKey: .createdAt)
         attachments = try c.decodeIfPresent([AgentAttachment].self, forKey: .attachments) ?? []
+        products = try c.decodeIfPresent([AgentProduct].self, forKey: .products) ?? []
     }
 }
 
@@ -131,28 +142,34 @@ extension PulsoAPI {
         guard (200..<300).contains(status) else { throw Self.failure(status: status, data: data) }
     }
 
-    /// Sends a message, with up to four JPEG photos, and streams the Coach's turn.
-    func sendAgentMessage(threadId: String, text: String, photos: [Data] = []) -> AsyncThrowingStream<AgentStreamEvent, Error> {
+    /// Sends a message, with up to four JPEG photos and four scanned barcodes, and streams the Coach's turn.
+    /// The engine looks each barcode up itself.
+    func sendAgentMessage(threadId: String, text: String, photos: [Data] = [], barcodes: [String] = []) -> AsyncThrowingStream<AgentStreamEvent, Error> {
+        struct Body: Encodable { var text: String; var barcodes: [String]? }
         var request = makeRequest("api/mobile/agent/threads/\(threadId)/messages", method: "POST")
         if photos.isEmpty {
             request.setValue("application/json", forHTTPHeaderField: "content-type")
-            request.httpBody = try? JSONEncoder().encode(["text": text])
+            request.httpBody = try? JSONEncoder().encode(Body(text: text, barcodes: barcodes.isEmpty ? nil : barcodes))
         } else {
             let boundary = "pulso-\(UUID().uuidString)"
             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "content-type")
-            request.httpBody = Self.multipart(text: text, photos: photos, boundary: boundary)
+            request.httpBody = Self.multipart(text: text, photos: photos, barcodes: barcodes, boundary: boundary)
         }
         return events(request)
     }
 
-    /// The form the engine reads: a `text` field and one `image` file per photo.
-    static func multipart(text: String, photos: [Data], boundary: String) -> Data {
+    /// The form the engine reads: a `text` field, one `barcode` field per product and one `image` file per photo.
+    static func multipart(text: String, photos: [Data], barcodes: [String] = [], boundary: String) -> Data {
         var body = Data()
         func line(_ string: String) { body.append(Data("\(string)\r\n".utf8)) }
-        line("--\(boundary)")
-        line(#"Content-Disposition: form-data; name="text""#)
-        line("")
-        line(text)
+        func field(_ name: String, _ value: String) {
+            line("--\(boundary)")
+            line(#"Content-Disposition: form-data; name="\#(name)""#)
+            line("")
+            line(value)
+        }
+        field("text", text)
+        for barcode in barcodes { field("barcode", barcode) }
         for (index, photo) in photos.enumerated() {
             line("--\(boundary)")
             line(#"Content-Disposition: form-data; name="image"; filename="foto-\#(index + 1).jpg""#)

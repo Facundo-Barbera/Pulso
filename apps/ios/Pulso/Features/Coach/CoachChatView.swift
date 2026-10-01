@@ -13,8 +13,10 @@ struct CoachChatView: View {
     private let cameraOnAppear: Bool
     @State private var draft: String
     @State private var photos: [ChatPhoto] = []
+    @State private var products: [ChatProduct] = []
     @State private var picking = false
     @State private var shooting = false
+    @State private var scanning = false
     @State private var picked: [PhotosPickerItem] = []
     @State private var started = false
     @State private var position = ScrollPosition(edge: .bottom)
@@ -74,8 +76,9 @@ struct CoachChatView: View {
             if store.loading { ProgressView().controlSize(.large) }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            Composer(draft: $draft, photos: $photos, streaming: store.streaming, focused: $composing,
-                     onLibrary: { picking = true }, onCamera: CameraPicker.isAvailable ? { shooting = true } : nil) { send(draft) }
+            Composer(draft: $draft, photos: $photos, products: $products, streaming: store.streaming, focused: $composing,
+                     onLibrary: { picking = true }, onCamera: CameraPicker.isAvailable ? { shooting = true } : nil,
+                     onScan: { scanning = true }) { send(draft) }
                 .overlay(alignment: .top) {
                     if !atBottom && !store.messages.isEmpty {
                         Button("Ir al final", systemImage: "arrow.down") { scrollToBottom() }
@@ -104,6 +107,10 @@ struct CoachChatView: View {
                 if let photo = ChatPhoto(image) { add(photo) }
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: $scanning) {
+            ProductScanSheet { addProduct($0) }
+                .presentationDetents([.large])
         }
         .toolbarVisibility(.hidden, for: .tabBar)
         .navigationTitle(store.title ?? initialTitle ?? "Nueva conversación")
@@ -136,16 +143,40 @@ struct CoachChatView: View {
 
     private func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !photos.isEmpty, !store.streaming else { return }
+        // A product still being looked up waits, so the sent card shows what it is.
+        guard !text.isEmpty || !photos.isEmpty || !products.isEmpty, !store.streaming, !products.contains(where: \.resolving) else { return }
         let sending = photos
+        let scanned = products.map(\.sent)
         draft = ""
         photos = []
-        Task { await store.send(text, photos: sending) }
+        products = []
+        Task { await store.send(text, photos: sending, products: scanned) }
     }
 
     private func add(_ photo: ChatPhoto) {
         guard photos.count < ChatPhoto.limit else { return }
         withAnimation(.snappy) { photos.append(photo) }
+    }
+
+    /// Attaches the card at once and fills it in when Open Food Facts answers;
+    /// an unknown code still goes, by barcode.
+    private func addProduct(_ code: String) {
+        guard products.count < AgentProduct.limit, !products.contains(where: { $0.barcode == code }) else { return }
+        let item = ChatProduct(barcode: code)
+        withAnimation(.snappy) { products.append(item) }
+        Task {
+            var found: FoodProduct?
+            do {
+                found = try await PulsoModel.shared.api?.lookupBarcode(code)
+            } catch {
+                PulsoModel.shared.handle(error)
+            }
+            guard let index = products.firstIndex(where: { $0.id == item.id }) else { return }
+            withAnimation(.snappy) {
+                products[index].product = found
+                products[index].resolving = false
+            }
+        }
     }
 
     private func scrollToBottom(animated: Bool = true) {
@@ -165,6 +196,9 @@ private struct MessageRow: View {
         switch message.role {
         case .user:
             VStack(alignment: .trailing, spacing: 6) {
+                if !message.products.isEmpty {
+                    MessageProducts(products: message.products)
+                }
                 if !message.attachments.isEmpty {
                     MessagePhotos(threadId: message.threadId, photos: message.attachments)
                 }
@@ -265,26 +299,36 @@ private struct AssistantRow: View {
 private struct Composer: View {
     @Binding var draft: String
     @Binding var photos: [ChatPhoto]
+    @Binding var products: [ChatProduct]
     let streaming: Bool
     var focused: FocusState<Bool>.Binding
     let onLibrary: () -> Void
     /// Nil where there is no camera.
     let onCamera: (() -> Void)?
+    let onScan: () -> Void
     let onSend: () -> Void
 
-    private var canSend: Bool { !streaming && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty) }
+    private var photosFull: Bool { photos.count >= ChatPhoto.limit }
+    private var productsFull: Bool { products.count >= AgentProduct.limit }
+    private var canSend: Bool {
+        !streaming && !products.contains(where: \.resolving)
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty || !products.isEmpty)
+    }
     private var placeholder: String {
-        streaming ? "El Coach está respondiendo…" : photos.isEmpty ? "Pregúntale a tu coach…" : "Añade un comentario…"
+        if streaming { return "El Coach está respondiendo…" }
+        if !products.isEmpty { return "¿Cuánto comiste? «una cucharada», «la mitad»…" }
+        return photos.isEmpty ? "Pregúntale a tu coach…" : "Añade un comentario…"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !photos.isEmpty { thumbnails }
+            if !photos.isEmpty || !products.isEmpty { attachments }
             GlassEffectContainer(spacing: 10) {
                 HStack(alignment: .bottom, spacing: 10) {
                     Menu {
-                        if let onCamera { Button("Cámara", systemImage: "camera", action: onCamera) }
-                        Button("Fotos", systemImage: "photo.on.rectangle", action: onLibrary)
+                        if let onCamera { Button("Cámara", systemImage: "camera", action: onCamera).disabled(photosFull) }
+                        Button("Fotos", systemImage: "photo.on.rectangle", action: onLibrary).disabled(photosFull)
+                        Button("Escanear producto", systemImage: "barcode.viewfinder", action: onScan).disabled(productsFull)
                     } label: {
                         Image(systemName: "plus")
                             .font(.body.weight(.semibold))
@@ -292,8 +336,8 @@ private struct Composer: View {
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
-                    .disabled(photos.count >= ChatPhoto.limit)
-                    .accessibilityLabel("Añadir fotos")
+                    .disabled(photosFull && productsFull)
+                    .accessibilityLabel("Añadir fotos o productos")
 
                     TextField(placeholder, text: $draft, axis: .vertical)
                         .lineLimit(1...6)
@@ -335,13 +379,25 @@ private struct Composer: View {
         .animation(.snappy, value: streaming)
         .animation(.snappy, value: canSend)
         .animation(.snappy, value: photos)
+        .animation(.snappy, value: products)
         .sensoryFeedback(.selection, trigger: photos.count)
+        .sensoryFeedback(.selection, trigger: products.count)
     }
 
-    /// What goes with the next message; ✕ takes one out.
-    private var thumbnails: some View {
+    /// What goes with the next message, products first; ✕ takes one out.
+    private var attachments: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
+                ForEach(products) { item in
+                    ProductCard(barcode: item.barcode, product: item.product, resolving: item.resolving)
+                        .padding(.trailing, 16) // room for ✕
+                        .frame(height: 64)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
+                        .overlay(alignment: .topTrailing) {
+                            remove("Quitar producto") { products.removeAll { $0.id == item.id } }
+                        }
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
                 ForEach(photos) { photo in
                     Image(uiImage: photo.preview)
                         .resizable()
@@ -349,13 +405,7 @@ private struct Composer: View {
                         .frame(width: 64, height: 64)
                         .clipShape(.rect(cornerRadius: 14, style: .continuous))
                         .overlay(alignment: .topTrailing) {
-                            Button("Quitar foto", systemImage: "xmark") { photos.removeAll { $0.id == photo.id } }
-                                .labelStyle(.iconOnly)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 22, height: 22)
-                                .background(.black.opacity(0.6), in: .circle)
-                                .padding(4)
+                            remove("Quitar foto") { photos.removeAll { $0.id == photo.id } }
                         }
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }
@@ -363,5 +413,15 @@ private struct Composer: View {
             .padding(.vertical, 2)
         }
         .scrollClipDisabled()
+    }
+
+    private func remove(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(label, systemImage: "xmark", action: action)
+            .labelStyle(.iconOnly)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .frame(width: 22, height: 22)
+            .background(.black.opacity(0.6), in: .circle)
+            .padding(4)
     }
 }

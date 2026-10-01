@@ -105,15 +105,16 @@ final class ChatStore {
         }
     }
 
-    func send(_ raw: String, photos: [ChatPhoto] = []) async {
+    func send(_ raw: String, photos: [ChatPhoto] = [], products: [AgentProduct] = []) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let api = PulsoModel.shared.api, !text.isEmpty || !photos.isEmpty, !streaming else { return }
+        guard let api = PulsoModel.shared.api, !text.isEmpty || !photos.isEmpty || !products.isEmpty, !streaming else { return }
         error = nil
         sentCount += 1
         let now = Date().timeIntervalSince1970 * 1000
         let local = "local-\(UUID().uuidString)"
         CoachPhotoCache.shared.remember(photos)
-        messages.append(AgentMessage(id: "\(local)-user", threadId: threadId ?? "", role: .user, text: text, tools: [], status: .done, error: nil, createdAt: now, attachments: photos.map(\.attachment)))
+        messages.append(AgentMessage(id: "\(local)-user", threadId: threadId ?? "", role: .user, text: text, tools: [], status: .done, error: nil, createdAt: now,
+                                     attachments: photos.map(\.attachment), products: products))
         messages.append(AgentMessage(id: local, threadId: threadId ?? "", role: .assistant, text: "", tools: [], status: .streaming, error: nil, createdAt: now))
         streaming = true
         do {
@@ -124,7 +125,8 @@ final class ChatStore {
             }
             let threadId = threadId!
             let jpegs = photos.map(\.jpeg)
-            start { api.sendAgentMessage(threadId: threadId, text: text, photos: jpegs) }
+            let barcodes = products.map(\.barcode)
+            start { api.sendAgentMessage(threadId: threadId, text: text, photos: jpegs, barcodes: barcodes) }
         } catch {
             streaming = false
             fail(error.localizedDescription)

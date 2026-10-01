@@ -87,6 +87,23 @@ final class CoachTests: XCTestCase {
         XCTAssertTrue(text.hasSuffix("--b--\r\n"))
     }
 
+    func testMessagesCarryScannedProductsAndOlderOnesDecodeWithout() throws {
+        let base = #""id":"m","threadId":"t","role":"user","text":"una cucharada","tools":[],"status":"done","error":null,"createdAt":1"#
+        let product = #"{"barcode":"8480000123456","name":"Crema de cacahuete","brand":"Hacendado","per100g":{"kcal":588,"protein":25,"carbs":12,"fat":49,"fiber":6},"servingGrams":15,"imageUrl":null,"liquid":false,"packageSize":350,"packageKind":null}"#
+        let message = try JSONDecoder().decode(AgentMessage.self, from: Data(#"{\#(base),"products":[{"barcode":"8480000123456","product":\#(product)},{"barcode":"12345678","product":null}]}"#.utf8))
+        XCTAssertEqual(message.products.map(\.barcode), ["8480000123456", "12345678"])
+        XCTAssertEqual(message.products.first?.product?.name, "Crema de cacahuete")
+        XCTAssertNil(message.products.last?.product)
+        XCTAssertEqual(try JSONDecoder().decode(AgentMessage.self, from: Data("{\(base)}".utf8)).products, [])
+    }
+
+    func testScannedProductsGoAsBarcodeFieldsWithThePhotos() throws {
+        let body = PulsoAPI.multipart(text: "", photos: [Data([0xFF, 0xD8])], barcodes: ["8480000123456"], boundary: "b")
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(text.contains("Content-Disposition: form-data; name=\"barcode\"\r\n\r\n8480000123456\r\n"))
+        XCTAssertTrue(text.hasSuffix("--b--\r\n"))
+    }
+
     func testPhotosAreDownscaledToJpeg() throws {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
