@@ -25,14 +25,14 @@ function page(next: string, error?: string, status = 200): Response {
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--fg);
     font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
-  form { width: min(360px, 100%); display: grid; gap: 14px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 28px;
+  form { width: min(400px, 100%); display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 28px;
     box-shadow: 0 24px 60px -30px rgb(0 0 0 / .5); }
   svg { display: block; margin-bottom: 4px; filter: drop-shadow(0 8px 18px rgb(245 51 95 / .35)); }
   h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; } p { margin: 0; color: var(--muted); font-size: 14px; }
   label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
-  input { font: inherit; color: var(--fg); background: transparent; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--input); min-height: 44px; }
+  input { font: inherit; color: var(--fg); background: transparent; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--input); min-height: 44px; width: 100%; min-width: 0; }
   input:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-  input[name=code] { font: 600 24px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .32em; text-align: center; font-variant-numeric: tabular-nums; }
+  input[name=code] { font: 600 24px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .2em; text-align: center; font-variant-numeric: tabular-nums; }
   button { font: inherit; font-weight: 600; min-height: 44px; border: 0; border-radius: 12px; background: var(--primary); color: var(--on-primary); cursor: pointer; }
   .error { color: var(--error); }
 </style></head>
