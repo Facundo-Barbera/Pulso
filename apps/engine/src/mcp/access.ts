@@ -54,6 +54,7 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   update_planned_session: "write",
   set_meal_times: "write",
   lookup_food_barcode: "read",
+  estimate_portion: "read",
   list_exercises: "read",
   get_exercise: "read",
   create_program: "write",

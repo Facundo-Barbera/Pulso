@@ -24,6 +24,7 @@ export const measureSchema = z.object({
   amount: z.number().positive().max(10000),
   unit: z.enum(MEASURE_UNITS),
   size: z.number().positive().max(5000).nullish().describe("g or ml in one household unit, when not its default"),
+  base: z.enum(["g", "ml"]).optional().describe("Whether `size` is grams or ml; defaults to the unit's own (ml for spoons and cups). estimate_portion sets it"),
 });
 
 export const mealShape = {
@@ -61,7 +62,7 @@ export function toMealInput({ measure, quantity, unit: quantityUnit, ...rest }: 
   if (measure) {
     const household = (HOUSEHOLD_UNITS as readonly string[]).includes(measure.unit);
     const said = { amount: measure.amount, unit: measure.unit, size: household ? (measure.size ?? null) : null };
-    return { ...rest, measure: said, ...toQuantity(said) };
+    return { ...rest, measure: said, ...toQuantity(said, measure.base) };
   }
   if (quantity === undefined) return `'${rest.name}' needs a measure or a quantity`;
   return { ...rest, quantity, unit: quantityUnit ?? "g" };

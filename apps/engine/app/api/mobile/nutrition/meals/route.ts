@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { mealSchema, toMealInput } from "@/src/nutrition/inputs";
+import { lookupBarcode } from "@/src/nutrition/barcode";
+import { usePantryForScan } from "@/src/nutrition/pantry-use";
 import { logMeal } from "@/src/nutrition/store";
 import { deviceOf, unpaired } from "../../auth";
 import { body, invalid, ok } from "../http";
@@ -15,5 +17,7 @@ export async function POST(request: Request): Promise<Response> {
   if (input instanceof Response) return input;
   const meal = toMealInput(input);
   if (typeof meal === "string") return invalid(meal);
-  return ok({ meal: logMeal({ ...meal, source: input.source }) });
+  const logged = logMeal({ ...meal, source: input.source });
+  // A scanned product in the pantry is used up; `pantry` says what is left.
+  return ok({ meal: logged, pantry: await usePantryForScan(logged, (code) => lookupBarcode(code)) });
 }

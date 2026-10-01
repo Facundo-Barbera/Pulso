@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { lookupBarcode } from "@/src/nutrition/barcode";
+import { usePantryForScan } from "@/src/nutrition/pantry-use";
 import { logMeal } from "@/src/nutrition/store";
 import { json } from "../../http";
 import { body, invalid } from "../http";
@@ -15,5 +17,7 @@ export async function POST(request: Request): Promise<Response> {
   const { source, offPlan, ...rest } = input;
   const meal = toWebMeal(rest);
   if (typeof meal === "string") return invalid(meal);
-  return json({ meal: logMeal({ ...meal, offPlan, source }) });
+  const logged = logMeal({ ...meal, offPlan, source });
+  // A scanned product in the pantry is used up; `pantry` says what is left.
+  return json({ meal: logged, pantry: await usePantryForScan(logged, (code) => lookupBarcode(code)) });
 }

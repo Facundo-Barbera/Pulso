@@ -187,6 +187,29 @@ export type FoodProduct = {
   packageKind: "lata" | "botella" | null;
 };
 
+/**
+ * How much of a packaged product an amount said in words is ("una cucharada",
+ * "la mitad del paquete", "3 galletas"), with the macros for it.
+ */
+export type PortionEstimate = {
+  barcode: string;
+  name: string;
+  /** g, or ml for a drink. */
+  quantity: number;
+  unit: "g" | "ml";
+  /** Totals for `quantity`. */
+  macros: Macros;
+  /** The amount as said, to log; null for a share of a package that isn't a can or bottle. */
+  measure: Measure | null;
+  /** Share of the package (0–1) when its size is known. */
+  packageShare: number | null;
+  /** One line in Spanish: "1 cucharada de Crema de cacahuete ≈ 16 g → 94 kcal". */
+  assumption: string;
+};
+
+/** `POST …/nutrition/portion` (phone) and `…/dieta/portion` (web). */
+export type PortionRequest = { barcode: string; amount: string };
+
 export const WATER_UNITS = ["ml", "vaso", "botella"] as const;
 /** How the person counts water: millilitres, glasses or bottles of their own sizes. */
 export type WaterUnit = (typeof WATER_UNITS)[number];
