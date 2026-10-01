@@ -5,6 +5,7 @@ import path from "node:path";
 import { migrateDaily } from "./daily/schema";
 import { migrateDevices } from "./devices-schema";
 import { SCHEMAS } from "./schemas";
+import { migrateTraining } from "./training/schema";
 import { migrateWorkouts } from "./workouts-schema";
 
 /** Pulso's home, like Telar's: `PULSO_HOME`, or ~/Library/Application Support/Pulso (shared with the Electron shell's userData). */
@@ -44,6 +45,7 @@ export function db(): Database {
     migrateDevices(database);
     migrateWorkouts(database);
     migrateDaily(database);
+    migrateTraining(database);
     g[APPLIED] = { database, schemas: SCHEMAS };
   }
   return database;

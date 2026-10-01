@@ -1,25 +1,37 @@
 import { randomUUID } from "node:crypto";
+import type { Database } from "bun:sqlite";
 import type {
   ActiveProgramResponse,
+  CardioLog,
+  CardioTarget,
+  DayEdit,
+  Equipment,
   Exercise,
   ExerciseDetail,
   ExerciseHistory,
   ExercisePerformance,
   HistoryPoint,
+  HrZone,
+  HrZoneRange,
   LoadSuggestion,
   PersonalRecord,
   Program,
   ProgramDay,
   ProgramExercise,
+  ProgramExerciseInput,
   ProgramInput,
   SessionInput,
   SessionSaved,
   SetLog,
   TrainingSession,
+  TrainingSettings,
 } from "@pulso/contract";
+import { getProfile } from "../agent/profile";
+import { addDays, localDate } from "../daily/dates";
+import { listDailyMetrics } from "../daily/store";
 import { db } from "../db";
 import { ANATOMY } from "./anatomy";
-import { INCREMENT_KG } from "./library";
+import { CARDIO, INCREMENT_KG } from "./library";
 import { bests, nextLoad, performance, recordsFor, type Prescription } from "./math";
 import { mediaFor, mediaSourceOf } from "./media";
 import { TECHNIQUE } from "./technique";
@@ -31,7 +43,7 @@ export class TrainingError extends Error {}
 // ── Exercises ────────────────────────────────────────────────────────────────
 
 type ExerciseRow = Omit<Exercise, "secondary"> & { secondary: string };
-const toExercise = (r: ExerciseRow): Exercise => ({ ...r, secondary: JSON.parse(r.secondary) });
+const toExercise = (r: ExerciseRow): Exercise => ({ ...r, secondary: JSON.parse(r.secondary), ...(CARDIO[r.id] ? { modality: CARDIO[r.id]!.modality } : {}) });
 
 export function listExercises(filter: { muscle?: string; equipment?: string; query?: string } = {}): Exercise[] {
   const rows = db().query<ExerciseRow, []>("SELECT id, name, muscle, secondary, equipment, kind FROM exercises ORDER BY muscle, name").all();
@@ -91,26 +103,61 @@ export function exercisePerformance(id: string): ExercisePerformance | undefined
 
 // ── Programs ─────────────────────────────────────────────────────────────────
 
+/** A prescription as stored: strength exercises need sets, reps and rest; cardio blocks a target. */
+type Rx = Pick<ProgramExercise, "sets" | "repMin" | "repMax" | "targetRpe" | "targetRir" | "restSeconds" | "notes" | "cardio"> & { weightKg: number | null };
+
+/** Fills in and checks one prescribed exercise against the library row it names. */
+function prescribe(ex: ProgramExerciseInput, exercise: Exercise, where: string): Rx {
+  const base = { targetRpe: ex.targetRpe ?? null, targetRir: ex.targetRir ?? null, notes: ex.notes ?? null };
+  if (exercise.kind === "cardio") {
+    // A cardio block with no target gets the usual easy default rather than failing a swap.
+    const cardio = ex.cardio && Object.values(ex.cardio).some((v) => v != null) ? ex.cardio : { durationMinutes: 20, zone: 2 as const };
+    return { ...base, sets: 1, repMin: 1, repMax: 1, restSeconds: 0, cardio, weightKg: null };
+  }
+  const { sets, repMin, repMax, restSeconds } = ex;
+  if (sets == null || repMin == null || repMax == null || restSeconds == null) {
+    throw new TrainingError(`${where}${exercise.id}: strength exercises need sets, repMin, repMax and restSeconds.`);
+  }
+  if (repMin > repMax) throw new TrainingError(`${where}${exercise.id}: repMin (${repMin}) is above repMax (${repMax}).`);
+  return { ...base, sets, repMin, repMax, restSeconds, cardio: null, weightKg: ex.weightKg ?? null };
+}
+
+/** Checks a day's exercises and returns them with their library rows. */
+function prescribeDay(name: string, exercises: ProgramExerciseInput[], library: Map<string, Exercise>): { exercise: Exercise; rx: Rx }[] {
+  if (exercises.length === 0) throw new TrainingError(`Day "${name}" has no exercises.`);
+  const unknown = [...new Set(exercises.map((e) => e.exerciseId).filter((id) => !library.has(id)))];
+  if (unknown.length) throw new TrainingError(`Unknown exercise ids: ${unknown.join(", ")}. Use ids from list_exercises.`);
+  return exercises.map((ex) => {
+    const exercise = library.get(ex.exerciseId)!;
+    return { exercise, rx: prescribe(ex, exercise, `Day "${name}": `) };
+  });
+}
+
+const libraryMap = () => new Map(listExercises().map((e) => [e.id, e]));
+
 /** Checks a program before anything is written, so a bad one leaves no trace. */
 function validateProgram(input: ProgramInput): void {
   if (!input.name.trim()) throw new TrainingError("The program needs a name.");
   if (input.days.length === 0) throw new TrainingError("The program needs at least one day.");
-  const known = new Set(listExercises().map((e) => e.id));
-  const unknown = new Set<string>();
+  const library = libraryMap();
   for (const day of input.days) {
-    if (day.exercises.length === 0) throw new TrainingError(`Day "${day.name}" has no exercises.`);
     if (day.weekday != null && (day.weekday < 1 || day.weekday > 7)) throw new TrainingError(`Day "${day.name}": weekday must be 1 (Monday) to 7 (Sunday).`);
-    for (const ex of day.exercises) {
-      if (!known.has(ex.exerciseId)) unknown.add(ex.exerciseId);
-      if (ex.repMin > ex.repMax) throw new TrainingError(`${ex.exerciseId}: repMin (${ex.repMin}) is above repMax (${ex.repMax}).`);
-    }
+    prescribeDay(day.name, day.exercises, library);
   }
-  if (unknown.size) throw new TrainingError(`Unknown exercise ids: ${[...unknown].join(", ")}. Use ids from list_exercises.`);
+}
+
+function insertProgramExercise(database: Database, id: string, dayId: string, position: number, exerciseId: string, rx: Rx, now: number): void {
+  database.run(
+    `INSERT INTO program_exercises (id, day_id, position, exercise_id, sets, rep_min, rep_max, target_rpe, target_rir, rest_seconds, notes, cardio, weight_kg, weight_set_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, dayId, position, exerciseId, rx.sets, rx.repMin, rx.repMax, rx.targetRpe, rx.targetRir, rx.restSeconds, rx.notes, rx.cardio ? JSON.stringify(rx.cardio) : null, rx.weightKg, rx.weightKg == null ? null : now],
+  );
 }
 
 /** Writes a whole program. With `activate`, it becomes the only active one. */
 export function createProgram(input: ProgramInput, activate = true, now = Date.now()): Program {
   validateProgram(input);
+  const library = libraryMap();
   const database = db();
   const id = randomUUID();
   database.transaction(() => {
@@ -134,13 +181,7 @@ export function createProgram(input: ProgramInput, activate = true, now = Date.n
         day.focus ?? null,
         day.weekday ?? null,
       ]);
-      day.exercises.forEach((ex, p) => {
-        database.run(
-          `INSERT INTO program_exercises (id, day_id, position, exercise_id, sets, rep_min, rep_max, target_rpe, target_rir, rest_seconds, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [randomUUID(), dayId, p, ex.exerciseId, ex.sets, ex.repMin, ex.repMax, ex.targetRpe ?? null, ex.targetRir ?? null, ex.restSeconds, ex.notes ?? null],
-        );
-      });
+      prescribeDay(day.name, day.exercises, library).forEach(({ exercise, rx }, p) => insertProgramExercise(database, randomUUID(), dayId, p, exercise.id, rx, now));
     });
   })();
   return getProgram(id)!;
@@ -154,6 +195,7 @@ type ProgramExerciseRow = {
   exercise_id: string;
   exercise_name: string;
   equipment: Exercise["equipment"];
+  kind: Exercise["kind"];
   sets: number;
   rep_min: number;
   rep_max: number;
@@ -161,7 +203,30 @@ type ProgramExerciseRow = {
   target_rir: number | null;
   rest_seconds: number;
   notes: string | null;
+  cardio: string | null;
+  weight_kg: number | null;
+  weight_set_at: number | null;
+  /** Set when the exercise was logged after the hand-set load: the load is spent. */
+  logged_since: number | null;
 };
+
+const toProgramExercise = (r: ProgramExerciseRow): ProgramExercise => ({
+  id: r.id,
+  exerciseId: r.exercise_id,
+  exerciseName: r.exercise_name,
+  equipment: r.equipment,
+  kind: r.kind,
+  modality: CARDIO[r.exercise_id]?.modality ?? null,
+  sets: r.sets,
+  repMin: r.rep_min,
+  repMax: r.rep_max,
+  targetRpe: r.target_rpe,
+  targetRir: r.target_rir,
+  restSeconds: r.rest_seconds,
+  notes: r.notes,
+  cardio: r.cardio ? (JSON.parse(r.cardio) as CardioTarget) : null,
+  weightKg: r.weight_kg != null && !r.logged_since ? r.weight_kg : null,
+});
 
 export function getProgram(id: string): Program | undefined {
   const row = db().query<ProgramRow, [string]>("SELECT * FROM programs WHERE id = ?").get(id);
@@ -169,24 +234,14 @@ export function getProgram(id: string): Program | undefined {
   const days = db().query<DayRow, [string]>("SELECT id, name, focus, weekday FROM program_days WHERE program_id = ? ORDER BY position").all(id);
   const exercises = db()
     .query<ProgramExerciseRow, [string]>(
-      `SELECT pe.*, e.name AS exercise_name, e.equipment FROM program_exercises pe
+      `SELECT pe.*, e.name AS exercise_name, e.equipment, e.kind,
+         (SELECT 1 FROM set_logs s JOIN training_sessions t ON t.id = s.session_id
+          WHERE pe.weight_set_at IS NOT NULL AND s.exercise_id = pe.exercise_id AND t.started_at > pe.weight_set_at LIMIT 1) AS logged_since
+       FROM program_exercises pe
        JOIN program_days d ON d.id = pe.day_id JOIN exercises e ON e.id = pe.exercise_id
        WHERE d.program_id = ? ORDER BY pe.position`,
     )
     .all(id);
-  const toExercise = (r: ProgramExerciseRow): ProgramExercise => ({
-    id: r.id,
-    exerciseId: r.exercise_id,
-    exerciseName: r.exercise_name,
-    equipment: r.equipment,
-    sets: r.sets,
-    repMin: r.rep_min,
-    repMax: r.rep_max,
-    targetRpe: r.target_rpe,
-    targetRir: r.target_rir,
-    restSeconds: r.rest_seconds,
-    notes: r.notes,
-  });
   return {
     id: row.id,
     name: row.name,
@@ -195,13 +250,100 @@ export function getProgram(id: string): Program | undefined {
     notes: row.notes,
     active: row.active === 1,
     createdAt: row.created_at,
-    days: days.map((d): ProgramDay => ({ ...d, exercises: exercises.filter((e) => e.day_id === d.id).map(toExercise) })),
+    days: days.map((d): ProgramDay => ({ ...d, exercises: exercises.filter((e) => e.day_id === d.id).map(toProgramExercise) })),
   };
 }
 
 export function getActiveProgram(): Program | undefined {
   const row = db().query<{ id: string }, []>("SELECT id FROM programs WHERE active = 1 ORDER BY created_at DESC LIMIT 1").get();
   return row ? getProgram(row.id) : undefined;
+}
+
+// ── Editing a day ────────────────────────────────────────────────────────────
+
+/** The program a day belongs to, or a caller error naming the id. */
+function programOfDay(dayId: string): Program {
+  const row = db().query<{ program_id: string }, [string]>("SELECT program_id FROM program_days WHERE id = ?").get(dayId);
+  const program = row && getProgram(row.program_id);
+  if (!program) throw new TrainingError(`Unknown program day id: ${dayId}. Use day ids from get_active_program.`);
+  return program;
+}
+
+/**
+ * Rewrites a day's exercise list in its new order. "always" changes the
+ * program: inputs with the `id` of one of the day's exercises update it (its
+ * load suggestion follows), others are added, missing ones removed; today's
+ * override of the day is dropped so the list shown is the list kept. "today"
+ * stores the list as today's override and leaves the program alone.
+ */
+export function updateProgramDay(dayId: string, edit: DayEdit, now = Date.now()): ActiveProgramResponse {
+  const program = programOfDay(dayId);
+  const day = program.days.find((d) => d.id === dayId)!;
+  const checked = prescribeDay(day.name, edit.exercises, libraryMap());
+  const database = db();
+  const date = localDate(new Date(now));
+
+  if (edit.scope === "today") {
+    const exercises: ProgramExercise[] = checked.map(({ exercise, rx }, i) => {
+      return {
+        id: edit.exercises[i]!.id ?? randomUUID(),
+        exerciseId: exercise.id,
+        exerciseName: exercise.name,
+        equipment: exercise.equipment,
+        kind: exercise.kind,
+        modality: exercise.modality ?? null,
+        ...rx,
+      };
+    });
+    database.transaction(() => {
+      database.run("DELETE FROM program_day_overrides WHERE date < ?", [date]);
+      database.run(
+        "INSERT INTO program_day_overrides (day_id, date, exercises, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (day_id, date) DO UPDATE SET exercises = excluded.exercises, updated_at = excluded.updated_at",
+        [dayId, date, JSON.stringify(exercises), now],
+      );
+    })();
+    return activeProgramView(now);
+  }
+
+  const existing = new Map(
+    database.query<{ id: string; weight_kg: number | null; weight_set_at: number | null }, [string]>("SELECT id, weight_kg, weight_set_at FROM program_exercises WHERE day_id = ?").all(dayId).map((r) => [r.id, r]),
+  );
+  database.transaction(() => {
+    const kept = new Set<string>();
+    checked.forEach(({ exercise, rx }, position) => {
+      const id = edit.exercises[position]!.id;
+      const old = id ? existing.get(id) : undefined;
+      if (!old || kept.has(old.id)) return insertProgramExercise(database, randomUUID(), dayId, position, exercise.id, rx, now);
+      kept.add(old.id);
+      // A load typed again unchanged keeps its date, so it stays spent once logged.
+      const weightSetAt = rx.weightKg == null ? null : rx.weightKg === old.weight_kg ? old.weight_set_at : now;
+      database.run(
+        `UPDATE program_exercises SET position = ?, exercise_id = ?, sets = ?, rep_min = ?, rep_max = ?, target_rpe = ?, target_rir = ?, rest_seconds = ?,
+           notes = ?, cardio = ?, weight_kg = ?, weight_set_at = ? WHERE id = ?`,
+        [position, exercise.id, rx.sets, rx.repMin, rx.repMax, rx.targetRpe, rx.targetRir, rx.restSeconds, rx.notes, rx.cardio ? JSON.stringify(rx.cardio) : null, rx.weightKg, weightSetAt, old.id],
+      );
+    });
+    for (const id of existing.keys()) if (!kept.has(id)) database.run("DELETE FROM program_exercises WHERE id = ?", [id]);
+    database.run("DELETE FROM program_day_overrides WHERE day_id = ? AND date = ?", [dayId, date]);
+  })();
+  return activeProgramView(now);
+}
+
+/** Drops today's one-off changes to a day. */
+export function clearDayOverride(dayId: string, now = Date.now()): ActiveProgramResponse {
+  programOfDay(dayId);
+  db().run("DELETE FROM program_day_overrides WHERE day_id = ? AND date = ?", [dayId, localDate(new Date(now))]);
+  return activeProgramView(now);
+}
+
+/** The program with today's overrides in place of the days they change. */
+function withOverrides(program: Program, now: number): Program {
+  const rows = db()
+    .query<{ day_id: string; exercises: string }, [string]>("SELECT day_id, exercises FROM program_day_overrides WHERE date = ?")
+    .all(localDate(new Date(now)));
+  if (rows.length === 0) return program;
+  const today = new Map(rows.map((r) => [r.day_id, JSON.parse(r.exercises) as ProgramExercise[]]));
+  return { ...program, days: program.days.map((d) => (today.has(d.id) ? { ...d, exercises: today.get(d.id)!, overridden: true } : d)) };
 }
 
 /** ISO weekday (1 = Monday … 7 = Sunday) in the Mac's local time, which is the person's. */
@@ -225,6 +367,28 @@ export function nextDay(program: Program, now = Date.now()): ProgramDay | undefi
 
 type SessionRow = { id: string; program_id: string | null; day_id: string | null; name: string; started_at: number; ended_at: number; notes: string | null };
 type SetRow = { session_id: string; exercise_id: string; set_index: number; weight_kg: number; reps: number; rpe: number | null; done_at: number };
+type CardioRow = {
+  session_id: string;
+  exercise_id: string;
+  duration_seconds: number;
+  distance_km: number | null;
+  level: number | null;
+  incline_percent: number | null;
+  avg_hr: number | null;
+  kcal: number | null;
+  done_at: number;
+};
+
+const toCardio = (r: CardioRow): CardioLog => ({
+  exerciseId: r.exercise_id,
+  durationSeconds: r.duration_seconds,
+  distanceKm: r.distance_km,
+  level: r.level,
+  inclinePercent: r.incline_percent,
+  avgHr: r.avg_hr,
+  kcal: r.kcal,
+  doneAt: r.done_at,
+});
 
 const toSet = (r: SetRow): SetLog => ({ exerciseId: r.exercise_id, setIndex: r.set_index, weightKg: r.weight_kg, reps: r.reps, rpe: r.rpe, doneAt: r.done_at });
 
@@ -234,7 +398,12 @@ function withSets(rows: SessionRow[]): TrainingSession[] {
   const sets = db()
     .query<SetRow, string[]>(`SELECT * FROM set_logs WHERE session_id IN (${ids.map(() => "?").join(",")}) ORDER BY done_at, set_index`)
     .all(...ids);
-  return rows.map((r) => ({
+  const cardio = db()
+    .query<CardioRow, string[]>(`SELECT * FROM cardio_logs WHERE session_id IN (${ids.map(() => "?").join(",")}) ORDER BY position`)
+    .all(...ids);
+  return rows.map((r) => {
+    const blocks = cardio.filter((c) => c.session_id === r.id).map(toCardio);
+    return {
     id: r.id,
     programId: r.program_id,
     dayId: r.day_id,
@@ -243,14 +412,18 @@ function withSets(rows: SessionRow[]): TrainingSession[] {
     endedAt: r.ended_at,
     notes: r.notes,
     sets: sets.filter((s) => s.session_id === r.id).map(toSet),
-  }));
+    cardio: blocks,
+    cardioMinutes: Math.round(blocks.reduce((n, c) => n + c.durationSeconds, 0) / 6) / 10,
+    };
+  });
 }
 
 export function listSessions(limit = 20, exerciseId?: string): TrainingSession[] {
   const rows = exerciseId
     ? db()
         .query<SessionRow, [string, number]>(
-          "SELECT * FROM training_sessions WHERE id IN (SELECT session_id FROM set_logs WHERE exercise_id = ?) ORDER BY started_at DESC LIMIT ?",
+          `SELECT * FROM training_sessions WHERE id IN (SELECT session_id FROM set_logs WHERE exercise_id = ?1 UNION SELECT session_id FROM cardio_logs WHERE exercise_id = ?1)
+           ORDER BY started_at DESC LIMIT ?2`,
         )
         .all(exerciseId, limit)
     : db().query<SessionRow, [number]>("SELECT * FROM training_sessions ORDER BY started_at DESC LIMIT ?").all(limit);
@@ -278,7 +451,8 @@ function setsBefore(exerciseId: string, before: number): SetLog[] {
  */
 export function saveSession(input: SessionInput): SessionSaved {
   const known = new Set(listExercises().map((e) => e.id));
-  const unknown = [...new Set(input.sets.map((s) => s.exerciseId).filter((id) => !known.has(id)))];
+  const cardio = input.cardio ?? [];
+  const unknown = [...new Set([...input.sets, ...cardio].map((s) => s.exerciseId).filter((id) => !known.has(id)))];
   if (unknown.length) throw new TrainingError(`Unknown exercise ids: ${unknown.join(", ")}. Use ids from list_exercises.`);
   if (input.endedAt < input.startedAt) throw new TrainingError("endedAt is before startedAt.");
 
@@ -309,6 +483,14 @@ export function saveSession(input: SessionInput): SessionSaved {
         s.doneAt,
       ]);
     }
+    cardio.forEach((c, position) => {
+      database.run(
+        "INSERT INTO cardio_logs (session_id, position, exercise_id, duration_seconds, distance_km, level, incline_percent, avg_hr, kcal, done_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [input.id, position, c.exerciseId, Math.round(c.durationSeconds), c.distanceKm, c.level, c.inclinePercent, c.avgHr, c.kcal, c.doneAt],
+      );
+    });
+    // The session is over: the engine's copy of it in progress goes.
+    database.run("DELETE FROM live_sessions WHERE id = ?", [input.id]);
   })();
 
   const session = getSession(input.id)!;
@@ -352,18 +534,76 @@ export function suggestLoad(exerciseId: string, rx: Prescription): LoadSuggestio
   return nextLoad(exerciseId, rx, lastWork, INCREMENT_KG[exercise.equipment]);
 }
 
-/** Suggestions for every exercise of a day, keyed by `ProgramExercise.id`. */
+/** A load the person set by hand wins over progression until the exercise is logged again. */
+function suggestFor(ex: ProgramExercise): LoadSuggestion {
+  const suggestion = suggestLoad(ex.exerciseId, ex);
+  if (ex.weightKg == null) return suggestion;
+  return { ...suggestion, weightKg: ex.weightKg, reps: ex.repMin, reason: "El peso que elegiste para esta vez." };
+}
+
+/** Suggestions for every strength exercise of a day, keyed by `ProgramExercise.id`. Cardio has none. */
 export function suggestDay(day: ProgramDay): Record<string, LoadSuggestion> {
-  return Object.fromEntries(day.exercises.map((ex) => [ex.id, suggestLoad(ex.exerciseId, ex)]));
+  return Object.fromEntries(day.exercises.filter((ex) => ex.kind !== "cardio").map((ex) => [ex.id, suggestFor(ex)]));
+}
+
+/** The active program as it stands today (with "solo hoy" changes), or undefined. */
+export function activeProgramToday(now = Date.now()): Program | undefined {
+  const program = getActiveProgram();
+  return program && withOverrides(program, now);
 }
 
 /** What the phone's Entreno tab opens with. */
 export function activeProgramView(now = Date.now()): ActiveProgramResponse {
-  const program = getActiveProgram();
-  if (!program) return { program: null, nextDayId: null, suggestions: {} };
+  const program = activeProgramToday(now);
+  const extras = { hrZones: hrZones(now), settings: trainingSettings() };
+  if (!program) return { program: null, nextDayId: null, suggestions: {}, ...extras };
   return {
     program,
     nextDayId: nextDay(program, now)?.id ?? null,
     suggestions: Object.assign({}, ...program.days.map(suggestDay)),
+    ...extras,
   };
+}
+
+// ── Preferences and heart-rate zones ─────────────────────────────────────────
+
+export function trainingSettings(): TrainingSettings {
+  const row = db().query<{ value: string }, [string]>("SELECT value FROM training_settings WHERE key = ?").get("preferredEquipment");
+  return { preferredEquipment: row ? (JSON.parse(row.value) as Equipment[]) : [] };
+}
+
+/** Replaces the preferred equipment (most preferred first; duplicates dropped). */
+export function setTrainingSettings(settings: TrainingSettings): TrainingSettings {
+  const preferred = [...new Set(settings.preferredEquipment)];
+  db()
+    .query("INSERT INTO training_settings (key, value) VALUES ('preferredEquipment', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+    .run(JSON.stringify(preferred));
+  return { preferredEquipment: preferred };
+}
+
+/** Zone bands as fractions of heart-rate reserve (or of max without a resting HR). */
+const ZONES: [HrZone, number, number][] = [
+  [1, 0.5, 0.6],
+  [2, 0.6, 0.7],
+  [3, 0.7, 0.8],
+  [4, 0.8, 0.9],
+  [5, 0.9, 1],
+];
+
+/**
+ * Heart-rate zones from the profile's age (max HR by Tanaka: 208 − 0.7 × age)
+ * and, when the phone has synced one in the last two weeks, the resting heart
+ * rate (Karvonen: resting + fraction × (max − resting)). Null without an age.
+ */
+export function hrZones(now = Date.now()): HrZoneRange[] | null {
+  const age = getProfile().age;
+  if (!age) return null;
+  const max = Math.round(208 - 0.7 * age);
+  const today = localDate(new Date(now));
+  const resting = listDailyMetrics(addDays(today, -14), today)
+    .map((m) => m.restingHeartRate)
+    .filter((v): v is number => v != null)
+    .at(-1);
+  const floor = resting ?? 0;
+  return ZONES.map(([zone, lo, hi]) => ({ zone, minBpm: Math.round(floor + lo * (max - floor)), maxBpm: Math.round(floor + hi * (max - floor)) }));
 }
