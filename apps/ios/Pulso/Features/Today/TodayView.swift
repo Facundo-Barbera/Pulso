@@ -2,67 +2,61 @@ import SwiftUI
 
 struct TodayView: View {
     let model: PulsoModel
+    @State private var store = TodayStore.shared
 
     var body: some View {
-        List {
-            Section {
-                Button {
-                    Task { await model.syncHealth() }
-                } label: {
-                    HStack {
-                        Label("Sincronizar desde Salud", systemImage: "heart.text.square")
-                        if model.syncing {
-                            Spacer()
-                            ProgressView()
-                        }
-                    }
-                }
-                .disabled(model.syncing)
-            } footer: {
+        ScrollView {
+            VStack(spacing: 14) {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(Locale(identifier: "es"))).uppercased())
+                    .font(.caption.weight(.semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 if let error = model.error {
-                    Text(error).foregroundStyle(.red)
-                } else if let lastSync = model.lastSync {
-                    Text(lastSync)
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
 
-            Section("Entrenamientos") {
-                if model.workouts.isEmpty {
-                    Text("Todavía nada.").foregroundStyle(.secondary)
-                }
-                ForEach(model.workouts) { workout in
-                    WorkoutRow(workout: workout)
+                ReadinessCard(readiness: store.readiness)
+                ActivityCard(day: store.today)
+                SleepCard(day: store.today)
+                SignalsCard(store: store)
+                WorkoutsCard(workouts: model.workouts)
+
+                if let lastSync = model.lastSync {
+                    Text(lastSync).font(.caption).foregroundStyle(.tertiary)
                 }
             }
+            .padding(.horizontal)
+            .padding(.bottom, 24)
         }
-        .navigationTitle("Hoy")
-        .refreshable { await model.refresh() }
+        .navigationTitle(Self.greeting())
+        .refreshable { await store.sync() }
+        .task { await store.sync() }
         .toolbar {
-            Menu {
-                Button("Olvidar esta Mac", role: .destructive) { model.unpair() }
-            } label: {
-                Image(systemName: "ellipsis.circle")
+            ToolbarItem(placement: .topBarTrailing) {
+                if store.syncing { ProgressView() }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("Sincronizar desde Salud", systemImage: "heart.text.square") { Task { await store.sync() } }
+                        .disabled(store.syncing)
+                    Button("Olvidar esta Mac", role: .destructive) { model.unpair() }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
             }
         }
     }
-}
 
-private struct WorkoutRow: View {
-    let workout: Workout
-
-    var body: some View {
-        let start = Date(timeIntervalSince1970: workout.startedAt / 1000)
-        let minutes = Int((workout.endedAt - workout.startedAt) / 60_000)
-        VStack(alignment: .leading, spacing: 2) {
-            Text(workout.activity.capitalized).font(.headline)
-            Text(details(start: start, minutes: minutes)).font(.subheadline).foregroundStyle(.secondary)
+    static func greeting(at date: Date = .now) -> String {
+        switch Calendar.current.component(.hour, from: date) {
+        case 6..<13: "Buenos días"
+        case 13..<20: "Buenas tardes"
+        default: "Buenas noches"
         }
-    }
-
-    private func details(start: Date, minutes: Int) -> String {
-        var parts = [start.formatted(date: .abbreviated, time: .shortened), "\(minutes) min"]
-        if let energy = workout.energy { parts.append("\(Int(energy)) kcal") }
-        if let distance = workout.distance { parts.append(String(format: "%.2f km", distance / 1000)) }
-        return parts.joined(separator: " · ")
     }
 }
