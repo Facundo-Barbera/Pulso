@@ -8,6 +8,12 @@ struct TrainingView: View {
     @State private var showLive = false
     /// nil follows the day the engine says is next.
     @State private var selectedDayId: String?
+    @State private var editingDay: ProgramDay?
+    @State private var swapping: SwapRequest?
+    @State private var resetting: ProgramDay?
+    @State private var showPreferences = false
+    /// Bumped when a quick swap lands, for the haptic.
+    @State private var swapped = 0
 
     private var selectedDay: ProgramDay? { store.program?.day(selectedDayId ?? store.nextDay?.id) }
 
@@ -24,7 +30,16 @@ struct TrainingView: View {
                         suggestions: store.suggestions,
                         records: TrainingPlan.recentRecords(store.sessions),
                         weightKg: store.bodyWeightKg,
-                        selectedId: $selectedDayId
+                        selectedId: $selectedDayId,
+                        actions: DayActions(
+                            edit: { editingDay = $0 },
+                            swap: { day, exercise in
+                                // Today's day (or one already changed for today) swaps for today; others for good.
+                                let today = day.overridden == true || day.id == store.nextDay?.id
+                                swapping = SwapRequest(dayId: day.id, exercise: exercise, initialScope: today ? .today : .always)
+                            },
+                            reset: { resetting = $0 }
+                        )
                     )
                     if !store.sessions.isEmpty {
                         RecentSessions(sessions: store.sessions)
@@ -47,6 +62,18 @@ struct TrainingView: View {
         }
         .navigationTitle("Entreno")
         .navigationDestination(for: ExerciseRoute.self) { ExerciseDetailView(exerciseId: $0.exerciseId, name: $0.name) }
+        .toolbar {
+            if store.program != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu("Opciones", systemImage: "gearshape") {
+                        if let day = selectedDay {
+                            Button("Editar \(day.name)", systemImage: "slider.horizontal.3") { editingDay = day }
+                        }
+                        Button("Equipo preferido", systemImage: "gearshape.2") { showPreferences = true }
+                    }
+                }
+            }
+        }
         .refreshable { await load() }
         .task { await load() }
         .fullScreenCover(isPresented: $showLive, onDismiss: finishIfRequested) {
@@ -56,6 +83,40 @@ struct TrainingView: View {
         }
         // Reads the store, not the closure's value: records arrive after the sheet opens.
         .sheet(item: $store.summary) { opened in SessionSummaryView(summary: store.summary ?? opened) }
+        .sheet(item: $editingDay) { day in
+            DayEditorView(day: day, suggestions: store.suggestions, hrZones: store.hrZones)
+        }
+        .sheet(item: $swapping) { request in
+            SwapExerciseSheet(exerciseId: request.exercise.exerciseId, name: request.exercise.exerciseName, initialScope: request.initialScope) { library, scope in
+                swap(request, to: library, scope: scope)
+            }
+        }
+        .sheet(isPresented: $showPreferences) { TrainingPreferencesView() }
+        .confirmationDialog(
+            "¿Volver al día del programa?",
+            isPresented: Binding(get: { resetting != nil }, set: { if !$0 { resetting = nil } }),
+            titleVisibility: .visible,
+            presenting: resetting
+        ) { day in
+            Button("Restablecer \(day.name)", role: .destructive) { Task { await store.resetDay(day.id) } }
+        } message: { _ in
+            Text("Se quitan los cambios de hoy y vuelve la rutina del programa.")
+        }
+        .sensoryFeedback(.success, trigger: swapped)
+    }
+
+    /// The quick "Cambiar" on a plan row: the day as it is, with that one exercise replaced.
+    private func swap(_ request: SwapRequest, to library: LibraryExercise, scope: EditScope) {
+        guard let day = store.program?.days.first(where: { $0.id == request.dayId }) else { return }
+        let list = day.exercises.map { $0.id == request.exercise.id ? $0.swapped(to: library) : $0 }
+        Task {
+            do {
+                try await store.saveDay(day.id, scope: scope, exercises: list.map(\.editInput))
+                swapped += 1
+            } catch {
+                model.handle(error)
+            }
+        }
     }
 
     /// The program, then each exercise's guide and thumbnail (and the next day's
@@ -88,6 +149,22 @@ private extension TrainingProgram {
     func day(_ id: String?) -> ProgramDay? { days.first { $0.id == id } ?? days.first }
 }
 
+/// A plan row's quick "Cambiar".
+private struct SwapRequest: Identifiable {
+    var dayId: String
+    var exercise: ProgramExercise
+    var initialScope: EditScope
+
+    var id: String { exercise.id }
+}
+
+/// What the selected day offers: edit it, swap one exercise, drop today's changes.
+private struct DayActions {
+    var edit: (ProgramDay) -> Void = { _ in }
+    var swap: (ProgramDay, ProgramExercise) -> Void = { _, _ in }
+    var reset: (ProgramDay) -> Void = { _ in }
+}
+
 // MARK: - Plan
 
 /// Header, the day tabs and the selected day. Swiping the day sideways moves to the next or previous one.
@@ -98,6 +175,7 @@ private struct ProgramPlan: View {
     let records: Set<String>
     let weightKg: Double?
     @Binding var selectedId: String?
+    var actions = DayActions()
     @State private var edge: Edge = .trailing
 
     private var selected: ProgramDay? { program.day(selectedId ?? nextDayId) }
@@ -108,7 +186,7 @@ private struct ProgramPlan: View {
             PlanHeader(program: program)
             DayTabs(days: program.days, selectedId: selected?.id, select: select)
             if let day = selected {
-                DayPlan(day: day, isNext: day.id == nextDayId, suggestions: suggestions, records: records, weightKg: weightKg)
+                DayPlan(day: day, isNext: day.id == nextDayId, suggestions: suggestions, records: records, weightKg: weightKg, actions: actions)
                     .id(day.id)
                     .transition(.asymmetric(
                         insertion: .move(edge: edge).combined(with: .opacity),
@@ -212,6 +290,7 @@ private struct DayPlan: View {
     let suggestions: [String: LoadSuggestion]
     let records: Set<String>
     let weightKg: Double?
+    let actions: DayActions
 
     /// 1 = Monday … 7 = Sunday, like `ProgramDay.weekday`.
     private var isoWeekdayToday: Int { (Calendar.current.component(.weekday, from: .now) + 5) % 7 + 1 }
@@ -239,25 +318,64 @@ private struct DayPlan: View {
                 }
             }
 
+            if day.overridden == true {
+                TodayChangesBar { actions.reset(day) }
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
+            }
+
             DayStats(day: day, weightKg: weightKg)
 
             if day.exercises.isEmpty {
                 Card {
                     Label("Día sin ejercicios", systemImage: "figure.cooldown")
                         .foregroundStyle(.secondary)
+                    Button("Añadir ejercicios", systemImage: "plus") { actions.edit(day) }
+                        .buttonStyle(.glass)
+                        .tint(Theme.training)
                 }
             } else {
-                Card {
-                    VStack(spacing: 0) {
-                        ForEach(day.exercises) { ex in
-                            PlanExerciseRow(exercise: ex, suggestion: suggestions[ex.id], record: records.contains(ex.exerciseId))
-                            if ex.id != day.exercises.last?.id { Divider().padding(.leading, 68) }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        CardTitle(text: "Ejercicios", systemImage: "list.bullet")
+                        Spacer(minLength: 8)
+                        Button("Editar", systemImage: "slider.horizontal.3") { actions.edit(day) }
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .tint(Theme.training)
+                    }
+                    Card {
+                        VStack(spacing: 0) {
+                            ForEach(day.exercises) { ex in
+                                PlanExerciseRow(exercise: ex, suggestion: suggestions[ex.id], record: records.contains(ex.exerciseId))
+                                    .contextMenu {
+                                        Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") { actions.swap(day, ex) }
+                                        Button("Editar día", systemImage: "slider.horizontal.3") { actions.edit(day) }
+                                    }
+                                if ex.id != day.exercises.last?.id { Divider().padding(.leading, 68) }
+                            }
                         }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.snappy, value: day.overridden)
+    }
+}
+
+/// "Cambios solo para hoy" with the way back to the program's own day.
+private struct TodayChangesBar: View {
+    let reset: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            GlassChip("Cambios solo para hoy", systemImage: "clock.arrow.circlepath", tint: Theme.training)
+            Button("Restablecer", action: reset)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.training)
+                .buttonStyle(.borderless)
+        }
     }
 }
 
@@ -316,7 +434,8 @@ private struct PlanExerciseRow: View {
                                 .accessibilityLabel("Récord reciente")
                         }
                     }
-                    Text(TrainingPlan.prescription(exercise, weightKg: suggestion?.weightKg))
+                    // A load set by hand wins over the suggestion; cardio shows its target.
+                    Text(exercise.isCardio ? exercise.prescription : TrainingPlan.prescription(exercise, weightKg: exercise.weightKg ?? suggestion?.weightKg))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -544,7 +663,7 @@ private extension TrainingProgram {
                     ex("pe2", "peso-muerto-rumano", "Peso muerto rumano", 3, 8, 10, rest: 150),
                     ex("pe3", "curl-femoral", "Curl femoral tumbado", 3, 10, 12, rest: 90),
                     ex("pe4", "elevacion-gemelos", "Elevación de gemelos de pie en máquina", 4, 12, 12, rest: 60),
-                ]),
+                ], overridden: true),
                 ProgramDay(id: "d3", name: "Torso B", focus: nil, weekday: 5, exercises: [ex("pc", "dominadas", "Dominadas lastradas", 4, 5, 7)]),
                 ProgramDay(id: "d4", name: "Pierna B", focus: "Sentadilla", weekday: nil, exercises: []),
             ]
