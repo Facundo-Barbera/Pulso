@@ -13,7 +13,6 @@ const patchSchema = z
     heightCm: profileShape.heightCm.nullable(),
     goals: profileShape.goals.nullable(),
     experience: profileShape.experience.nullable(),
-    schedule: profileShape.schedule.nullable(),
   })
   .partial()
   .strict();

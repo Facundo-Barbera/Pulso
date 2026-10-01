@@ -6,7 +6,7 @@ import { POST as inbodyPOST } from "@/app/api/web/cuerpo/inbody/route";
 import { PATCH as profilePATCH } from "@/app/api/web/cuerpo/profile/route";
 import { DELETE as scanDELETE } from "@/app/api/web/cuerpo/scans/[id]/route";
 import { POST as scanPOST } from "@/app/api/web/cuerpo/scans/route";
-import { bodyChanges, bodyOverview } from "./cuerpo";
+import { bodyOverview, bodyReadings } from "./cuerpo";
 
 const BASE = "http://127.0.0.1:3281/api/web/cuerpo";
 const DAY = 86_400_000;
@@ -15,17 +15,20 @@ const send = (method: string, body: unknown) => ({ method, headers: { "content-t
 /** Invented values. */
 const CSV = "Date,Weight(kg),Skeletal Muscle Mass(kg),Body Fat Mass(kg),Percent Body Fat(%)\n20250301080000,84.0,33.5,21.0,25.0\n20250315080000,83.1,33.8,20.0,24.1\nnot-a-date,80,30,20,25\n";
 
-test("changes compare with the newest earlier scan that has each metric", () => {
+test("each metric reads from its newest scan and compares with the one before that measured it", () => {
   const scan = (measuredAt: number, values: Partial<BodyScan>) => ({ measuredAt, weight: null, skeletalMuscleMass: null, bodyFatMass: null, percentBodyFat: null, ...values }) as BodyScan;
-  const changes = bodyChanges([
+  const readings = bodyReadings([
+    scan(4 * DAY, { weight: 79.5 }),
     scan(3 * DAY, { weight: 80, percentBodyFat: 20 }),
     scan(2 * DAY, { weight: 81 }),
-    scan(1 * DAY, { weight: 82, percentBodyFat: 21.5 }),
+    scan(1 * DAY, { weight: 82, percentBodyFat: 21.5, skeletalMuscleMass: 34 }),
   ]);
-  expect(changes.weight).toEqual({ delta: -1, since: 2 * DAY });
-  expect(changes.percentBodyFat).toEqual({ delta: -1.5, since: DAY });
-  expect(changes.skeletalMuscleMass).toBeNull();
-  expect(bodyChanges([]).weight).toBeNull();
+  expect(readings.weight).toEqual({ value: 79.5, at: 4 * DAY, delta: -0.5, since: 3 * DAY });
+  // The weight-only entry does not hide fat: it still reads from day 3.
+  expect(readings.percentBodyFat).toEqual({ value: 20, at: 3 * DAY, delta: -1.5, since: DAY });
+  expect(readings.skeletalMuscleMass).toEqual({ value: 34, at: DAY, delta: null, since: null });
+  expect(readings.bodyFatMass).toBeNull();
+  expect(bodyReadings([]).weight).toBeNull();
 });
 
 test("a CSV import lands in the overview, newest first, without raw payloads; re-importing does not duplicate", async () => {
