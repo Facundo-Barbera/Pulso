@@ -6,7 +6,7 @@ import type { AgentStreamEvent } from "@pulso/contract";
 import { dataDir } from "../db";
 import { encodeEvent, eventStream } from "./ndjson";
 import { updateProfile } from "./profile";
-import { recapPrompt, startTurn, subscribe, type QueryFn } from "./runner";
+import { recapPrompt, startTurn, stopTurn, subscribe, type QueryFn } from "./runner";
 import { addMessage, createThread, getMessage, sdkSessionOf, setSdkSession } from "./threads";
 import { removeWorkspace } from "./workspace";
 
@@ -163,4 +163,36 @@ test("a turn that fails without output ends with an error event and an error mes
 
 test("recapPrompt with no history is just the message", () => {
   expect(recapPrompt([], "hola")).toBe("hola");
+});
+
+/** Writes some text, then waits for an abort like the SDK does. */
+function stoppableQuery(text: string): QueryFn {
+  return (({ options }: { options: Options }) =>
+    (async function* () {
+      yield blockStart({ type: "text", text: "" });
+      if (text) yield textDelta(text);
+      while (!options.abortController!.signal.aborted) await Bun.sleep(1);
+      throw new Error("Claude Code process aborted by user");
+    })()) as unknown as QueryFn;
+}
+
+test("stopping a turn keeps what it wrote and ends it as done", async () => {
+  const thread = createThread();
+  const { turn, done } = startTurn(thread.id, "hola", stoppableQuery("Empiezo por"));
+  await Bun.sleep(5);
+  expect(stopTurn(thread.id)).toBe(true);
+  await done;
+  expect(turn.events.at(-1)).toEqual({ type: "done", messageId: turn.messageId });
+  expect(getMessage(turn.messageId)).toMatchObject({ status: "done", text: "Empiezo por", error: null });
+  expect(stopTurn(thread.id)).toBe(false);
+});
+
+test("stopping before any text says so instead of reporting a failure", async () => {
+  const thread = createThread();
+  const { turn, done } = startTurn(thread.id, "hola", stoppableQuery(""));
+  await Bun.sleep(5);
+  stopTurn(thread.id);
+  await done;
+  expect(turn.events.at(-1)).toEqual({ type: "error", message: "Detuviste la respuesta." });
+  expect(getMessage(turn.messageId)).toMatchObject({ status: "error", error: "Detuviste la respuesta." });
 });
