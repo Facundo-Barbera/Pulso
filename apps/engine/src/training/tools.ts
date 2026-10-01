@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape } from "./inputs";
+import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape, supersetIdShape } from "./inputs";
 import { describeLive, editLive, getLive, type LiveOp } from "./live";
 import { idsWithMedia } from "./media";
 import { similarExercises } from "./similar";
@@ -56,6 +56,9 @@ const liveOp = z.discriminatedUnion("op", [
     reps: z.number().int().min(1).max(50).optional().describe("Reps for the sets not done yet."),
     restSeconds: z.number().int().min(0).max(600).optional(),
     cardio: cardioTargetShape.optional().describe("Cardio blocks: the target fields to change."),
+    supersetId: supersetIdShape.describe(
+      'Pair it into a superset: give the same label (e.g. "a") to 2+ consecutive strength exercises, one update each, in the same call. null takes it out of its superset.',
+    ),
   }),
   z.object({
     op: z.literal("add"),
@@ -67,6 +70,7 @@ const liveOp = z.discriminatedUnion("op", [
     restSeconds: z.number().int().min(0).max(600).optional(),
     weightKg: z.number().min(0).max(1000).optional(),
     cardio: cardioTargetShape.optional().describe("For a cardio exercise; defaults to 15 min in zone 2."),
+    supersetId: supersetIdShape.describe("Join the superset of its neighbours with this label (add it right next to them)."),
   }),
   z.object({ op: z.literal("remove"), exercise: exerciseRef }),
   z.object({ op: z.literal("skip"), exercise: exerciseRef }),

@@ -186,7 +186,7 @@ test("the Coach sees and changes the session in progress", async () => {
       name: "Torso",
       startedAt: Date.now(),
       exercises: [
-        { id: "x", exerciseId: "press-banca", name: "Press de banca", equipment: "barbell", kind: "compound", repMin: 6, repMax: 8, targetRpe: null, targetRir: null, restSeconds: 120, notes: null, hint: null, sets: [{ id: "s", weightKg: 60, reps: 8, rpe: null, doneAt: null }], cardio: null, cardioLog: null, skipped: false },
+        { id: "x", exerciseId: "press-banca", name: "Press de banca", equipment: "barbell", kind: "compound", repMin: 6, repMax: 8, targetRpe: null, targetRir: null, restSeconds: 120, notes: null, hint: null, sets: [{ id: "s", weightKg: 60, reps: 8, rpe: null, doneAt: null }], cardio: null, cardioLog: null, skipped: false, supersetId: null },
       ],
       focus: 0,
       restStartedAt: null,

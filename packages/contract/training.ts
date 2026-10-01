@@ -300,6 +300,13 @@ export type LiveExercise = {
   cardioLog: CardioLog | null;
   /** Passed over today; stays in the list, greyed. */
   skipped: boolean;
+  /**
+   * Same rule as `ProgramExercise.supersetId`: copied from the program exercise
+   * when the session starts, kept by a swap, normalized on every write (phone or
+   * Coach). Skipping an exercise takes it out of its superset. Old copies without
+   * it read as null.
+   */
+  supersetId: string | null;
 };
 
 /**

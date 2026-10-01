@@ -129,6 +129,7 @@ export const liveSessionInput = z.object({
           cardio: cardioTargetShape.nullish().transform((v) => v ?? null),
           cardioLog: cardioLog.nullish().transform((v) => v ?? null),
           skipped: z.boolean().default(false),
+          supersetId: supersetIdShape.transform((v) => v ?? null),
         }),
       )
       .max(40),

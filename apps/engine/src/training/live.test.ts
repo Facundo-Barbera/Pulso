@@ -3,6 +3,7 @@ import type { LiveExercise, LiveSession } from "@pulso/contract";
 import { providerEnv, resetProvider } from "../agent/provider";
 import { agentOptions } from "../agent/runner";
 import { getThread } from "../agent/threads";
+import { db } from "../db";
 import { clearLive, describeLive, editLive, getLive, putLive } from "./live";
 import { liveCoachMode, liveCoachThread } from "./live-coach";
 import { saveSession, setTrainingSettings, TrainingError } from "./store";
@@ -26,6 +27,7 @@ const strength = (id: string, exerciseId: string, name: string, sets: number, do
   cardio: null,
   cardioLog: null,
   skipped: false,
+  supersetId: null,
 });
 
 const session = (overrides: Partial<LiveSession> = {}): LiveSession => ({
@@ -159,6 +161,74 @@ test("one Coach thread per session, in the short workout mode with only the gym 
   saveSession({ id: "live-1", name: "Pierna A", startedAt: T0, endedAt: T0 + 3_600_000, sets: [] });
   expect(getLive()).toBeNull();
   expect(liveCoachMode(threadId)).toBeUndefined();
+});
+
+const paired = (ids: (string | null)[], base = session()): LiveSession => ({ ...base, exercises: base.exercises.map((e, i) => ({ ...e, supersetId: ids[i] ?? null })) });
+const supersets = (s: LiveSession) => s.exercises.map((e) => e.supersetId);
+
+test("supersets: the phone's copy keeps them, normalized; an old copy without them reads as null", () => {
+  // Starting a session on the phone copies the program's ids; a lone label is cleared.
+  const put = putLive(paired([null, "a", "a"]), 0, T0);
+  expect(put.ok && supersets(put.session)).toEqual([null, "a", "a"]);
+  expect(putLive(paired(["b", null, "a"]), 1, T0 + 1).ok).toBe(true);
+  expect(supersets(getLive()!)).toEqual([null, null, null]);
+
+  const { supersetId: _, ...legacy } = strength("old", "sentadilla", "Sentadilla", 2);
+  db().run("UPDATE live_sessions SET data = ?", [JSON.stringify({ ...session(), exercises: [legacy] })]);
+  expect(getLive()!.exercises[0]!.supersetId).toBeNull();
+  expect(describeLive(getLive()!, T0)).toContain("1. Sentadilla");
+});
+
+test("supersets: a swap keeps the swapped-in exercise in the pair, with or without sets done", () => {
+  putLive(paired(["a", "a", null]), 0, T0);
+  // Sentadilla has a set done: it stays (done) and the new one joins the superset after it.
+  let s = editLive([{ op: "swap", exercise: 1, toExerciseId: "prensa" }], T0 + 1).session;
+  expect(s.exercises.map((e) => [e.exerciseId, e.supersetId])).toEqual([
+    ["sentadilla", "a"],
+    ["prensa", "a"],
+    ["peso-muerto-rumano", "a"],
+    ["zancadas", null],
+  ]);
+  s = editLive([{ op: "swap", exercise: "peso-muerto-rumano", toExerciseId: "curl-femoral-sentado" }], T0 + 2).session;
+  expect(s.exercises[2]).toMatchObject({ id: "b", exerciseId: "curl-femoral-sentado", supersetId: "a" });
+});
+
+test("supersets: the Coach pairs and unpairs; a move, remove or skip that splits a pair clears it", () => {
+  putLive(session(), 0, T0);
+  let { session: s, changes } = editLive([{ op: "update", exercise: 2, supersetId: "a" }, { op: "update", exercise: 3, supersetId: "a" }], T0 + 1);
+  expect(supersets(s)).toEqual([null, "a", "a"]);
+  expect(changes[0]).toEndWith("· superserie a");
+  expect(describeLive(s, T0)).toContain("0/3 series · superserie a");
+
+  // Moving one member away leaves both alone: cleared.
+  s = editLive([{ op: "move", exercise: 3, to: 1 }], T0 + 2).session;
+  expect(s.exercises.map((e) => [e.id, e.supersetId])).toEqual([
+    ["c", null],
+    ["a", null],
+    ["b", null],
+  ]);
+
+  // Pairing apart, or cardio, is refused (all or nothing).
+  expect(() => editLive([{ op: "update", exercise: 1, supersetId: "x" }, { op: "update", exercise: 3, supersetId: "x" }])).toThrow(/consecutive/);
+  expect(getLive()!.version).toBe(3);
+  s = editLive([{ op: "update", exercise: 2, supersetId: "x" }, { op: "update", exercise: 3, supersetId: "x" }, { op: "add", exerciseId: "extension-cuadriceps", supersetId: "x" }], T0 + 3).session;
+  expect(supersets(s)).toEqual([null, "x", "x", "x"]);
+  expect(() => editLive([{ op: "add", exerciseId: "eliptica", position: 2, supersetId: "x" }])).toThrow(/cardio/);
+
+  // Removing the middle one keeps a pair of the other two; skipping one more leaves one alone.
+  s = editLive([{ op: "remove", exercise: 3 }], T0 + 4).session;
+  expect(s.exercises.map((e) => [e.exerciseId, e.supersetId])).toEqual([
+    ["zancadas", null],
+    ["sentadilla", "x"],
+    ["extension-cuadriceps", "x"],
+  ]);
+  s = editLive([{ op: "skip", exercise: 3 }], T0 + 5).session;
+  expect(supersets(s)).toEqual([null, null, null]);
+
+  s = editLive([{ op: "update", exercise: 1, supersetId: "y" }, { op: "update", exercise: 2, supersetId: "y" }], T0 + 6).session;
+  expect(supersets(s)).toEqual(["y", "y", null]);
+  s = editLive([{ op: "update", exercise: 1, supersetId: null }], T0 + 7).session;
+  expect(supersets(s)).toEqual([null, null, null]);
 });
 
 test("describeLive shows cardio targets and status", () => {
