@@ -44,6 +44,8 @@ test("the SDK session id is stored per thread, and deleting a thread drops its m
 });
 
 test("the profile merges patches, clears nulls and rejects nonsense", () => {
+  // Test files share one database; start from an empty profile.
+  updateProfile(Object.fromEntries(Object.keys(getProfile()).map((key) => [key, null])));
   expect(getProfile()).toEqual({});
   updateProfile({ age: 34, goals: "Ganar fuerza" });
   updateProfile({ injuries: "Rodilla izquierda", goals: null });

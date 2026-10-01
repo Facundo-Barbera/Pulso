@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { Profile } from "@pulso/contract";
+import { dataDir } from "../db";
 
 /**
  * Appended to Claude Code's system prompt for every Coach turn. Stable text, so
@@ -30,11 +30,9 @@ You are the personal health coach inside Pulso, an app that holds one person's t
 - No extreme deficits, crash diets, or supplement and drug advice beyond well-established basics (creatine, caffeine, vitamin D when deficient, protein powder).
 `.trim();
 
-const ROOT = path.join(os.tmpdir(), "pulso-agent");
-
-/** The thread's scratch directory. Ephemeral: it may vanish at any time; SQLite is the durable state. */
+/** The thread's scratch directory. Disposable: it may vanish at any time; SQLite is the durable state. */
 export function workspaceDir(threadId: string): string {
-  return path.join(ROOT, threadId);
+  return path.join(dataDir(), "threads", threadId);
 }
 
 const FIELDS: [keyof Profile, string][] = [
@@ -56,7 +54,9 @@ export function claudeMd(profile: Profile, now = new Date()): string {
   return [
     "# Pulso Coach",
     "",
-    "This directory is your private scratchpad for this conversation. You may keep notes here, but it can be wiped at any time: anything the person should keep belongs in their profile (update_profile) or their Pulso data.",
+    "Your working directory is a private scratchpad for this conversation. You may keep notes there, but it can be wiped at any time: anything the person should keep belongs in their profile (update_profile) or their Pulso data.",
+    "",
+    "You know nothing about the person beyond this conversation, their profile and what the pulso tools return. Never look for them anywhere else.",
     "",
     `Today is ${now.toISOString().slice(0, 10)}.`,
     "",
@@ -66,11 +66,11 @@ export function claudeMd(profile: Profile, now = new Date()): string {
   ].join("\n");
 }
 
-/** Creates the directory if it vanished and refreshes its CLAUDE.md. Returns the path. */
-export function prepareWorkspace(threadId: string, profile: Profile): string {
+/** Creates the directory if it vanished and writes this turn's CLAUDE.md into it. Returns the path. */
+export function prepareWorkspace(threadId: string, context: string): string {
   const dir = workspaceDir(threadId);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "CLAUDE.md"), claudeMd(profile));
+  fs.writeFileSync(path.join(dir, "CLAUDE.md"), context);
   return dir;
 }
 

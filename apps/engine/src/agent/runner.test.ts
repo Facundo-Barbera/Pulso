@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentStreamEvent } from "@pulso/contract";
+import { dataDir } from "../db";
 import { encodeEvent, eventStream } from "./ndjson";
+import { updateProfile } from "./profile";
 import { recapPrompt, startTurn, subscribe, type QueryFn } from "./runner";
 import { addMessage, createThread, getMessage, sdkSessionOf, setSdkSession } from "./threads";
+import { removeWorkspace } from "./workspace";
 
 const SESSION = "11111111-1111-1111-1111-111111111111";
 
@@ -80,7 +85,26 @@ test("a turn streams text and tool activity as NDJSON and is saved", async () =>
   expect(options.resume).toBeUndefined();
   expect(options.tools).not.toContain("Bash");
   expect(options.permissionMode).toBe("dontAsk");
-  expect(options.cwd).toContain(thread.id);
+});
+
+test("each thread works in a disposable dir under the data dir, with nothing from this Mac", async () => {
+  const thread = createThread();
+  updateProfile({ goals: "Correr 10 km" });
+  const calls: Call[] = [];
+  await startTurn(thread.id, "hola", fakeQuery([TURN], calls)).done;
+
+  const { options } = calls[0]!;
+  expect(options.cwd).toBe(path.join(dataDir(), "threads", thread.id));
+  expect(fs.readFileSync(path.join(options.cwd!, "CLAUDE.md"), "utf8")).toContain("Correr 10 km");
+  expect(options.systemPrompt).toMatchObject({ append: expect.stringContaining("Correr 10 km") });
+  expect(options.settingSources).toEqual([]);
+  expect(options.env).toMatchObject({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
+
+  removeWorkspace(thread.id);
+  expect(fs.existsSync(options.cwd!)).toBe(false);
+  // A vanished dir is recreated on the next turn.
+  await startTurn(thread.id, "otra vez", fakeQuery([TURN])).done;
+  expect(fs.existsSync(path.join(options.cwd!, "CLAUDE.md"))).toBe(true);
 });
 
 test("the turn finishes and is saved after the phone hangs up", async () => {

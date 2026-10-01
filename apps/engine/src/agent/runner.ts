@@ -4,7 +4,7 @@ import { hasOutput, newTurnState, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
 import { TOOLS } from "./registry";
 import { addMessage, failStreamingMessages, listMessages, sdkSessionOf, setSdkSession, updateMessage } from "./threads";
-import { insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
+import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
 
 export type QueryFn = typeof query;
 
@@ -52,15 +52,19 @@ const confineTo =
     return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Only files inside this conversation's directory are available." } };
   };
 
-export function agentOptions(cwd: string, resume: string | undefined, abortController: AbortController): Options {
+/**
+ * A clean start: the agent knows only the conversation, the profile and the
+ * pulso tools. No settings, hooks, plugins, skills, CLAUDE.md files or memory
+ * from this Mac are loaded; the thread's own CLAUDE.md goes in the system prompt.
+ */
+export function agentOptions(cwd: string, context: string, resume: string | undefined, abortController: AbortController): Options {
   return {
     cwd,
     resume,
     abortController,
     model: process.env.PULSO_AGENT_MODEL || undefined,
-    systemPrompt: { type: "preset", preset: "claude_code", append: PERSONA },
-    // Only the workspace's CLAUDE.md: none of this Mac's user settings, hooks, plugins or skills.
-    settingSources: ["project"],
+    systemPrompt: { type: "preset", preset: "claude_code", append: `${PERSONA}\n\n${context}` },
+    settingSources: [],
     skills: [],
     strictMcpConfig: true,
     mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: TOOLS }) },
@@ -72,7 +76,12 @@ export function agentOptions(cwd: string, resume: string | undefined, abortContr
     hooks: { PreToolUse: [{ matcher: "Read|Write", hooks: [confineTo(cwd)] }] },
     includePartialMessages: true,
     maxTurns: 40,
-    env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "pulso-coach/0.0.0" },
+    env: {
+      ...process.env,
+      CLAUDE_AGENT_SDK_CLIENT_APP: "pulso-coach/0.0.0",
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+    },
   };
 }
 
@@ -124,9 +133,10 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: Q
 
   const attempt = async (prompt: string, resume: string | undefined) => {
     state = newTurnState();
-    const cwd = prepareWorkspace(turn.threadId, getProfile());
+    const context = claudeMd(getProfile());
+    const cwd = prepareWorkspace(turn.threadId, context);
     try {
-      for await (const message of run({ prompt, options: agentOptions(cwd, resume, abortController) })) {
+      for await (const message of run({ prompt, options: agentOptions(cwd, context, resume, abortController) })) {
         const known = state.sessionId;
         const events = translate(message, state);
         if (state.sessionId && state.sessionId !== known) setSdkSession(turn.threadId, state.sessionId);
