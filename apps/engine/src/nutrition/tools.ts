@@ -1,11 +1,12 @@
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import type { MealInput } from "@pulso/contract";
 import { z } from "zod";
-import { adjustDayPlan } from "./adjust";
 import { lookupBarcode, normalizeBarcode } from "./barcode";
 import { parseTime } from "./dates";
 import { dateString, mealShape, planItem, planShape, slot, targetsShape, toMealInput } from "./inputs";
 import { addDays, createPlan, dailySummary, deleteMeal, getTargets, listMeals, localDate, logMeals, planForDay, setTargets } from "./store";
+import { planTools } from "./plan-tools";
+import { setHorizonDays } from "./slots";
 import { getWaterSettings, logWater, setWaterSettings, toMl, waterDay } from "./water";
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
@@ -16,7 +17,7 @@ const timeDescription = "Local time it happened, 'HH:MM' 24 h (e.g. '14:30'), or
 export const nutritionTools = [
   tool(
     "log_meal",
-    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Snacks and drinks between meals go in slot 'snack', at any hour, as many per day as happen. Drinks other than water never count toward the water goal. Set `at` to the time they said ('a las 14:30' → '14:30'), `description` to their own words, and `offPlan: true` when it was not what the active plan had for that meal (or there is no plan). For a planned item eaten as written pass its planItemId from get_active_plan. Returns the stored entries with their ids. If there is an active plan, call adjust_day_plan right after.",
+    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Snacks and drinks between meals go in slot 'snack', at any hour, as many per day as happen. Drinks other than water never count toward the water goal. Set `at` to the time they said ('a las 14:30' → '14:30'), `description` to their own words, and `offPlan: true` when it was not what the active plan had for that meal (or there is no plan). For a planned item eaten as written pass its planItemId from get_active_plan. When there is an active plan, pass slotId (from get_diet_horizon) for the planned meal this eats or, with offPlan, replaces (a Vualá instead of breakfast → the breakfast slot); a snack on top of the plan has none. Returns the stored entries with their ids and slotId. Then decide by magnitude whether to compensate (rebalance_day, spread_deviation, or nothing).",
     {
       items: z
         .array(z.object({ ...mealShape, planItemId: z.string().optional().describe("The active plan's item this fulfils, from get_active_plan") }))
@@ -27,8 +28,9 @@ export const nutritionTools = [
       date: dateString.optional().describe("Local day (YYYY-MM-DD) the meal counts toward. Defaults to the day of `at`, i.e. today"),
       description: z.string().trim().max(300).optional().describe("The person's own words for the meal, in Spanish, e.g. 'Big Mac y papas medianas en McDonald's'"),
       offPlan: z.boolean().optional().describe("true when this was not the active plan's meal: eaten instead of it or on top of it"),
+      slotId: z.string().optional().describe("The plan slot (get_diet_horizon) this meal eats as planned, or replaces when offPlan"),
     },
-    async ({ items, at, date, description, offPlan }) => {
+    async ({ items, at, date, description, offPlan, slotId }) => {
       const when = at ? parseTime(at, date) : null;
       if (at && !when) return fail(`Unreadable time '${at}': use 'HH:MM' or ISO 8601`);
       const meal: MealInput[] = [];
@@ -42,31 +44,10 @@ export const nutritionTools = [
           date: item.date ?? when?.date ?? date,
           note: description ?? null,
           offPlan: offPlan ?? false,
+          slotId: slotId ?? null,
         });
       }
       return json(logMeals(meal, "agent"));
-    },
-  ),
-  tool(
-    "adjust_day_plan",
-    "After the person eats something, rewrite what is LEFT of today's diet plan so the day still lands on target. It works out what was eaten versus the daily targets, which planned meals are still ahead, and scales their portions by one factor (never below 50 % nor above 150 %), rounding to sensible portions. Pass `swaps` to replace a remaining meal with something better suited (e.g. a lighter, high-protein dinner after a heavy lunch): give each swap's items with quantity and total macros; everything else is scaled around them. Each call replaces the day's adjustment; earlier swaps for meals still ahead are kept unless you pass new ones or resetSwaps. The plan itself never changes. Returns the adjusted meals, the factor, eaten/targets/projected macros (kcal, grams) and a one-line Spanish summary; the Dieta tab shows it with an 'Ajustado por el Coach' badge.",
-    {
-      date: dateString.optional().describe("Local day (YYYY-MM-DD). Defaults to today"),
-      swaps: z
-        .array(z.object({ slot, name: z.string().max(120).nullish().describe("Dish name"), items: z.array(planItem).min(1).max(15) }))
-        .max(6)
-        .optional()
-        .describe("Replacement meals for some remaining slots; macros are totals per item"),
-      slots: z.array(slot).max(6).optional().describe("Override which planned slots are still ahead, only if the default (slots with nothing logged after the last meal) is wrong"),
-      note: z.string().trim().max(200).optional().describe("Why, in one short Spanish sentence, shown in Dieta"),
-      resetSwaps: z.boolean().optional().describe("Drop earlier swaps and go back to scaled plan meals"),
-    },
-    async ({ date, ...options }) => {
-      try {
-        return json(adjustDayPlan(date ?? localDate(), options));
-      } catch (error) {
-        return fail((error as Error).message);
-      }
     },
   ),
   tool(
@@ -106,13 +87,17 @@ export const nutritionTools = [
   ),
   tool(
     "create_diet_plan",
-    "Create a complete diet plan in one call: days → meals (by slot) → items with quantity and the macros for that quantity (kcal, grams). Days repeat cyclically from startsOn. By default it becomes the active plan, replacing the previous one. Item macros should add up close to the daily targets; call set_targets too if they change.",
+    "Create a complete NEW diet plan in one call: days → meals (by slot) → items with quantity and the macros for that quantity (kcal, grams). Days repeat cyclically from startsOn and are laid out as dated slots over the horizon (horizonDays, 7 or 14). By default it becomes the active plan, replacing the previous one and its dated changes. Only when the person asks for a new plan: for anything that went differently (a skipped meal, a missing ingredient, no time to cook) use the small changes (skip_slot, replace_slot, ingredient_unavailable, no_time_to_cook, move_slot…). Item macros should add up close to the daily targets; call set_targets too if they change.",
     planShape,
-    async (plan) => json(createPlan(plan)),
+    async ({ horizonDays, ...input }) => {
+      const plan = createPlan(input);
+      if (horizonDays) setHorizonDays(plan.id, horizonDays);
+      return json(plan);
+    },
   ),
   tool(
     "get_active_plan",
-    "The active diet plan, plus which plan day applies on the given local day (default today), which of its items are already logged as eaten, and the day's adjustment (the remaining meals as adjust_day_plan rewrote them) if any. null if there is no active plan.",
+    "The active diet plan, plus the plan as written for the given local day (default today; from today on it is the dated plan with its changes, skipped and replaced meals left out), which of its items are already logged as eaten, and the day's adjustment (the remaining meals as rebalance_day rewrote them) if any. null if there is no active plan. get_diet_horizon has the dated slots with ids and status.",
     { date: dateString.optional() },
     async ({ date }) => json(planForDay(date ?? localDate())),
   ),
@@ -161,4 +146,5 @@ export const nutritionTools = [
     { goalMl: z.number().min(250).max(10000).nullable() },
     async ({ goalMl }) => json(setWaterSettings({ ...getWaterSettings(), goalMl })),
   ),
+  ...planTools,
 ];

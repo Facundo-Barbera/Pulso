@@ -21,7 +21,9 @@ test("the persona logs reported meals at their time, looks values up and adapts 
   expect(PERSONA).toContain("search the web for its nutritional values BEFORE logging, without asking");
   expect(PERSONA).toContain("USDA FoodData Central, then Open Food Facts");
   expect(PERSONA).toContain("Cite where the numbers came from in one short line");
-  expect(PERSONA).toContain("call adjust_day_plan right after logging");
-  expect(PERSONA).toContain("Never compensate with extreme cuts");
+  expect(PERSONA).toContain("tie the log to the planned meal");
+  expect(PERSONA).toContain("Compensate by magnitude");
+  expect(PERSONA).toContain("never extreme days");
+  expect(PERSONA).toContain("never regenerate it because of one meal");
   expect(PERSONA).toContain("log_water in the unit they used");
 });

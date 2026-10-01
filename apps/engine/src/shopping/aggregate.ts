@@ -1,6 +1,5 @@
 import type { DietPlan, ShoppingCategory } from "@pulso/contract";
-import { addDays } from "../nutrition/dates";
-import { planDayIndex } from "../nutrition/store";
+import { addDays, daysBetween } from "../nutrition/dates";
 
 /** Lowercase, no accents. ñ folds to n: fine for matching. */
 export const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -120,24 +119,30 @@ export function buyable(quantity: number, unit: string, key = ""): string {
 /** One line of the list as the plan asks for it. `key` is name + unit: what can't be converted stays a separate line. */
 export type Needed = { key: string; name: string; quantity: number; unit: string; amount: string; category: ShoppingCategory };
 
-/** Walks the plan's days in rotation over `days` days from `from`, adding up each ingredient. */
-export function aggregate(plan: Pick<DietPlan, "startsOn" | "days">, from: string, days: number): Needed[] {
+/** Something the plan uses: a plan item or a recipe ingredient, in its own unit. */
+export type Line = { name: string; quantity: number; unit: string };
+
+/** The list key and base amount of one line, or null when it has no name or amount. */
+export function lineKey(line: Line): { key: string; quantity: number; unit: string } | null {
+  const ingredient = nameKey(line.name.trim());
+  if (!ingredient || !(line.quantity > 0)) return null;
+  const base = baseUnit(ingredient, line.quantity, String(line.unit ?? ""));
+  return { key: `${ingredient}|${base.unit}`, ...base };
+}
+
+/** Adds up lines by ingredient, rounded up to buyable amounts. */
+export function aggregateLines(lines: Line[]): Needed[] {
   const byKey = new Map<string, Omit<Needed, "amount" | "category">>();
-  for (let i = 0; i < days && plan.days.length; i++) {
-    const day = plan.days[planDayIndex(plan, addDays(from, i))]!;
-    for (const item of day.meals.flatMap((m) => m.items)) {
-      const name = item.name.trim();
-      const ingredient = nameKey(name);
-      if (!ingredient || !(item.quantity > 0)) continue;
-      const base = baseUnit(ingredient, item.quantity, String(item.unit ?? ""));
-      const key = `${ingredient}|${base.unit}`;
-      const seen = byKey.get(key);
-      if (!seen) byKey.set(key, { key, name, ...base });
-      else {
-        seen.quantity += base.quantity;
-        // The shortest wording reads best on a list: "Pollo" over "Pollo a la plancha".
-        if (name.length < seen.name.length) seen.name = name;
-      }
+  for (const line of lines) {
+    const base = lineKey(line);
+    if (!base) continue;
+    const name = line.name.trim();
+    const seen = byKey.get(base.key);
+    if (!seen) byKey.set(base.key, { key: base.key, name, quantity: base.quantity, unit: base.unit });
+    else {
+      seen.quantity += base.quantity;
+      // The shortest wording reads best on a list: "Pollo" over "Pollo a la plancha".
+      if (name.length < seen.name.length) seen.name = name;
     }
   }
   return [...byKey.values()].map((n) => ({
@@ -146,4 +151,15 @@ export function aggregate(plan: Pick<DietPlan, "startsOn" | "days">, from: strin
     amount: buyable(n.quantity, n.unit, n.key),
     category: classify(n.name),
   }));
+}
+
+/** Walks the plan's days in rotation over `days` days from `from`, adding up each ingredient. */
+export function aggregate(plan: Pick<DietPlan, "startsOn" | "days">, from: string, days: number): Needed[] {
+  const n = plan.days.length;
+  const lines: Line[] = [];
+  for (let i = 0; i < days && n; i++) {
+    const day = plan.days[(((daysBetween(plan.startsOn, addDays(from, i)) % n) + n) % n)]!;
+    lines.push(...day.meals.flatMap((m) => m.items));
+  }
+  return aggregateLines(lines);
 }

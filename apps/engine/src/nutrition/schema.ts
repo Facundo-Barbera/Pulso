@@ -78,4 +78,77 @@ export const NUTRITION_SCHEMA = `
     glass_ml REAL NOT NULL,
     bottle_ml REAL NOT NULL
   );
+  -- The dated plan (see DIET.md). A plan_days row marks a date as materialized from the
+  -- rotation, so a date whose slots were all moved away is never refilled; it also holds
+  -- the kcal shifted onto that day when a deviation is spread.
+  CREATE TABLE IF NOT EXISTS plan_days (
+    plan_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    label TEXT NOT NULL,
+    shift_kcal REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (plan_id, date)
+  );
+  CREATE TABLE IF NOT EXISTS plan_horizons (
+    plan_id TEXT PRIMARY KEY,
+    days INTEGER NOT NULL
+  );
+  -- status is planned, skipped or replaced; eaten is derived from meal_slot_links.
+  CREATE TABLE IF NOT EXISTS plan_slots (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT,
+    recipe_id TEXT,
+    prep_id TEXT,
+    portions REAL,
+    items_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    note TEXT,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS plan_slots_date ON plan_slots (plan_id, date, position);
+  CREATE INDEX IF NOT EXISTS plan_slots_prep ON plan_slots (prep_id);
+  CREATE TABLE IF NOT EXISTS meal_slot_links (
+    entry_id TEXT PRIMARY KEY REFERENCES meal_entries (id) ON DELETE CASCADE,
+    slot_id TEXT NOT NULL,
+    role TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS meal_slot_links_slot ON meal_slot_links (slot_id);
+  CREATE TABLE IF NOT EXISTS recipes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    servings REAL NOT NULL,
+    prep_minutes INTEGER NOT NULL,
+    batch INTEGER NOT NULL DEFAULT 0,
+    ingredients_json TEXT NOT NULL,
+    steps TEXT,
+    variant_of TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS prep_batches (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    recipe_id TEXT NOT NULL,
+    cook_date TEXT NOT NULL,
+    portions REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    cooked_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  -- before_json holds the touched rows as they were, so undo can put them back.
+  CREATE TABLE IF NOT EXISTS plan_revisions (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    op TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    dates_json TEXT NOT NULL,
+    prep_ids_json TEXT NOT NULL,
+    before_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    undone_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS plan_revisions_plan ON plan_revisions (plan_id, created_at);
 `;

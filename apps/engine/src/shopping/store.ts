@@ -10,8 +10,13 @@ import {
 import { z } from "zod";
 import { db } from "../db";
 import { addDays, localDate } from "../nutrition/dates";
+import { planLines } from "../nutrition/horizon";
 import { activePlan } from "../nutrition/store";
-import { aggregate, classify } from "./aggregate";
+import { aggregateLines, buyable, classify } from "./aggregate";
+import { ShoppingError } from "./errors";
+import { freeStock, releaseListLinks, stockFromList, unstockFromList } from "./pantry";
+
+export { ShoppingError };
 
 // Validation shared by the phone routes and the agent tools.
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -25,15 +30,6 @@ export const itemInputSchema = z.object({ name: text(80), amount: optText(30), c
 export const itemPatchSchema = z
   .object({ name: text(80), amount: optText(30), category, checked: z.boolean(), pantry: z.boolean(), note: optText(200) })
   .partial();
-
-export class ShoppingError extends Error {
-  constructor(
-    public code: "not_found" | "no_plan",
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 type ItemRow = {
   id: string;
@@ -107,15 +103,37 @@ export function getShoppingList(): ShoppingList {
 }
 
 /**
- * Rebuilds the plan items for `days` days from `from` (default today). Manual items
- * stay as they are; a plan ingredient that was already on the list keeps its id,
- * name, aisle, bought and "ya tengo" marks, and only its amount is recomputed.
+ * What the dated plan still needs over [from, from + days): the meals not yet
+ * eaten, skipped or replaced, and the batches still to cook, minus what the
+ * pantry already has (beyond what this list's own ticks stocked).
+ */
+function needed(from: string, days: number) {
+  const plan = activePlan()!;
+  const have = freeStock();
+  return aggregateLines(planLines(plan, from, addDays(from, days - 1))).flatMap((n) => {
+    const left = Math.round((n.quantity - (have.get(n.key) ?? 0)) * 10) / 10;
+    return left > 0 ? [{ ...n, quantity: left, amount: buyable(left, n.unit, n.key) }] : [];
+  });
+}
+
+/**
+ * Rebuilds the plan items for `days` days from `from` (default today), from the
+ * dated plan minus the pantry. Manual items stay as they are; regenerating the
+ * same range keeps a plan ingredient's id, name, aisle, bought and "ya tengo"
+ * marks, and only recomputes its amount. A list for another start date is a new
+ * trip: what the last one's ticks stocked becomes pantry and the marks reset.
  */
 export function generateShoppingList(input: unknown): ShoppingList {
   const { days, from = localDate() } = generateSchema.parse(input ?? {});
   const plan = activePlan();
   if (!plan) throw new ShoppingError("no_plan", "There is no active diet plan to build the list from.");
-  const needed = aggregate(plan, from, days);
+  const meta = db().query<ListRow, []>("SELECT * FROM shopping_list WHERE id = 1").get();
+  if (meta && meta.from_date !== from) {
+    db().transaction(() => {
+      releaseListLinks();
+      db().query("UPDATE shopping_items SET checked = 0, pantry = 0 WHERE source = 'plan'").run();
+    })();
+  }
   const now = Date.now();
   const existing = new Map(
     db()
@@ -123,10 +141,11 @@ export function generateShoppingList(input: unknown): ShoppingList {
       .all()
       .map((r) => [r.key, r]),
   );
+  const need = needed(from, days);
   db().transaction(() => {
-    const keep = new Set(needed.map((n) => n.key));
+    const keep = new Set(need.map((n) => n.key));
     for (const [key, row] of existing) if (!keep.has(key!)) db().query("DELETE FROM shopping_items WHERE id = ?").run(row.id);
-    for (const n of needed) {
+    for (const n of need) {
       const row = existing.get(n.key);
       if (row) {
         db()
@@ -147,6 +166,15 @@ export function generateShoppingList(input: unknown): ShoppingList {
   return getShoppingList();
 }
 
+/** Rebuilds the list for the same range after the plan changed. False when there is no list for the active plan. */
+export function refreshShoppingList(): boolean {
+  const meta = db().query<ListRow, []>("SELECT * FROM shopping_list WHERE id = 1").get();
+  const plan = activePlan();
+  if (!meta || !plan || meta.plan_id !== plan.id) return false;
+  generateShoppingList({ from: meta.from_date, days: meta.days });
+  return true;
+}
+
 /** Adds the person's own items. The aisle is guessed from the name unless given. */
 export function addShoppingItems(inputs: unknown[]): ShoppingList {
   const parsed = inputs.map((i) => itemInputSchema.parse(i));
@@ -163,7 +191,7 @@ export function addShoppingItems(inputs: unknown[]): ShoppingList {
   return getShoppingList();
 }
 
-/** Changes only the given fields. Bought and "ya tengo" exclude each other: setting one clears the other. */
+/** Changes only the given fields. Bought and "ya tengo" exclude each other: setting one clears the other. Either puts the item in the pantry. */
 export function updateShoppingItem(id: string, input: unknown): ShoppingList {
   patchItem(id, input);
   return getShoppingList();
@@ -179,6 +207,9 @@ function patchItem(id: string, input: unknown): void {
   db()
     .query("UPDATE shopping_items SET name = ?, amount = ?, category = ?, checked = ?, pantry = ?, note = ?, updated_at = ? WHERE id = ?")
     .run(item.name, item.amount, item.category, item.checked ? 1 : 0, item.pantry ? 1 : 0, item.note, Date.now(), id);
+  if (patch.checked === undefined && patch.pantry === undefined) return;
+  if (item.checked || item.pantry) stockFromList({ id, key: row.key, name: item.name, quantity: row.quantity, unit: row.unit, category: item.category });
+  else unstockFromList(id);
 }
 
 /** Marks items bought (or not). An unknown id fails the whole call, so nothing changes. */

@@ -15,7 +15,7 @@ import {
 import { shoppingTools } from "./tools";
 
 beforeEach(() => {
-  db().exec("DELETE FROM shopping_items; DELETE FROM shopping_list; DELETE FROM diet_plans;");
+  db().exec("DELETE FROM shopping_items; DELETE FROM shopping_list; DELETE FROM diet_plans; DELETE FROM pantry_items;");
 });
 
 const macros = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 };

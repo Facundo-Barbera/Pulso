@@ -69,6 +69,8 @@ export type MealEntry = Macros & Stimulants & {
   barcode: string | null;
   /** The plan item this entry fulfils, when logged from the plan. */
   planItemId: string | null;
+  /** The dated plan slot this entry eats (as planned) or replaces (when offPlan). */
+  slotId: string | null;
   /** True when the person ate it instead of, or on top of, the active plan. */
   offPlan: boolean;
   /** The person's own words for the meal, e.g. "Big Mac y papas medianas". */
@@ -79,7 +81,7 @@ export type MealEntry = Macros & Stimulants & {
 
 export type MealInput = Omit<
   MealEntry,
-  "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "offPlan" | "note" | "measure" | "caffeineMg" | "alcoholG"
+  "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "slotId" | "offPlan" | "note" | "measure" | "caffeineMg" | "alcoholG"
 > & {
   /** Defaults to now. */
   eatenAt?: number;
@@ -88,6 +90,7 @@ export type MealInput = Omit<
   source?: MealSource;
   barcode?: string | null;
   planItemId?: string | null;
+  slotId?: string | null;
   offPlan?: boolean;
   note?: string | null;
   measure?: Measure | null;

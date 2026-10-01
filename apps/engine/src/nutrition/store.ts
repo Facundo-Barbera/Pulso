@@ -18,18 +18,11 @@ import type {
 } from "@pulso/contract";
 import { db } from "../db";
 import { addDays, DAY_MS, daysBetween, localDate } from "./dates";
+import { add, MACRO_KEYS, round, zero } from "./macros";
+import { dayRow, itemsOf, linkEntry, materialize, planDayIndex, slotRows } from "./slots";
 import { waterDay } from "./water";
 
-export { addDays, localDate };
-
-export const MACRO_KEYS = ["kcal", "protein", "carbs", "fat", "fiber"] as const;
-
-export const zero = (): Macros => ({ kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
-export const round = (m: Macros): Macros => Object.fromEntries(MACRO_KEYS.map((k) => [k, Math.round(m[k] * 10) / 10])) as Macros;
-export function add(into: Macros, m: Macros): Macros {
-  for (const k of MACRO_KEYS) into[k] += m[k];
-  return into;
-}
+export { add, addDays, localDate, MACRO_KEYS, planDayIndex, round, zero };
 
 // --- Meal log ---
 
@@ -49,6 +42,7 @@ type MealRow = {
   source: MealSource;
   barcode: string | null;
   plan_item_id: string | null;
+  slot_id: string | null;
   off_plan: number | null;
   note: string | null;
   measure_amount: number | null;
@@ -77,6 +71,7 @@ const toEntry = (r: MealRow): MealEntry => ({
   source: r.source,
   barcode: r.barcode,
   planItemId: r.plan_item_id,
+  slotId: r.slot_id,
   offPlan: r.off_plan === 1,
   note: r.note,
   measure: measureOf(r),
@@ -85,8 +80,9 @@ const toEntry = (r: MealRow): MealEntry => ({
 });
 
 // Every meal_entries read joins its side tables.
-const ENTRY_SELECT = `SELECT m.*, c.off_plan, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g
-  FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id LEFT JOIN meal_entry_detail d ON d.entry_id = m.id`;
+const ENTRY_SELECT = `SELECT m.*, c.off_plan, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g, l.slot_id
+  FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id LEFT JOIN meal_entry_detail d ON d.entry_id = m.id
+  LEFT JOIN meal_slot_links l ON l.entry_id = m.id`;
 
 export function logMeal(input: MealInput, source: MealSource = input.source ?? "manual"): MealEntry {
   const eatenAt = Math.round(input.eatenAt ?? Date.now());
@@ -106,6 +102,7 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
     source,
     barcode: input.barcode ?? null,
     planItemId: input.planItemId ?? null,
+    slotId: null,
     offPlan: input.offPlan ?? false,
     note: input.note?.trim() || null,
     measure: input.measure ?? null,
@@ -129,6 +126,7 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
       .query("INSERT INTO meal_entry_detail (entry_id, measure_amount, measure_unit, measure_size, caffeine_mg, alcohol_g) VALUES (?, ?, ?, ?, ?, ?)")
       .run(entry.id, entry.measure?.amount ?? null, entry.measure?.unit ?? null, entry.measure?.size ?? null, entry.caffeineMg, entry.alcoholG);
   }
+  entry.slotId = linkEntry({ ...entry, slotId: input.slotId });
   return entry;
 }
 
@@ -273,10 +271,19 @@ export function activePlan(): DietPlan | null {
   return row ? toPlan(row) : null;
 }
 
-/** Which plan day applies on `date`: days cycle from `startsOn`. */
-export function planDayIndex(plan: Pick<DietPlan, "startsOn" | "days">, date: string): number {
-  const n = plan.days.length;
-  return ((daysBetween(plan.startsOn, date) % n) + n) % n;
+/**
+ * The plan as written for `date`. From today on the date is laid out as dated
+ * slots (see slots.ts) and the day is read from them, skipped and replaced
+ * meals left out; earlier dates never laid out read the rotation.
+ */
+export function plannedDay(plan: DietPlan, date: string): PlanDay {
+  if (date >= localDate()) materialize(plan, date);
+  const marker = dayRow(plan.id, date);
+  if (!marker) return plan.days[planDayIndex(plan, date)]!;
+  const meals = slotRows(plan.id, date)
+    .filter((r) => r.status === "planned")
+    .map((r) => ({ slot: r.slot, name: r.name, items: itemsOf(r) }));
+  return { label: marker.label, meals };
 }
 
 export function planForDay(date: string, meals: MealEntry[] = listMeals(date)): PlanForDay | null {
@@ -284,7 +291,7 @@ export function planForDay(date: string, meals: MealEntry[] = listMeals(date)): 
   if (!plan) return null;
   const dayIndex = planDayIndex(plan, date);
   const eaten = new Set(meals.map((m) => m.planItemId).filter((id): id is string => id !== null));
-  const day = plan.days[dayIndex]!;
+  const day = plannedDay(plan, date);
   const adjustment = getAdjustment(date, plan.id);
   const ids = new Set([day, adjustment ?? { meals: [] }].flatMap((d) => d.meals.flatMap((m) => m.items.map((i) => i.id))));
   const eatenItemIds = [...ids].filter((id) => eaten.has(id));
@@ -293,12 +300,13 @@ export function planForDay(date: string, meals: MealEntry[] = listMeals(date)): 
 
 /**
  * Logs a plan item as eaten on `date`: the day's adjusted portion when the Coach
- * adjusted it, else the active plan's. Undefined when the item is in neither.
+ * adjusted it, else the dated plan's, else the rotation's. Undefined when the item is in none.
  */
 export function eatPlanItem(itemId: string, date = localDate(), eatenAt?: number): MealEntry | undefined {
   const plan = activePlan();
   const adjusted = plan ? getAdjustment(date, plan.id) : null;
-  for (const day of [...(adjusted ? [adjusted] : []), ...(plan?.days ?? [])]) {
+  const dated = plan ? plannedDay(plan, date) : null;
+  for (const day of [...(adjusted ? [adjusted] : []), ...(dated ? [dated] : []), ...(plan?.days ?? [])]) {
     for (const meal of day.meals) {
       const item = meal.items.find((i) => i.id === itemId);
       if (!item) continue;

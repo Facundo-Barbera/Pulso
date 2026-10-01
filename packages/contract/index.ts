@@ -58,3 +58,4 @@ export * from "./coach";
 export * from "./mcp";
 export * from "./calendar";
 export * from "./shopping";
+export * from "./diet";
