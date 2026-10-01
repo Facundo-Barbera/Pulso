@@ -1,4 +1,5 @@
-import type { ExercisePerformance, LoadSuggestion, PersonalRecord, SetLog } from "@pulso/contract";
+import type { ExercisePerformance, LoadSuggestion, PersonalRecord, SetLog, WeightUnit } from "@pulso/contract";
+import { formatWeight, fromUnit, snap, stepDown, stepUp } from "./units";
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -50,13 +51,16 @@ export type Prescription = { sets: number; repMin: number; repMax: number };
  * Double progression from the last session's work on an exercise. Every
  * prescribed set at the top weight reached `repMax` → add `incrementKg` and
  * drop to `repMin`. Every set at that weight short of `repMin` → back off one
- * step. Otherwise keep the weight and chase one more rep.
+ * step. Otherwise keep the weight and chase one more rep. Loads land on the
+ * steps of the exercise's `unit` (a pound machine moves by 5 lb) and a change
+ * always moves at least one step.
  */
 export function nextLoad(
   exerciseId: string,
   rx: Prescription,
   last: { at: number; sets: Pick<SetLog, "weightKg" | "reps">[] } | null,
   incrementKg: number,
+  unit: WeightUnit = "kg",
 ): LoadSuggestion {
   if (!last || last.sets.length === 0) {
     return { exerciseId, weightKg: null, reps: rx.repMin, reason: "Primera vez: elige un peso que puedas mover bien.", lastSessionAt: null };
@@ -65,20 +69,25 @@ export function nextLoad(
   const atTop = last.sets.filter((s) => s.weightKg === top);
   const minReps = Math.min(...atTop.map((s) => s.reps));
   const base = { exerciseId, lastSessionAt: last.at };
+  const now = snap(top, unit);
+  const w = (kg: number) => formatWeight(kg, unit);
 
   if (atTop.length >= rx.sets && minReps >= rx.repMax) {
     if (incrementKg === 0) {
       return { ...base, weightKg: top, reps: rx.repMax + 1, reason: `Hiciste ${rx.sets} series de ${rx.repMax}: haz una repetición más o añade peso.` };
     }
-    const weightKg = round1(top + incrementKg);
-    return { ...base, weightKg, reps: rx.repMin, reason: `Hiciste ${rx.sets} series de ${rx.repMax} con ${top} kg: sube a ${weightKg} kg.` };
+    const up = snap(top + incrementKg, unit);
+    const weightKg = fromUnit(up > now ? up : stepUp(now, unit), unit);
+    return { ...base, weightKg, reps: rx.repMin, reason: `Hiciste ${rx.sets} series de ${rx.repMax} con ${w(top)}: sube a ${w(weightKg)}.` };
   }
   if (minReps < rx.repMin && incrementKg > 0 && top > incrementKg) {
-    const weightKg = round1(top - incrementKg);
-    return { ...base, weightKg, reps: rx.repMin, reason: `Con ${top} kg no llegaste a ${rx.repMin} repeticiones: baja a ${weightKg} kg.` };
+    const down = snap(top - incrementKg, unit);
+    const weightKg = fromUnit(down < now ? down : stepDown(now, unit), unit);
+    return { ...base, weightKg, reps: rx.repMin, reason: `Con ${w(top)} no llegaste a ${rx.repMin} repeticiones: baja a ${w(weightKg)}.` };
   }
   const reps = Math.min(rx.repMax, Math.max(rx.repMin, minReps + 1));
-  return { ...base, weightKg: top, reps, reason: `Repite ${top} kg e intenta ${reps} repeticiones en cada serie.` };
+  const weightKg = fromUnit(now, unit);
+  return { ...base, weightKg, reps, reason: `Repite ${w(weightKg)} e intenta ${reps} repeticiones en cada serie.` };
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bests, e1rm, nextLoad, performance, recordsFor } from "./math";
+import { fromUnit, snap } from "./units";
 
 describe("e1rm (Epley)", () => {
   test("estimates from weight and reps", () => {
@@ -77,6 +78,31 @@ describe("nextLoad (double progression)", () => {
 
   test("bodyweight at the top adds a rep instead of load", () => {
     expect(nextLoad("dominadas", rx, last([[0, 10], [0, 10], [0, 10]]), 0)).toMatchObject({ weightKg: 0, reps: 11 });
+  });
+
+  describe("in pounds", () => {
+    const lb = (n: number) => fromUnit(n, "lb");
+
+    test("an increment lands on 5 lb plates and speaks in pounds", () => {
+      const s = nextLoad("x", rx, last([[lb(45), 10], [lb(45), 10], [lb(45), 10]]), 5, "lb");
+      expect(snap(s.weightKg!, "lb")).toBe(55); // 45 lb + 5 kg = 56 lb
+      expect(s.weightKg).toBe(lb(55));
+      expect(s.reason).toBe("Hiciste 3 series de 10 con 45 lb: sube a 55 lb.");
+    });
+
+    test("an increment smaller than a pound step still moves one step", () => {
+      expect(nextLoad("x", rx, last([[lb(50), 10], [lb(50), 10], [lb(50), 10]]), 2, "lb").weightKg).toBe(lb(55));
+      expect(nextLoad("x", rx, last([[lb(50), 4], [lb(50), 4], [lb(50), 4]]), 2, "lb").weightKg).toBe(lb(45));
+    });
+
+    test("keeping the load keeps the exact pounds lifted; kilos logged before go to the nearest plate", () => {
+      expect(nextLoad("x", rx, last([[lb(70), 9], [lb(70), 8], [lb(70), 8]]), 5, "lb")).toMatchObject({ weightKg: lb(70), reason: "Repite 70 lb e intenta 9 repeticiones en cada serie." });
+      expect(nextLoad("x", rx, last([[20, 9], [20, 8], [20, 8]]), 5, "lb").weightKg).toBe(lb(45));
+    });
+
+    test("kilos still move by the kilo increment", () => {
+      expect(nextLoad("x", rx, last([[14, 10], [14, 10], [14, 10]]), 2, "kg").weightKg).toBe(16);
+    });
   });
 });
 
