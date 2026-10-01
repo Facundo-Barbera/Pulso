@@ -41,6 +41,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee tus entrenamientos de Salud para guardarlos en tu Mac.
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso no escribe en Salud por ahora.
+        INFOPLIST_KEY_NSCameraUsageDescription: Pulso usa la cámara para escanear códigos de barras y el QR de InBody.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         CODE_SIGN_ENTITLEMENTS: Config/Pulso.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
