@@ -126,15 +126,15 @@ struct LiveCoachChat: View {
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .top, spacing: 0) { header }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        // Bars, not insets: the sheet's glass shows through and text scrolling under them blurs out.
+        .safeAreaBar(edge: .top, spacing: 0) { header }
+        .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 10) {
                 quickPrompts
                 composer
             }
             .padding(.top, 8)
             .padding(.bottom, 8)
-            .background(.background)
         }
         .onChange(of: messages.count) { withAnimation(.snappy) { position.scrollTo(edge: .bottom) } }
         .onChange(of: messages.last?.text) { position.scrollTo(edge: .bottom) }
@@ -161,7 +161,6 @@ struct LiveCoachChat: View {
         .padding(.horizontal, Theme.padding)
         .padding(.top, 18)
         .padding(.bottom, 8)
-        .background(.background)
     }
 
     private var quickPrompts: some View {

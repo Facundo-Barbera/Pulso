@@ -37,7 +37,7 @@ struct ExercisePickerSheet: View {
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Buscar ejercicio")
-                .safeAreaInset(edge: .top, spacing: 0) { filters }
+                .safeAreaBar(edge: .top, spacing: 0) { filters }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancelar", systemImage: "xmark") { dismiss() }
@@ -152,7 +152,7 @@ struct SwapExerciseSheet: View {
     var body: some View {
         NavigationStack {
             content
-                .safeAreaInset(edge: .top, spacing: 0) { controls }
+                .safeAreaBar(edge: .top, spacing: 0) { controls }
                 .navigationTitle("Cambiar ejercicio")
                 .navigationSubtitle("En lugar de \(name)")
                 .navigationBarTitleDisplayMode(.inline)
@@ -182,6 +182,7 @@ struct SwapExerciseSheet: View {
         case let .failed(message):
             ScrollView {
                 EmptyStateView(systemImage: "wifi.exclamationmark", title: "No pude buscar alternativas", message: message, tint: Theme.training, actionTitle: "Reintentar") {
+                    phase = .loading
                     reloads += 1
                 }
             }

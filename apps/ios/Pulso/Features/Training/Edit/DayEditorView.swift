@@ -77,7 +77,7 @@ struct DayEditorView: View {
             .environment(\.editMode, $editMode)
             .animation(.snappy, value: exercises)
             .sensoryFeedback(.impact(weight: .light), trigger: exercises.map(\.id))
-            .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
+            .safeAreaBar(edge: .bottom, spacing: 0) { saveBar }
             .navigationTitle("Editar día")
             .navigationSubtitle(day.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -166,11 +166,6 @@ struct DayEditorView: View {
         .padding(.horizontal, Theme.padding)
         .padding(.top, 12)
         .padding(.bottom, 8)
-        .background {
-            LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Color(.systemGroupedBackground), location: 0.25)], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-        }
         .sensoryFeedback(.selection, trigger: scope)
         .animation(.snappy, value: scope)
         .animation(.snappy, value: error)
