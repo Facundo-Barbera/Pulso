@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CardioTarget, Exercise, LiveExercise, LiveSession, LiveSet } from "@pulso/contract";
+import type { CardioTarget, Exercise, LiveCardioClock, LiveExercise, LiveSession, LiveSet } from "@pulso/contract";
 import { db } from "../db";
 import { getExercise, listSessions, suggestLoad, TrainingError, unitOf } from "./store";
 import { withSupersets } from "./superset";
@@ -15,9 +15,9 @@ type Row = { id: string; data: string; version: number; thread_id: string | null
 
 const toSession = (r: Row): LiveSession => {
   const data = JSON.parse(r.data) as LiveSession;
-  // Copies stored before supersets have no supersetId.
+  // Copies stored before supersets (or the synced clock) lack those fields.
   const exercises = data.exercises.map((e) => ({ ...e, supersetId: e.supersetId ?? null }));
-  return { ...data, exercises, version: r.version, threadId: r.thread_id, updatedAt: r.updated_at };
+  return { ...data, exercises, cardioClock: data.cardioClock ?? null, version: r.version, threadId: r.thread_id, updatedAt: r.updated_at };
 };
 
 export function getLive(): LiveSession | null {
@@ -102,9 +102,11 @@ export type LiveOp =
   | { op: "remove"; exercise: ExerciseRef }
   | { op: "skip"; exercise: ExerciseRef }
   | { op: "move"; exercise: ExerciseRef; to: number }
-  | { op: "focus"; exercise: ExerciseRef };
+  | { op: "focus"; exercise: ExerciseRef }
+  | { op: "finish_cardio"; exercise: ExerciseRef; reason?: string };
 
-const done = (ex: LiveExercise) => (ex.kind === "cardio" ? ex.cardioLog != null : ex.sets.length > 0 && ex.sets.every((s) => s.doneAt != null));
+// A cardio block cut short is done even before the phone writes its log.
+const done = (ex: LiveExercise) => (ex.kind === "cardio" ? ex.cardioLog != null || ex.cutShort != null : ex.sets.length > 0 && ex.sets.every((s) => s.doneAt != null));
 const pending = (ex: LiveExercise) => !ex.skipped && !done(ex);
 
 function indexOf(session: LiveSession, ref: ExerciseRef): number {
@@ -186,19 +188,38 @@ function refocus(session: LiveSession): void {
   if (next !== -1) session.focus = next;
 }
 
+/** Seconds on a cardio clock at `now`. */
+export function clockSeconds(clock: LiveCardioClock, now: number): number {
+  return clock.accumulatedSeconds + (clock.runningSince == null ? 0 : Math.max(0, (now - clock.runningSince) / 1000));
+}
+
+/**
+ * Before a swap, remove or skip: the exercise's clock stops with it, but time
+ * already on it is never thrown away; finish_cardio keeps it.
+ */
+function releaseClock(session: LiveSession, ex: LiveExercise, now: number): void {
+  const clock = session.cardioClock;
+  if (!clock || clock.exerciseId !== ex.id) return;
+  if (clockSeconds(clock, now) >= 1) {
+    throw new TrainingError(`${ex.name} has ${Math.round(clockSeconds(clock, now) / 60)} min on its running clock: end it with finish_cardio (keeps what was done) before you skip, remove or swap it.`);
+  }
+  session.cardioClock = null;
+}
+
 /** Superset ids the Coach asked for, by live exercise id: checked once all ops ran. */
 type Requested = Map<string, { name: string; supersetId: string | null }>;
 
 const supersetLine = (id: string | null | undefined) => (id === undefined ? "" : id ? ` · superserie ${id}` : " · sin superserie");
 
 /** Applies one change; returns a short Spanish line saying what changed. */
-function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
+function apply(session: LiveSession, op: LiveOp, requested: Requested, now: number): string {
   const list = session.exercises;
   switch (op.op) {
     case "swap": {
       const i = indexOf(session, op.exercise);
       const old = list[i]!;
       const exercise = libraryExercise(op.toExerciseId);
+      releaseClock(session, old, now);
       if ((exercise.kind === "cardio") !== (old.kind === "cardio")) throw new TrainingError("Swap strength for strength and cardio for cardio; use add and remove to change one into the other.");
       const doneSets = old.sets.filter((s) => s.doneAt != null);
       const remaining = Math.max(old.sets.length - doneSets.length, 1);
@@ -267,12 +288,14 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
       const i = indexOf(session, op.exercise);
       const ex = list[i]!;
       if (ex.sets.some((s) => s.doneAt != null) || ex.cardioLog) throw new TrainingError(`${ex.name} already has work logged; skip it instead of removing it.`);
+      releaseClock(session, ex, now);
       list.splice(i, 1);
       if (i < session.focus) session.focus--;
       return `Quitado: ${ex.name}`;
     }
     case "skip": {
       const i = indexOf(session, op.exercise);
+      releaseClock(session, list[i]!, now);
       list[i]!.skipped = true;
       // A skipped exercise leaves its superset; a partner left alone is cleared on write.
       list[i]!.supersetId = null;
@@ -291,6 +314,22 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested): string {
       session.focus = indexOf(session, op.exercise);
       return `Ahora: ${list[session.focus]!.name}`;
     }
+    case "finish_cardio": {
+      const i = indexOf(session, op.exercise);
+      const ex = list[i]!;
+      if (ex.kind !== "cardio") throw new TrainingError(`${ex.name} is not cardio; finish_cardio ends a cardio block early.`);
+      if (ex.cardioLog) throw new TrainingError(`${ex.name} is already done.`);
+      ex.cutShort = { at: now, reason: op.reason?.trim() || null };
+      ex.skipped = false;
+      const clock = session.cardioClock?.exerciseId === ex.id ? session.cardioClock : null;
+      const planned = ex.cardio?.durationMinutes;
+      if (!clock) return `${ex.name}: terminado antes${planned ? ` (de ${planned} min)` : ""}`;
+      // The phone, adopting this, times it to `at` with its own clock and keeps what was typed.
+      const seconds = Math.round(clockSeconds(clock, now));
+      ex.cardioLog = { exerciseId: ex.exerciseId, durationSeconds: seconds, distanceKm: null, level: null, inclinePercent: null, avgHr: null, kcal: null, doneAt: now };
+      session.cardioClock = null;
+      return `${ex.name}: terminado antes, ${Math.round(seconds / 60)}${planned ? ` de ${planned}` : ""} min`;
+    }
   }
 }
 
@@ -304,7 +343,7 @@ export function editLive(ops: LiveOp[], now = Date.now()): { session: LiveSessio
   if (!current) throw new TrainingError("There is no session in progress. Changes to the program go through edit_program_day or swap_program_exercise.");
   const session: LiveSession = structuredClone(current);
   const requested: Requested = new Map();
-  const changes = ops.map((op) => apply(session, op, requested));
+  const changes = ops.map((op) => apply(session, op, requested, now));
   if (session.exercises.length === 0) throw new TrainingError("A session needs at least one exercise.");
   // Normalized once all ops ran, so pairing two exercises can take two updates;
   // a move, remove or skip that leaves a member alone or apart clears it.
@@ -336,7 +375,10 @@ export function describeLive(session: LiveSession, now = Date.now()): string {
     if (ex.kind === "cardio") {
       const t = ex.cardio;
       const target = [t?.durationMinutes ? `${t.durationMinutes} min` : null, t?.zone ? `Z${t.zone}` : null, t?.intervals ? `${t.intervals.rounds}×${t.intervals.workSeconds}s/${t.intervals.restSeconds}s` : null].filter(Boolean).join(" · ");
-      return `${i + 1}. ${ex.name} [${ex.exerciseId}] — cardio ${target}${status}${mark}`;
+      const clock = session.cardioClock?.exerciseId === ex.id ? session.cardioClock : null;
+      const timing = clock ? ` · ${clock.runningSince == null ? "en pausa" : "en marcha"} ${Math.floor(clockSeconds(clock, now) / 60)} min` : "";
+      const cut = ex.cutShort ? ` (terminado antes${ex.cardioLog ? `, ${Math.round(ex.cardioLog.durationSeconds / 60)} min` : ""})` : "";
+      return `${i + 1}. ${ex.name} [${ex.exerciseId}] — cardio ${target}${timing}${cut || status}${mark}`;
     }
     const doneSets = ex.sets.filter((s) => s.doneAt != null).length;
     const weight = ex.sets.find((s) => s.doneAt == null) ?? ex.sets.at(-1);

@@ -242,3 +242,47 @@ test("describeLive shows cardio targets and status", () => {
   const text = describeLive(session({ exercises: [cardio], focus: 0 }), T0);
   expect(text).toContain("1. Elíptica [eliptica] — cardio 20 min · Z2 · 6×60s/60s ← en pantalla");
 });
+
+const bike = (id = "k"): LiveExercise => ({
+  ...strength(id, "bici-estatica", "Bici estática", 0),
+  equipment: "machine",
+  kind: "cardio",
+  modality: "bike",
+  repMin: 1,
+  repMax: 1,
+  restSeconds: 0,
+  sets: [],
+  cardio: { durationMinutes: 20, zone: 2 },
+});
+
+test("finish_cardio ends a running block with the minutes done, from the synced clock", () => {
+  // 10 min done before a pause, running again for 2 more.
+  const clock = { exerciseId: "k", runningSince: T0 + 20 * 60_000, accumulatedSeconds: 600 };
+  putLive(session({ exercises: [bike(), strength("b", "peso-muerto-rumano", "Peso muerto rumano", 3)], focus: 0, cardioClock: clock }), 0, T0);
+  expect(describeLive(getLive()!, T0 + 22 * 60_000)).toContain("cardio 20 min · Z2 · en marcha 12 min");
+
+  // Skipping or swapping a block with time on its clock would lose it: refused, nothing changes.
+  expect(() => editLive([{ op: "skip", exercise: 1 }], T0 + 22 * 60_000)).toThrow(/finish_cardio/);
+  expect(() => editLive([{ op: "swap", exercise: 1, toExerciseId: "eliptica" }], T0 + 22 * 60_000)).toThrow(/finish_cardio/);
+
+  const { session: s, changes } = editLive([{ op: "finish_cardio", exercise: "current", reason: "Cansado" }], T0 + 22 * 60_000);
+  expect(changes).toEqual(["Bici estática: terminado antes, 12 de 20 min"]);
+  expect(s.exercises[0]).toMatchObject({ skipped: false, cutShort: { at: T0 + 22 * 60_000, reason: "Cansado" }, cardioLog: { exerciseId: "bici-estatica", durationSeconds: 720, doneAt: T0 + 22 * 60_000 } });
+  expect(s.cardioClock).toBeNull();
+  // Done, so the focus moves on.
+  expect(s.focus).toBe(1);
+  expect(describeLive(s, T0 + 23 * 60_000)).toContain("1. Bici estática [bici-estatica] — cardio 20 min · Z2 (terminado antes, 12 min)");
+  expect(() => editLive([{ op: "finish_cardio", exercise: 1 }])).toThrow(/already done/);
+  expect(() => editLive([{ op: "finish_cardio", exercise: 2 }])).toThrow(/not cardio/);
+});
+
+test("without a synced clock, finish_cardio marks the block for the phone to time", () => {
+  putLive(session({ exercises: [bike(), bike("k2")], focus: 0 }), 0, T0);
+  const { session: s, changes } = editLive([{ op: "finish_cardio", exercise: 1 }], T0 + 5 * 60_000);
+  expect(changes).toEqual(["Bici estática: terminado antes (de 20 min)"]);
+  expect(s.exercises[0]).toMatchObject({ cutShort: { at: T0 + 5 * 60_000, reason: null }, cardioLog: null });
+  expect(s.focus).toBe(1);
+  // A clock started but still at zero just stops with a skip.
+  putLive({ ...s, cardioClock: { exerciseId: "k2", runningSince: null, accumulatedSeconds: 0 } }, s.version, T0 + 6 * 60_000);
+  expect(editLive([{ op: "skip", exercise: 2 }], T0 + 6 * 60_000).session.cardioClock).toBeNull();
+});

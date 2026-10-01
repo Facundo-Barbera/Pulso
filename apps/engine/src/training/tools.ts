@@ -77,6 +77,11 @@ const liveOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("skip"), exercise: exerciseRef }),
   z.object({ op: z.literal("move"), exercise: exerciseRef, to: z.number().int().min(1).describe("New 1-based position.") }),
   z.object({ op: z.literal("focus"), exercise: exerciseRef }),
+  z.object({
+    op: z.literal("finish_cardio"),
+    exercise: exerciseRef,
+    reason: z.string().max(200).optional().describe('Short Spanish note, e.g. "Cansado".'),
+  }),
 ]);
 
 /** How supersets work, shared by the tools that write them. */
@@ -209,7 +214,7 @@ export const trainingTools = [
 
   tool(
     "get_live_session",
-    "The strength/cardio session the person is doing right now on the phone, or null: each exercise with its position, live id, library id, sets (weightKg, reps, done or not), cardio target, skipped flag, supersetId (exercises sharing one are done as a superset), and `focus` (index of the one on screen). Use it before edit_live_session.",
+    "The strength/cardio session the person is doing right now on the phone, or null: each exercise with its position, live id, library id, sets (weightKg, reps, done or not), cardio target, skipped flag, cutShort (cardio ended early), supersetId (exercises sharing one are done as a superset), `focus` (index of the one on screen) and `cardioClock` (the running cardio timer: elapsed = accumulatedSeconds + now − runningSince; the summary has it in minutes). Use it before edit_live_session.",
     {},
     async () =>
       guard(() => {
@@ -220,7 +225,7 @@ export const trainingTools = [
 
   tool(
     "edit_live_session",
-    'Change the session in progress right now — today only, the program stays as is. Ops run in order, all or nothing: swap (another exercise for the same target; done sets stay logged under the old one; the new one keeps its superset), update (sets, reps, load for the sets not done, rest, cardio target, supersetId to pair/unpair), add (strength or cardio, at a position, optionally into a superset), remove (only if nothing was logged; else skip), skip, move (reorder), focus (show it). The phone shows the change at once with an undo. Returns the updated session and one line per change. ' +
+    'Change the session in progress right now — today only, the program stays as is. Ops run in order, all or nothing: swap (another exercise for the same target; done sets stay logged under the old one; the new one keeps its superset), update (sets, reps, load for the sets not done, rest, cardio target, supersetId to pair/unpair), add (strength or cardio, at a position, optionally into a superset), remove (only if nothing was logged; else skip), skip, move (reorder), focus (show it), finish_cardio (end a cardio block early, keeping the minutes done: it counts as done, not skipped; the phone stops its timer). A cardio block with time on its running clock cannot be skipped, removed or swapped: finish_cardio it first. The phone shows the change at once with an undo. Returns the updated session and one line per change. ' +
       SUPERSETS +
       " To pair two exercises, update both with the same supersetId in one call (move them next to each other first if needed); a pairing that can't stand is refused. A move, remove or skip that leaves a member alone or apart takes it out of its superset.",
     { ops: z.array(liveOp).min(1).max(10) },

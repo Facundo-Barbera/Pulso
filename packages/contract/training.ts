@@ -320,12 +320,27 @@ export type LiveExercise = {
   /** Passed over today; stays in the list, greyed. */
   skipped: boolean;
   /**
+   * Cardio ended early on the Coach's `finish_cardio`: done, not skipped. The
+   * engine fills `cardioLog` from the synced clock when it has one; otherwise
+   * the phone writes it from its own clock, timed up to `at`.
+   */
+  cutShort?: { at: number; reason: string | null } | null;
+  /**
    * Same rule as `ProgramExercise.supersetId`: copied from the program exercise
    * when the session starts, kept by a swap, normalized on every write (phone or
    * Coach). Skipping an exercise takes it out of its superset. Old copies without
    * it read as null.
    */
   supersetId: string | null;
+};
+
+/** A cardio block's stopwatch. Elapsed = `accumulatedSeconds` + (now − `runningSince`) while running. */
+export type LiveCardioClock = {
+  /** The `LiveExercise.id` it times. */
+  exerciseId: string;
+  /** Epoch ms; null while paused. */
+  runningSince: number | null;
+  accumulatedSeconds: number;
 };
 
 /**
@@ -348,6 +363,8 @@ export type LiveSession = {
   focus: number;
   restStartedAt: number | null;
   restEndsAt: number | null;
+  /** The stopwatch of the cardio block being done, as the phone last synced it; null when none. */
+  cardioClock?: LiveCardioClock | null;
   /** Bumped on every write, phone or Coach. */
   version: number;
   updatedAt: number;
