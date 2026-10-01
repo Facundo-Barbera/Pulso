@@ -1,13 +1,17 @@
 import type { DailySummary, MealSlot } from "@pulso/contract";
-import { BarChart3, Clock, Coffee, Cookie, CupSoda, Moon, Sandwich, Sunrise, Utensils, UtensilsCrossed, Wine, Zap, type LucideIcon } from "lucide-react";
-import type { DietaDay, DietaProgress, Moment, PlanMealView } from "@/src/web/dieta";
+import { BarChart3, ClipboardList, Clock, Coffee, Cookie, CupSoda, Moon, Sandwich, Sunrise, Utensils, UtensilsCrossed, Wine, Zap, type LucideIcon } from "lucide-react";
+import type { DietaDay, DietaProgress, Moment } from "@/src/web/dieta";
+import type { DietaLivingPlan, DayView, SlotView } from "@/src/web/dieta-plan";
 import { Card, CardTitle } from "../../../_ui/card";
 import { cn } from "../../../_ui/cn";
 import { EmptyState } from "../../../_ui/empty-state";
 import { fmtDayLabel, fmtNumber } from "../../../_ui/format";
 import { Ring } from "../../../_ui/ring";
 import { Sparkline } from "../../../_ui/sparkline";
-import { EatPlanButton, EmptyDayActions, EntryActions } from "./actions";
+import { EmptyDayActions, EntryActions } from "./actions";
+import { PrepChip } from "./prep-chip";
+import { EatButton } from "./slot-row";
+import { SlotList } from "./slot-sheet";
 import { fmtAmount } from "./units";
 
 const ENERGY = "var(--domain-energy)";
@@ -29,7 +33,7 @@ export const SLOT_ICONS: Record<MealSlot, LucideIcon> = {
 const pct = (value: number, target: number | undefined) => (target ? (value / target) * 100 : null);
 
 /** The hero: kcal against the target in the big ring, the three macros beside it, and what comes next in the plan. */
-export function MacroHero({ summary, next }: { summary: DailySummary; next: PlanMealView | null }) {
+export function MacroHero({ summary, next }: { summary: DailySummary; next: SlotView | null }) {
   const { totals, targets, remaining } = summary;
   return (
     <Card className="relative overflow-hidden">
@@ -81,9 +85,8 @@ export function MacroHero({ summary, next }: { summary: DailySummary; next: Plan
   );
 }
 
-function NextMeal({ meal }: { meal: PlanMealView }) {
+function NextMeal({ meal }: { meal: SlotView }) {
   const Icon = SLOT_ICONS[meal.slot];
-  const pending = meal.items.filter((i) => !i.entryId);
   return (
     <div className="border-border mt-5 flex flex-wrap items-center gap-3 border-t pt-4">
       <span className="bg-body/15 text-body grid size-9 shrink-0 place-items-center rounded-full">
@@ -92,13 +95,14 @@ function NextMeal({ meal }: { meal: PlanMealView }) {
       <div className="min-w-0 flex-1">
         <p className="text-[14px] font-semibold">
           Siguiente: {meal.title}
-          {meal.change && <span className="text-training ml-1.5 text-[12px] font-medium">· ajustada</span>}
+          {meal.adjusted && <span className="text-training ml-1.5 text-[12px] font-medium">· ajustada</span>}
         </p>
         <p className="text-muted-foreground truncate text-[12px]">
-          {meal.items.map((i) => i.name).join(", ")} · <span className="tabular">{fmtNumber(meal.kcal)} kcal</span>
+          {meal.label}
+          {meal.source && ` · ${meal.source}`} · <span className="tabular">{fmtNumber(meal.kcal)} kcal</span>
         </p>
       </div>
-      <EatPlanButton itemIds={pending.map((i) => i.id)} quiet />
+      <EatButton slot={meal} />
     </div>
   );
 }
@@ -216,6 +220,43 @@ export function WeekCard({ progress, href, delay }: { progress: DietaProgress; h
             label="kcal de los últimos 7 días"
           />
         </>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * The day's planned meals with their status and source; each row's menu says
+ * what happened (eaten, swapped, skipped, no time to cook). A batch cooked
+ * today shows on top with «Ya lo cociné».
+ */
+export function TodayPlan({ day, recipes, title, className, delay }: { day: DayView; recipes: DietaLivingPlan["recipes"]; title: string; className?: string; delay?: number }) {
+  const open = day.slots.filter((s) => s.status !== "skipped" && s.status !== "replaced");
+  const eaten = open.filter((s) => s.status === "eaten").length;
+  return (
+    <Card className={cn("relative has-[[aria-expanded=true]]:z-10", className)} delay={delay}>
+      <div className="mb-3 flex items-center gap-2.5">
+        <span className="bg-body/15 text-body grid size-7 place-items-center rounded-lg">
+          <ClipboardList className="size-4" strokeWidth={2.2} />
+        </span>
+        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+        {open.length > 0 && (
+          <p className="text-muted-foreground ml-auto text-[13px] tabular">
+            {eaten} de {open.length} · {fmtNumber(day.kcal)} de {fmtNumber(day.goalKcal)} kcal
+          </p>
+        )}
+      </div>
+      {day.preps.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {day.preps.map((p) => (
+            <PrepChip key={p.id} prep={p} recipe={recipes[p.recipeId] ?? null} today={day.date} />
+          ))}
+        </div>
+      )}
+      {day.slots.length === 0 ? (
+        <EmptyState compact icon={ClipboardList} color="var(--domain-body)" title="Día libre en el plan" line="No hay comidas planeadas este día. Registra lo que comas y cuéntaselo al Coach si quieres ajustar." />
+      ) : (
+        <SlotList slots={day.slots} recipes={recipes} />
       )}
     </Card>
   );

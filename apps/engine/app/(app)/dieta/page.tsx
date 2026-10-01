@@ -2,12 +2,13 @@ import { ChevronLeft, ChevronRight, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { addDays, localDate } from "@/src/nutrition/dates";
 import { dietaDay, dietaProgress } from "@/src/web/dieta";
+import { dietaDaySlots, dietaLivingPlan } from "@/src/web/dieta-plan";
 import { cn } from "../../_ui/cn";
 import { fmtLongDate } from "../../_ui/format";
 import { Page, PageHeader } from "../../_ui/page-header";
 import { DietaProvider, RegisterButton } from "./_components/client";
-import { MacroHero, Timeline, WeekCard } from "./_components/hoy";
-import { NoPlan, PlanView } from "./_components/plan";
+import { MacroHero, Timeline, TodayPlan, WeekCard } from "./_components/hoy";
+import { LivingPlanView, NoPlan } from "./_components/plan";
 import { ProgressView } from "./_components/progress";
 import { WaterCard } from "./_components/water-card";
 
@@ -21,13 +22,12 @@ const VIEWS = [
 ] as const;
 type View = (typeof VIEWS)[number]["key"];
 
-type Params = { dia?: string; vista?: string; pd?: string };
+type Params = { dia?: string; vista?: string };
 
-function href(p: { dia?: string; vista?: View; pd?: number }, today: string) {
+function href(p: { dia?: string; vista?: View }, today: string) {
   const q = new URLSearchParams();
   if (p.dia && p.dia !== today) q.set("dia", p.dia);
   if (p.vista && p.vista !== "hoy") q.set("vista", p.vista);
-  if (p.pd !== undefined) q.set("pd", String(p.pd));
   const s = q.toString();
   return s ? `/dieta?${s}` : "/dieta";
 }
@@ -38,7 +38,7 @@ function dayTitle(date: string, today: string) {
   return new Intl.DateTimeFormat("es", { weekday: "long" }).format(new Date(`${date}T12:00:00`));
 }
 
-/** Dieta: the day (macros hero, meals, water), the plan and two weeks of progress. One primary action: Registrar. */
+/** Dieta: the day (macros hero, planned meals, what was logged, water), the plan's coming days and two weeks of progress. One primary action: Registrar. */
 export default async function Dieta({ searchParams }: { searchParams: Promise<Params> }) {
   const params = await searchParams;
   const today = localDate();
@@ -46,7 +46,9 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
   const view: View = VIEWS.some((v) => v.key === params.vista) ? (params.vista as View) : "hoy";
   const day = dietaDay(date, today);
   const progress = dietaProgress(today);
-  const shownPlanDay = day.plan && params.pd !== undefined && Number(params.pd) >= 0 && Number(params.pd) < day.plan.days.length ? Number(params.pd) : (day.plan?.dayIndex ?? 0);
+  const slots = view === "hoy" ? dietaDaySlots(date, today) : null;
+  const living = view === "plan" ? dietaLivingPlan(today) : null;
+  const next = date === today ? (slots?.slots.find((s) => s.status === "planned") ?? null) : null;
 
   const arrow = "text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2";
 
@@ -58,9 +60,9 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
           title="Dieta"
           actions={
             <>
-              <Link href="/dieta/compras" className="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring app-no-drag flex min-h-10 items-center gap-1.5 rounded-full px-3 text-[14px] font-medium outline-none focus-visible:ring-2" title="Lista de compras">
+              <Link href="/dieta/compras" className="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring app-no-drag flex min-h-10 items-center gap-1.5 rounded-full px-3 text-[14px] font-medium outline-none focus-visible:ring-2" title="Compras">
                 <ShoppingCart className="size-4" />
-                <span className="hidden sm:inline">Lista de compras</span>
+                <span className="hidden sm:inline">Compras</span>
               </Link>
               <RegisterButton />
             </>
@@ -68,7 +70,7 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
         />
 
         <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-3">
-          {view !== "progreso" && (
+          {view === "hoy" && (
             <div className="flex items-center">
               <Link href={href({ dia: addDays(date, -1), vista: view }, today)} className={arrow} aria-label="Día anterior" scroll={false}>
                 <ChevronLeft className="size-[18px]" />
@@ -107,15 +109,16 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
 
         {view === "hoy" && (
           <>
-            <MacroHero summary={day.summary} next={date === today ? day.next : null} />
-            <div className="mt-5 grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+            <MacroHero summary={day.summary} next={next} />
+            <div className="mt-5 grid items-start gap-5 md:grid-cols-2 xl:grid-flow-dense xl:grid-cols-3">
+              {slots && <TodayPlan day={slots} recipes={slots.recipes} title={date === today ? "Plan de hoy" : "Plan del día"} className="md:col-span-2" delay={40} />}
               <Timeline day={day} className="md:col-span-2 md:row-span-2" delay={60} />
               <WaterCard water={day.water} delay={110} />
               <WeekCard progress={progress} href={href({ vista: "progreso" }, today)} delay={160} />
             </div>
           </>
         )}
-        {view === "plan" && (day.plan ? <PlanView plan={day.plan} shown={shownPlanDay} hrefFor={(pd) => href({ dia: date, vista: "plan", pd }, today)} /> : <NoPlan />)}
+        {view === "plan" && (living ? <LivingPlanView plan={living} /> : <NoPlan />)}
         {view === "progreso" && <ProgressView progress={progress} />}
       </Page>
     </DietaProvider>

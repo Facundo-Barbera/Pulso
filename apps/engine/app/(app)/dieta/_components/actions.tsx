@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CopyPlus, Pencil, Trash2, Undo2 } from "lucide-react";
+import { CopyPlus, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
 import { cn } from "../../../_ui/cn";
@@ -35,57 +35,6 @@ export function EntryActions({ entry }: { entry: DietaEntry }) {
       )}
       {error && <span className="text-destructive text-[11px]">{error}</span>}
     </span>
-  );
-}
-
-/** «Comí lo del plan»: logs every item of a plan meal not yet eaten. */
-export function EatPlanButton({ itemIds, label = "Comí lo del plan", quiet = false }: { itemIds: string[]; label?: string; quiet?: boolean }) {
-  const { date } = useDieta();
-  const { run, pending, error } = useAction();
-  return (
-    <div>
-      <button onClick={() => run("plan/eat", "POST", { itemIds, date })} disabled={pending || itemIds.length === 0} className={quiet ? buttonSoft : buttonPrimary}>
-        <Check className="size-4" strokeWidth={2.4} />
-        {label}
-      </button>
-      <ErrorLine message={error} />
-    </div>
-  );
-}
-
-/** One plan item's tick: eats it, or undoes the entry that ate it. */
-export function PlanItemToggle({ itemId, entryId, name }: { itemId: string; entryId: string | null; name: string }) {
-  const { date } = useDieta();
-  const { run, pending } = useAction();
-  const eaten = entryId !== null;
-  return (
-    <button
-      onClick={() => (eaten ? run(`meals/${entryId}`, "DELETE") : run("plan/eat", "POST", { itemIds: [itemId], date }))}
-      disabled={pending}
-      aria-pressed={eaten}
-      aria-label={eaten ? `Desmarcar ${name}` : `Marcar ${name} como comido`}
-      className={cn(
-        "focus-visible:ring-ring grid size-7 shrink-0 place-items-center rounded-full border-2 outline-none transition-colors focus-visible:ring-2",
-        eaten ? "border-body bg-body text-background" : "border-border hover:border-body",
-        pending && "opacity-50",
-      )}
-    >
-      {eaten && <Check className="size-4" strokeWidth={3} />}
-    </button>
-  );
-}
-
-export function ClearAdjustment() {
-  const { date } = useDieta();
-  const { run, pending, error } = useAction();
-  return (
-    <div>
-      <button onClick={() => run(`plan/adjustment?date=${date}`, "DELETE")} disabled={pending} className={buttonSoft}>
-        <Undo2 className="size-4" />
-        Volver al plan
-      </button>
-      <ErrorLine message={error} />
-    </div>
   );
 }
 
