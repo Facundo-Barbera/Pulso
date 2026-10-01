@@ -75,11 +75,18 @@ private struct StrengthTargetFields: View {
         )
     }
 
+    private var unit: WeightUnit { TrainingStore.shared.unit(for: exercise.exerciseId) }
+
     private var suggested: Binding<Bool> {
         Binding(
             get: { exercise.weightKg == nil },
-            set: { on in exercise.weightKg = on ? nil : (suggestion?.weightKg ?? 20) }
+            set: { on in exercise.weightKg = on ? nil : (suggestion?.weightKg ?? unit.fromUnit(unit == .lb ? 45 : 20)) }
         )
+    }
+
+    /// The hand-set load as typed in the unit, to the quarter, kept as its exact kg.
+    private func typed(_ kg: Double) -> Binding<Double> {
+        Binding(get: { unit.shown(kg) }, set: { exercise.weightKg = unit.fromUnit(max(0, ($0 * 4).rounded() / 4)) })
     }
 
     private static let restPresets = [60, 90, 120, 180]
@@ -98,16 +105,21 @@ private struct StrengthTargetFields: View {
         }
 
         Section {
+            LabeledContent("Unidad de esta máquina") { UnitPicker(exerciseId: exercise.exerciseId) }
             Toggle("Sugerido por Pulso", isOn: suggested).tint(Theme.training)
             if let kg = exercise.weightKg {
                 HStack {
-                    TextField("Peso", value: Binding(get: { kg }, set: { exercise.weightKg = max(0, $0) }), format: .number.precision(.fractionLength(0...2)))
+                    TextField("Peso", value: typed(kg), format: .number.precision(.fractionLength(0...2)))
                         .keyboardType(.decimalPad)
                         .font(.title3.weight(.semibold))
                         .fontDesign(.rounded)
-                    Text("kg").foregroundStyle(.secondary)
-                    Stepper("Peso", value: Binding(get: { kg }, set: { exercise.weightKg = $0 }), in: 0...500, step: exercise.weightStep)
-                        .labelsHidden()
+                    Text(unit.rawValue).foregroundStyle(.secondary)
+                    Stepper("Peso") {
+                        exercise.weightKg = unit.fromUnit(unit.stepUp(unit.snap(kg)))
+                    } onDecrement: {
+                        exercise.weightKg = unit.fromUnit(unit.stepDown(unit.snap(kg)))
+                    }
+                    .labelsHidden()
                 }
             }
         } header: {
@@ -116,7 +128,7 @@ private struct StrengthTargetFields: View {
             if exercise.weightKg != nil {
                 Text("Se usa la próxima vez; después vuelve la progresión automática.")
             } else if let suggestion, let kg = suggestion.weightKg, kg > 0 {
-                Text("Pulso propone \(TrainingFormat.number(kg)) kg. \(suggestion.reason)")
+                Text("Pulso propone \(unit.format(kg)). \(suggestion.reason)")
             } else {
                 Text("Pulso calcula la carga con tu progresión.")
             }

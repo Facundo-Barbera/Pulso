@@ -21,6 +21,8 @@ struct ListItem: Identifiable, Hashable {
 
 /// What "Personalizar ejercicio" changes.
 struct ExerciseCustomization: Hashable {
+    /// The library id: the load reads and steps in its unit.
+    var exerciseId: String
     var sets: Int
     var repMin: Int
     var repMax: Int
@@ -29,7 +31,6 @@ struct ExerciseCustomization: Hashable {
     var suggestedKg: Double?
     /// The load can go back to "sugerido" (the program's; a live set always has one).
     var suggestible = false
-    var weightStep: Double
     var restSeconds: Int
     var minSets = 1
     var isCardio = false
@@ -540,12 +541,23 @@ struct CustomizeExerciseSheet<Draft: ListDraft>: View {
         }
         .accessibilityValue(TrainingText.reps(v.repMin, v.repMax))
         if v.needsLoad {
-            let kg = v.weightKg ?? v.suggestedKg
-            BigStepper(title: v.weightKg == nil ? "Peso sugerido" : "Peso", value: kg.map { "\($0.formatted()) kg" } ?? "Sin peso", canMinus: (kg ?? 0) > 0, canPlus: true) {
-                change { $0.weightKg = max(0, (kg ?? 0) - v.weightStep) }
+            let unit = TrainingStore.shared.unit(for: v.exerciseId)
+            let kg = (v.weightKg ?? v.suggestedKg).map(unit.snapKg)
+            let value = kg.map(unit.snap) ?? 0
+            BigStepper(title: v.weightKg == nil ? "Peso sugerido" : "Peso", value: kg.map(unit.format) ?? "Sin peso", detail: kg.flatMap { $0 > 0 ? unit.other.format($0) : nil },
+                       canMinus: value > 0, canPlus: true) {
+                change { $0.weightKg = unit.fromUnit(unit.stepDown(value)) }
             } plus: {
-                change { $0.weightKg = (kg ?? 0) + v.weightStep }
+                change { $0.weightKg = unit.fromUnit(unit.stepUp(value)) }
             }
+            HStack {
+                Text("Unidad de esta máquina")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                UnitPicker(exerciseId: v.exerciseId)
+            }
+            .padding(.horizontal, 4)
             if v.suggestible, v.weightKg != nil {
                 Button("Usar el peso sugerido") { change { $0.weightKg = nil } }
                     .font(.subheadline)
@@ -603,10 +615,11 @@ struct CustomizeExerciseSheet<Draft: ListDraft>: View {
     }
 }
 
-/// −  3  +  with a caption, on a card.
+/// −  3  +  with a caption (and an optional line under the value), on a card.
 private struct BigStepper: View {
     let title: String
     let value: String
+    var detail: String? = nil
     var canMinus = true
     var canPlus = true
     let minus: () -> Void
@@ -625,6 +638,13 @@ private struct BigStepper: View {
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
             }
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)

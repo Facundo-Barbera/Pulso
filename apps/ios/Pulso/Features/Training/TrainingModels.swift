@@ -30,9 +30,6 @@ struct ProgramExercise: Codable, Identifiable, Hashable {
         isCardio ? cardio?.summary ?? "Cardio" : TrainingText.target(sets: sets, repMin: repMin, repMax: repMax)
     }
 
-    /// Stepper jump: dumbbells, bodyweight and bands move by 1 kg, plates and stacks by 2.5.
-    var weightStep: Double { Equipment.weightStep(equipment) }
-
     /// The same prescription as an edit input, keeping this exercise's id.
     var input: DayExerciseInput {
         DayExerciseInput(id: id, exerciseId: exerciseId, sets: sets, repMin: repMin, repMax: repMax, targetRpe: targetRpe, targetRir: targetRir, restSeconds: restSeconds, notes: notes, cardio: cardio, weightKg: weightKg, supersetId: supersetId)

@@ -79,8 +79,8 @@ final class LiveListDraft: ListDraft {
     func customization(_ id: String) -> ExerciseCustomization? {
         guard let ex = index(id).map({ state.exercises[$0] }) else { return nil }
         return ExerciseCustomization(
-            sets: max(1, ex.sets.count), repMin: ex.repMin, repMax: ex.repMax, weightKg: ex.workingWeight > 0 ? ex.workingWeight : nil,
-            weightStep: ex.weightStep, restSeconds: ex.restSeconds, minSets: ex.sets.count(where: \.done), isCardio: ex.isCardio,
+            exerciseId: ex.exerciseId, sets: max(1, ex.sets.count), repMin: ex.repMin, repMax: ex.repMax, weightKg: ex.workingWeight > 0 ? ex.workingWeight : nil,
+            restSeconds: ex.restSeconds, minSets: ex.sets.count(where: \.done), isCardio: ex.isCardio,
             needsLoad: Equipment.needsLoad(ex.equipment), durationMinutes: ex.cardio?.durationMinutes
         )
     }

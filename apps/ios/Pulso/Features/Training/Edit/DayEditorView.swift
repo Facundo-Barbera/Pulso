@@ -42,7 +42,10 @@ final class ProgramListDraft: ListDraft {
     var items: [ListItem] {
         exercises.map { ex in
             var detail = ex.isCardio ? ex.prescription : TrainingText.short(sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax)
-            if !ex.isCardio, let kg = ex.weightKg ?? suggestions[ex.id]?.weightKg, kg > 0 { detail += " · \(kg.formatted()) kg" }
+            if !ex.isCardio, let kg = ex.weightKg ?? suggestions[ex.id]?.weightKg, kg > 0 {
+                let unit = TrainingStore.shared.unit(for: ex.exerciseId)
+                detail += " · \(unit.format(unit.snapKg(kg)))"
+            }
             return ListItem(id: ex.id, exerciseId: ex.exerciseId, name: ex.exerciseName, detail: detail, isCardio: ex.isCardio,
                             thumbnail: thumbnails[ex.exerciseId] ?? cachedThumbnail(ex.exerciseId), supersetId: ex.supersetId,
                             status: ex.isDraft ? "Nuevo" : nil)
@@ -86,8 +89,8 @@ final class ProgramListDraft: ListDraft {
     func customization(_ id: String) -> ExerciseCustomization? {
         guard let ex = index(id).map({ exercises[$0] }) else { return nil }
         return ExerciseCustomization(
-            sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax, weightKg: ex.weightKg, suggestedKg: suggestions[ex.id]?.weightKg,
-            suggestible: true, weightStep: ex.weightStep, restSeconds: ex.restSeconds, isCardio: ex.isCardio,
+            exerciseId: ex.exerciseId, sets: ex.sets, repMin: ex.repMin, repMax: ex.repMax, weightKg: ex.weightKg, suggestedKg: suggestions[ex.id]?.weightKg,
+            suggestible: true, restSeconds: ex.restSeconds, isCardio: ex.isCardio,
             needsLoad: Equipment.needsLoad(ex.equipment), durationMinutes: ex.cardio?.durationMinutes
         )
     }

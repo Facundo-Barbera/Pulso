@@ -17,6 +17,11 @@ struct TrainingView: View {
 
     private var selectedDay: ProgramDay? { store.program?.day(selectedDayId ?? store.nextDay?.id) }
 
+    /// For exercises without their own unit, and for totals. Each machine can still say otherwise.
+    private var defaultUnit: Binding<WeightUnit> {
+        Binding(get: { store.defaultUnit }, set: { unit in Task { await store.setDefaultUnit(unit) } })
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -70,6 +75,13 @@ struct TrainingView: View {
                             Button("Editar \(day.name)", systemImage: "slider.horizontal.3") { editingDay = day }
                         }
                         Button("Equipo preferido", systemImage: "gearshape.2") { showPreferences = true }
+                        Picker(selection: defaultUnit) {
+                            ForEach(WeightUnit.allCases) { Text($0 == .kg ? "Kilos (kg)" : "Libras (lb)").tag($0) }
+                        } label: {
+                            Label("Unidad por defecto", systemImage: "scalemass")
+                            Text(store.defaultUnit.rawValue)
+                        }
+                        .pickerStyle(.menu)
                     }
                 }
             }
@@ -435,7 +447,7 @@ private struct PlanExerciseRow: View {
                         }
                     }
                     // A load set by hand wins over the suggestion; cardio shows its target.
-                    Text(exercise.isCardio ? exercise.prescription : TrainingPlan.prescription(exercise, weightKg: exercise.weightKg ?? suggestion?.weightKg))
+                    Text(exercise.isCardio ? exercise.prescription : TrainingPlan.prescription(exercise, weightKg: exercise.weightKg ?? suggestion?.weightKg, unit: TrainingStore.shared.unit(for: exercise.exerciseId)))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -538,7 +550,7 @@ private struct RecentSessions: View {
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("\(Int(session.volumeKg).formatted()) kg").font(.subheadline.weight(.semibold)).fontDesign(.rounded)
+                        Text(TrainingStore.shared.defaultUnit.formatTotal(session.volumeKg)).font(.subheadline.weight(.semibold)).fontDesign(.rounded)
                         Text("\(session.sets.count) series · \(Int(session.duration / 60)) min").font(.caption).foregroundStyle(.secondary)
                     }
                 }

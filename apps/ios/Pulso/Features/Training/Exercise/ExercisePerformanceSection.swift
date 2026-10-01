@@ -2,11 +2,14 @@ import Charts
 import SwiftUI
 
 /// Rendimiento: the history chart as the hero (e1RM or top weight, the record
-/// as a rule line), then the three records as trophy rows.
+/// as a rule line), then the three records as trophy rows. Loads read in the
+/// exercise's unit.
 struct ExercisePerformanceSection: View {
     let exerciseId: String
     @State private var performance: ExercisePerformance?
     @State private var failed = false
+
+    private var unit: WeightUnit { TrainingStore.shared.unit(for: exerciseId) }
 
     init(exerciseId: String, preview: ExercisePerformance? = nil) {
         self.exerciseId = exerciseId
@@ -24,7 +27,7 @@ struct ExercisePerformanceSection: View {
                         tint: Theme.training
                     )
                 } else {
-                    PerformanceChart(history: performance.history, bestE1rm: performance.bestE1rm?.kg, heaviest: performance.maxWeight?.kg)
+                    PerformanceChart(history: performance.history, bestE1rm: performance.bestE1rm?.kg, heaviest: performance.maxWeight?.kg, unit: unit)
                     records(performance)
                 }
             } else if failed {
@@ -53,13 +56,13 @@ struct ExercisePerformanceSection: View {
         Card {
             CardTitle(text: "Récords", systemImage: "trophy")
             TrophyRow(title: "Peso máximo", systemImage: "scalemass.fill",
-                      value: performance.maxWeight.map { TrainingText.load($0.kg, reps: $0.reps) }, at: performance.maxWeight?.at)
+                      value: performance.maxWeight.map { TrainingText.load($0.kg, reps: $0.reps, unit: unit) }, at: performance.maxWeight?.at)
             Divider()
             TrophyRow(title: "Mejor 1RM estimado", systemImage: "trophy.fill",
-                      value: performance.bestE1rm.map { "\($0.kg.formatted(.number.precision(.fractionLength(0...1)))) kg" }, at: performance.bestE1rm?.at)
+                      value: performance.bestE1rm.map { unit.format($0.kg) }, at: performance.bestE1rm?.at)
             Divider()
             TrophyRow(title: "Volumen máximo en una sesión", systemImage: "chart.bar.fill",
-                      value: performance.maxVolume.map { "\(Int($0.kg.rounded()).formatted()) kg" }, at: performance.maxVolume?.at)
+                      value: performance.maxVolume.map { unit.formatTotal($0.kg) }, at: performance.maxVolume?.at)
         }
     }
 }
@@ -97,6 +100,7 @@ private struct PerformanceChart: View {
     let history: [ExercisePerformance.Point]
     let bestE1rm: Double?
     let heaviest: Double?
+    let unit: WeightUnit
     @State private var metric = Metric.e1rm
     @State private var selected: Date?
 
@@ -105,41 +109,46 @@ private struct PerformanceChart: View {
         case top = "Peso máximo"
         var id: Self { self }
 
-        func value(_ point: ExercisePerformance.Point) -> Double {
+        /// Kg; the chart reads it through `value(_:)` in the unit.
+        func kg(_ point: ExercisePerformance.Point) -> Double {
             self == .e1rm ? point.e1rm : point.topWeightKg
         }
     }
 
+    /// The metric in the exercise's unit, as plotted and read: 44,1 lb for 20 kg.
+    private func value(_ point: ExercisePerformance.Point) -> Double { unit.shown(metric.kg(point)) }
+
     private var record: Double? {
-        metric == .e1rm ? bestE1rm ?? history.map(\.e1rm).max() : heaviest ?? history.map(\.topWeightKg).max()
+        let kg = metric == .e1rm ? bestE1rm ?? history.map(\.e1rm).max() : heaviest ?? history.map(\.topWeightKg).max()
+        return kg.map(unit.shown)
     }
 
     var body: some View {
         let shown = selected.flatMap { date in history.min { abs($0.day.timeIntervalSince(date)) < abs($1.day.timeIntervalSince(date)) } } ?? history.last!
-        let low = (history.map(metric.value).min() ?? 0) * 0.92
+        let low = (history.map(value).min() ?? 0) * 0.92
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(selected == nil ? "Última sesión" : shown.day.formatted(.dateTime.day().month().year()))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(metric.value(shown).formatted(.number.precision(.fractionLength(0...1))))
+                    Text(WeightUnit.number(value(shown)))
                         .font(.system(size: 48, weight: .bold, design: .rounded))
                         .contentTransition(.numericText())
-                    Text("kg").font(.title3.weight(.semibold)).foregroundStyle(.secondary)
-                    if let record, metric.value(shown) >= record {
+                    Text(unit.rawValue).font(.title3.weight(.semibold)).foregroundStyle(.secondary)
+                    if let record, value(shown) >= record {
                         Image(systemName: "trophy.fill").font(.title3).foregroundStyle(.orange).symbolEffect(.bounce, value: shown.at)
                     }
                 }
-                .animation(.snappy, value: metric.value(shown))
+                .animation(.snappy, value: value(shown))
             }
 
             Chart {
                 ForEach(history) { point in
-                    AreaMark(x: .value("Fecha", point.day), yStart: .value("Base", low), yEnd: .value(metric.rawValue, metric.value(point)))
+                    AreaMark(x: .value("Fecha", point.day), yStart: .value("Base", low), yEnd: .value(metric.rawValue, value(point)))
                         .foregroundStyle(LinearGradient(colors: [Theme.training.opacity(0.35), Theme.training.opacity(0.02)], startPoint: .top, endPoint: .bottom))
                         .interpolationMethod(.monotone)
-                    LineMark(x: .value("Fecha", point.day), y: .value(metric.rawValue, metric.value(point)))
+                    LineMark(x: .value("Fecha", point.day), y: .value(metric.rawValue, value(point)))
                         .foregroundStyle(Theme.training)
                         .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round))
                         .interpolationMethod(.monotone)
@@ -149,12 +158,12 @@ private struct PerformanceChart: View {
                         .foregroundStyle(.orange.opacity(0.7))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         .annotation(position: .top, alignment: .leading) {
-                            Text("PR \(record.formatted(.number.precision(.fractionLength(0...1)))) kg")
+                            Text("PR \(WeightUnit.number(record)) \(unit.rawValue)")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.orange)
                         }
                 }
-                PointMark(x: .value("Fecha", shown.day), y: .value(metric.rawValue, metric.value(shown)))
+                PointMark(x: .value("Fecha", shown.day), y: .value(metric.rawValue, value(shown)))
                     .foregroundStyle(Theme.training)
                     .symbolSize(130)
                 if selected != nil {

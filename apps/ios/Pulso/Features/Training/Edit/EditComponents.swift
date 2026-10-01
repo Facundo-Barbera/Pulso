@@ -102,6 +102,26 @@ struct ChipRow<Content: View>: View {
     }
 }
 
+/// kg | lb for one exercise's machine. Not a "solo hoy" edit: it applies at once
+/// and sticks for every session.
+struct UnitPicker: View {
+    let exerciseId: String
+
+    private var unit: Binding<WeightUnit> {
+        Binding(get: { TrainingStore.shared.unit(for: exerciseId) }, set: { TrainingStore.shared.setUnit($0, for: exerciseId) })
+    }
+
+    var body: some View {
+        Picker("Unidad", selection: unit) {
+            ForEach(WeightUnit.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+        .sensoryFeedback(.selection, trigger: unit.wrappedValue)
+        .accessibilityLabel("Unidad de esta máquina")
+    }
+}
+
 /// A soft tinted capsule for short facts ("Mismo músculo"); no glass, so lists stay calm.
 struct ReasonTag: View {
     let text: String
