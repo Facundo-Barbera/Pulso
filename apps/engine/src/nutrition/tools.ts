@@ -4,7 +4,7 @@ import { z } from "zod";
 import { adjustDayPlan } from "./adjust";
 import { lookupBarcode, normalizeBarcode } from "./barcode";
 import { parseTime } from "./dates";
-import { dateString, mealShape, planItem, planShape, slot, targetsShape } from "./inputs";
+import { dateString, mealShape, planItem, planShape, slot, targetsShape, toMealInput } from "./inputs";
 import { addDays, createPlan, dailySummary, deleteMeal, getTargets, listMeals, localDate, logMeals, planForDay, setTargets } from "./store";
 import { getWaterSettings, logWater, setWaterSettings, toMl, waterDay } from "./water";
 
@@ -16,13 +16,13 @@ const timeDescription = "Local time it happened, 'HH:MM' 24 h (e.g. '14:30'), or
 export const nutritionTools = [
   tool(
     "log_meal",
-    "Log what the person ate, as one meal: one or more foods with the time it was eaten. Each item's macros are TOTALS for the quantity eaten (not per 100 g): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, restaurant or regional foods look the values up first. Set `at` to the time they said ('a las 14:30' → '14:30'), `description` to their own words, and `offPlan: true` when it was not what the active plan had for that meal (or there is no plan). For a planned item eaten as written pass its planItemId from get_active_plan. Returns the stored entries with their ids. If there is an active plan, call adjust_day_plan right after.",
+    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Snacks and drinks between meals go in slot 'snack', at any hour, as many per day as happen. Drinks other than water never count toward the water goal. Set `at` to the time they said ('a las 14:30' → '14:30'), `description` to their own words, and `offPlan: true` when it was not what the active plan had for that meal (or there is no plan). For a planned item eaten as written pass its planItemId from get_active_plan. Returns the stored entries with their ids. If there is an active plan, call adjust_day_plan right after.",
     {
       items: z
         .array(z.object({ ...mealShape, planItemId: z.string().optional().describe("The active plan's item this fulfils, from get_active_plan") }))
         .min(1)
         .max(30)
-        .describe("Foods eaten; items of one meal share a slot"),
+        .describe("Foods and drinks; items of one meal share a slot"),
       at: z.string().max(40).optional().describe(timeDescription),
       date: dateString.optional().describe("Local day (YYYY-MM-DD) the meal counts toward. Defaults to the day of `at`, i.e. today"),
       description: z.string().trim().max(300).optional().describe("The person's own words for the meal, in Spanish, e.g. 'Big Mac y papas medianas en McDonald's'"),
@@ -31,15 +31,19 @@ export const nutritionTools = [
     async ({ items, at, date, description, offPlan }) => {
       const when = at ? parseTime(at, date) : null;
       if (at && !when) return fail(`Unreadable time '${at}': use 'HH:MM' or ISO 8601`);
-      const meal = items.map(
-        (item): MealInput => ({
+      const meal: MealInput[] = [];
+      for (const { planItemId, ...fields } of items) {
+        const item = toMealInput(fields);
+        if (typeof item === "string") return fail(item);
+        meal.push({
           ...item,
+          planItemId,
           eatenAt: item.eatenAt ?? when?.at,
           date: item.date ?? when?.date ?? date,
           note: description ?? null,
           offPlan: offPlan ?? false,
-        }),
-      );
+        });
+      }
       return json(logMeals(meal, "agent"));
     },
   ),
@@ -73,7 +77,7 @@ export const nutritionTools = [
   ),
   tool(
     "list_meals",
-    "Logged food entries between two local days (YYYY-MM-DD, inclusive), oldest first. Macros are totals per entry: kcal and grams. eatenAt is epoch ms; offPlan and note say whether it was off the plan and how the person described it. Defaults to today. Max 62 days.",
+    "Logged food and drink entries between two local days (YYYY-MM-DD, inclusive), oldest first. Macros are totals per entry: kcal and grams. quantity + unit is the normalized amount (g, ml or serving); measure is the amount as the person said it (e.g. 2 lata, size null = 355 ml each), or null. caffeineMg and alcoholG when known. eatenAt is epoch ms; offPlan and note say whether it was off the plan and how the person described it. Defaults to today. Max 62 days.",
     { from: dateString.optional(), to: dateString.optional() },
     async ({ from, to }) => {
       const start = from ?? localDate();
@@ -84,7 +88,7 @@ export const nutritionTools = [
   ),
   tool(
     "daily_summary",
-    "Totals eaten on a local day versus the daily targets: totals, targets, remaining (targets minus totals; negative means over) and per-slot totals. kcal and grams. Defaults to today. Use before suggesting what to eat next.",
+    "Totals eaten on a local day versus the daily targets: totals, targets, remaining (targets minus totals; negative means over), per-slot totals, and the day's caffeineMg and alcoholG. kcal and grams. Defaults to today. Use before suggesting what to eat next.",
     { date: dateString.optional() },
     async ({ date }) => json(dailySummary(date ?? localDate())),
   ),

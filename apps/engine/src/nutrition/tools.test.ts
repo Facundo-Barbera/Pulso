@@ -138,3 +138,22 @@ test("log_water converts the person's units and get_water reports the day", asyn
   expect((await call("get_water", { date: "2032-10-01" })).value).toMatchObject({ goalMl: 2800, goalSource: "custom" });
   await call("set_water_goal", { goalMl: null });
 });
+
+test("log_meal takes amounts in the person's words and keeps drinks out of water", async () => {
+  const logged = await call("log_meal", {
+    items: [
+      { name: "Coca-Cola", slot: "snack", measure: "2 latas", kcal: 278, protein: 0, carbs: 70, fat: 0, caffeineMg: 68, date: "2032-09-01" },
+      { name: "Almendras", slot: "snack", measure: "un puño", kcal: 174, protein: 6.4, carbs: 6.5, fat: 15, fiber: 3.7, date: "2032-09-01" },
+    ],
+    at: "17:30",
+    date: "2032-09-01",
+  });
+  expect(logged.value[0]).toMatchObject({ quantity: 710, unit: "ml", measure: { amount: 2, unit: "lata", size: null }, caffeineMg: 68 });
+  expect(logged.value[1]).toMatchObject({ quantity: 30, unit: "g", measure: { amount: 1, unit: "puño" } });
+  expect((await call("get_water", { date: "2032-09-01" })).value.totalMl).toBe(0);
+  expect((await call("daily_summary", { date: "2032-09-01" })).value.caffeineMg).toBe(68);
+
+  const unreadable = await call("log_meal", { items: [{ name: "Té", slot: "snack", measure: "algo", kcal: 2, protein: 0, carbs: 0, fat: 0 }] });
+  expect(unreadable.error).toBe(true);
+  expect(await call("list_meals", { from: "2032-09-01" }).then((r) => r.value)).toHaveLength(2);
+});
