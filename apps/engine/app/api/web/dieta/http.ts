@@ -1,4 +1,5 @@
 import { ZodError, type z } from "zod";
+import { apiFailure } from "@/src/nutrition/api";
 import { ShoppingError } from "@/src/shopping/store";
 import { json } from "../http";
 
@@ -29,4 +30,24 @@ export async function shopping(run: () => unknown): Promise<Response> {
     if (error instanceof ShoppingError) return json({ code: error.code, message: SHOPPING_MESSAGES[error.code] }, error.code === "not_found" ? 404 : 409);
     throw error;
   }
+}
+
+/** Runs a dated-plan call (horizon, ops, recipes, pantry…): known errors → 400/404/409 with a Spanish message. */
+export async function diet(run: () => unknown): Promise<Response> {
+  try {
+    return json(await run());
+  } catch (error) {
+    const failure = apiFailure(error);
+    if (!failure) throw error;
+    const { status, ...rest } = failure;
+    return json(rest, status);
+  }
+}
+
+/** `?name=` as an integer within [min, max]; undefined when absent, null when not one. */
+export function intParam(request: Request, name: string, min: number, max: number): number | undefined | null {
+  const value = new URL(request.url).searchParams.get(name);
+  if (value === null) return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
 }
