@@ -4,7 +4,10 @@ import Foundation
 extension PulsoAPI {
     private struct MealResponse: Decodable { var meal: MealEntry }
     private struct MealsResponse: Decodable { var meals: [MealEntry] }
-    private struct HistoryResponse: Decodable { var days: [NutritionSummary] }
+    private struct HistoryResponse: Decodable { var days: [NutritionSummary]; var water: [String: Double]? }
+    private struct WaterLogged: Decodable { var entry: WaterEntry; var day: WaterDay }
+    private struct WaterSettingsResponse: Decodable { var settings: WaterSettings }
+    private struct Cleared: Decodable { var cleared: Bool }
     private struct FrequentResponse: Decodable { var foods: [FrequentFood] }
     private struct TargetsResponse: Decodable { var targets: NutritionTargets? }
     private struct ProductResponse: Decodable { var product: FoodProduct? }
@@ -20,11 +23,12 @@ extension PulsoAPI {
         try await get("api/mobile/nutrition/day", query: [URLQueryItem(name: "date", value: date)])
     }
 
-    func nutritionHistory(days: Int, to: String) async throws -> [NutritionSummary] {
+    /// Daily summaries, and water ml by `YYYY-MM-DD` (days without water are absent).
+    func nutritionHistory(days: Int, to: String) async throws -> (days: [NutritionSummary], water: [String: Double]) {
         let response: HistoryResponse = try await get("api/mobile/nutrition/history", query: [
             URLQueryItem(name: "days", value: String(days)), URLQueryItem(name: "to", value: to),
         ])
-        return response.days
+        return (response.days, response.water ?? [:])
     }
 
     func frequentFoods() async throws -> [FrequentFood] {
@@ -59,5 +63,44 @@ extension PulsoAPI {
     func lookupBarcode(_ code: String) async throws -> FoodProduct? {
         let response: ProductResponse = try await get("api/mobile/nutrition/barcode/\(code)")
         return response.product
+    }
+
+    // MARK: Water
+
+    func logWater(ml: Double, date: String, loggedAt: Double) async throws -> (entry: WaterEntry, day: WaterDay) {
+        struct Body: Encodable { var amountMl: Double; var date: String; var loggedAt: Int64 }
+        let response: WaterLogged = try await call("api/mobile/nutrition/water", method: "POST",
+                                                   body: Body(amountMl: ml, date: date, loggedAt: Int64(loggedAt)))
+        return (response.entry, response.day)
+    }
+
+    func deleteWater(_ id: String) async throws {
+        let _: Deleted = try await call("api/mobile/nutrition/water/\(id)", method: "DELETE")
+    }
+
+    func saveWaterSettings(_ settings: WaterSettings) async throws -> WaterSettings {
+        // goalMl is sent even when nil: null means "automatic".
+        struct Body: Encodable {
+            var settings: WaterSettings
+            enum Keys: String, CodingKey { case goalMl, unit, glassMl, bottleMl }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: Keys.self)
+                try c.encode(settings.goalMl, forKey: .goalMl)
+                try c.encode(settings.unit, forKey: .unit)
+                try c.encode(settings.glassMl, forKey: .glassMl)
+                try c.encode(settings.bottleMl, forKey: .bottleMl)
+            }
+        }
+        let response: WaterSettingsResponse = try await call("api/mobile/nutrition/water/settings", method: "PUT", body: Body(settings: settings))
+        return response.settings
+    }
+
+    // MARK: Plan adjustment
+
+    /// "Volver al plan": drops the Coach's adjustment for the day.
+    func clearAdjustment(date: String) async throws {
+        var request = makeRequest("api/mobile/nutrition/plan/adjustment", method: "DELETE")
+        request.url = request.url?.appending(queryItems: [URLQueryItem(name: "date", value: date)])
+        let _: Cleared = try await perform(request)
     }
 }

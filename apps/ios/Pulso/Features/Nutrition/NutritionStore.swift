@@ -1,14 +1,16 @@
 import Foundation
 import Observation
 
-/// The Dieta tab's state: the selected day, its log and plan, the last 7 days
-/// and frequent foods. Errors go to `PulsoModel.shared.handle(_:)`.
+/// The Dieta tab's state: the selected day, its log, plan and water, the last 7
+/// days and frequent foods. Errors go to `PulsoModel.shared.handle(_:)`.
 @MainActor
 @Observable
 final class NutritionStore {
     var date = Date.now
     private(set) var day: NutritionDay?
     private(set) var week: [NutritionSummary] = []
+    /// Water ml per day of `week`, by `YYYY-MM-DD`.
+    private(set) var weekWater: [String: Double] = [:]
     private(set) var frequent: [FrequentFood] = []
     private(set) var loading = false
 
@@ -16,6 +18,7 @@ final class NutritionStore {
     var dateKey: String { NutritionDate.string(date) }
     var isToday: Bool { Calendar.current.isDateInToday(date) }
     var targets: NutritionTargets? { day?.summary.targets }
+    var water: WaterDay? { day?.water }
 
     func meals(in slot: MealSlot) -> [MealEntry] { day?.meals.filter { $0.slot == slot } ?? [] }
 
@@ -23,6 +26,11 @@ final class NutritionStore {
 
     func shift(days: Int) async {
         date = Calendar.current.date(byAdding: .day, value: days, to: date) ?? date
+        await load()
+    }
+
+    func goToToday() async {
+        date = .now
         await load()
     }
 
@@ -35,7 +43,9 @@ final class NutritionStore {
             async let day = api.nutritionDay(key)
             async let week = api.nutritionHistory(days: 7, to: key)
             async let frequent = api.frequentFoods()
-            (self.day, self.week, self.frequent) = try await (day, week, frequent)
+            let history: (days: [NutritionSummary], water: [String: Double])
+            (self.day, history, self.frequent) = try await (day, week, frequent)
+            (self.week, weekWater) = history
         } catch {
             PulsoModel.shared.handle(error)
         }
@@ -69,6 +79,51 @@ final class NutritionStore {
         var copied = 0
         await run { copied = try await api.copyMeals(from: NutritionDate.string(previous), to: dateKey).count }
         return copied
+    }
+
+    // MARK: Water
+
+    /// Adds water right away (the card fills before the Mac answers), then mirrors it to Salud.
+    func addWater(ml: Double) async {
+        guard let api, ml > 0 else { return }
+        let key = dateKey
+        if var water = day?.water {
+            water.totalMl += ml
+            day?.water = water
+        }
+        do {
+            let (entry, updated) = try await api.logWater(ml: ml, date: key, loggedAt: eatenAtNow().timeIntervalSince1970 * 1000)
+            if dateKey == key { day?.water = updated }
+            await WaterHealth.save(entry)
+        } catch {
+            PulsoModel.shared.handle(error)
+            await load()
+        }
+    }
+
+    /// Removes the day's latest water entry, here and in Salud.
+    func undoWater() async {
+        guard let api, let last = day?.water?.entries.last else { return }
+        day?.water?.entries.removeLast()
+        day?.water?.totalMl -= last.amountMl
+        do {
+            try await api.deleteWater(last.id)
+            await WaterHealth.delete(last.id)
+        } catch {
+            PulsoModel.shared.handle(error)
+        }
+        await load()
+    }
+
+    func saveWaterSettings(_ settings: WaterSettings) async {
+        guard let api else { return }
+        await run { _ = try await api.saveWaterSettings(settings) }
+    }
+
+    /// "Volver al plan": drops the Coach's adjustment for the selected day.
+    func clearAdjustment() async {
+        guard let api else { return }
+        await run { try await api.clearAdjustment(date: dateKey) }
     }
 
     func saveTargets(_ targets: NutritionTargets) async {
