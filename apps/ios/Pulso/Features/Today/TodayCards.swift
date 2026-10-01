@@ -82,7 +82,7 @@ private struct FactorPill: View {
             // A third of a 375 pt card is ~95 pt: "7 h 45 min" at large text has to shrink, not wrap.
             Text(value).font(.subheadline.weight(.semibold)).fontDesign(.rounded).contentTransition(.numericText())
                 .lineLimit(1).minimumScaleFactor(0.7)
-            Text(factor.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+            Text(factor.estimated == true ? "Reposo estimado" : factor.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity)
@@ -145,12 +145,12 @@ struct ActivityCard: View {
             HStack(alignment: .top) {
                 goal("Pasos", day?.steps, TodayStore.stepGoal, Theme.body, "figure.walk") { Int($0).formatted() }
                 goal("Activas", day?.activeEnergy, TodayStore.energyGoal, Theme.energy, "flame.fill") { "\(Int($0)) kcal" }
-                goal("Ejercicio", day?.exerciseMinutes, TodayStore.exerciseGoal, Theme.training, "bolt.fill") { "\(Int($0)) min" }
+                goal("Ejercicio", day?.exerciseMinutes, TodayStore.exerciseGoal, Theme.training, "bolt.fill", estimated: day?.exerciseMinutesEstimated == true) { "\(Int($0)) min" }
             }
         }
     }
 
-    private func goal(_ label: String, _ value: Double?, _ target: Double, _ color: Color, _ icon: String, _ format: (Double) -> String) -> some View {
+    private func goal(_ label: String, _ value: Double?, _ target: Double, _ color: Color, _ icon: String, estimated: Bool = false, _ format: (Double) -> String) -> some View {
         let done = (value ?? 0) >= target
         return VStack(spacing: 6) {
             Ring(progress: (value ?? 0) / target, color: color, lineWidth: 8) {
@@ -173,6 +173,9 @@ struct ActivityCard: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
+            if estimated {
+                Text("estimado").font(.caption2).foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -308,7 +311,10 @@ struct TrendsCard: View {
             CardTitle(text: "Tendencias · 14 días", systemImage: "chart.xyaxis.line")
             Sparkline(title: "VFC", unit: "ms", points: store.trend(14) { $0.hrv }, baseline: baseline("hrv"), color: Theme.body)
             Divider()
-            Sparkline(title: "Pulso en reposo", unit: "lpm", points: store.trend(14) { $0.restingHeartRate }, baseline: baseline("resting_hr"), color: Theme.protein)
+            Sparkline(
+                title: "Pulso en reposo", unit: "lpm", points: store.trend(14) { $0.restingHeartRate }, baseline: baseline("resting_hr"), color: Theme.protein,
+                estimatedDays: Set(store.days.filter { $0.restingHeartRateEstimated == true }.compactMap { DayKey.date($0.date) })
+            )
             let vo2 = store.days.last { $0.vo2max != nil }?.vo2max
             let breathing = store.today?.respiratoryRate
             if vo2 != nil || breathing != nil {
@@ -344,6 +350,8 @@ private struct Sparkline: View {
     let points: [(date: Date, value: Double)]
     let baseline: Double?
     let color: Color
+    /// Days whose value is an estimate, flagged in the readout.
+    var estimatedDays: Set<Date> = []
     @State private var selected: Date?
 
     private var shown: (date: Date, value: Double)? {
@@ -365,6 +373,9 @@ private struct Sparkline: View {
                     Text(selected == nil ? "hoy" : shown.date.formatted(.dateTime.day().month(.abbreviated)))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                    if estimatedDays.contains(shown.date) {
+                        Text("· estimado").font(.caption).foregroundStyle(.tertiary)
+                    }
                 }
             }
             .lineLimit(1)

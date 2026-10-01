@@ -37,6 +37,67 @@ final class TodayTests: XCTestCase {
         XCTAssertNil(night.awake)
     }
 
+    // MARK: - Estimates
+
+    private func heart(_ bpm: [Double], from start: Date, every seconds: TimeInterval) -> [HealthEstimates.HeartSample] {
+        bpm.enumerated().map { HealthEstimates.HeartSample(date: start.addingTimeInterval(Double($0.offset) * seconds), bpm: $0.element) }
+    }
+
+    func testRestingHeartRateIsTheLowestFiveMinuteAverageAsleep() {
+        let night = DateInterval(start: t0, duration: 3 * 3600)
+        var bpm = [Double](repeating: 60, count: 72)
+        (bpm[10], bpm[11], bpm[12]) = (50, 52, 54)
+        // Lower readings awake must not count while there is a night to use.
+        let awake = heart([40, 41, 42, 43, 44, 45], from: night.end.addingTimeInterval(3600), every: 150)
+        let samples = heart(bpm, from: t0, every: 150) + awake
+        let day = DateInterval(start: t0.addingTimeInterval(-3600), duration: 86_400)
+        let resting = HealthEstimates.restingHeartRate(samples: samples, asleep: [night], day: day)
+        XCTAssertEqual(try XCTUnwrap(resting), 52, accuracy: 1e-9)
+    }
+
+    func testRestingHeartRateFallsBackToTheDaysFifthPercentile() {
+        let day = DateInterval(start: t0, duration: 86_400)
+        let samples = heart((0..<100).map { 50 + Double($0) }, from: t0, every: 60)
+        let resting = HealthEstimates.restingHeartRate(samples: samples, asleep: [], day: day)
+        XCTAssertEqual(try XCTUnwrap(resting), 54.95, accuracy: 1e-9)
+    }
+
+    func testRestingHeartRateNeedsEnoughSamples() {
+        let day = DateInterval(start: t0, duration: 86_400)
+        let night = DateInterval(start: t0, duration: 3600)
+        XCTAssertNil(HealthEstimates.restingHeartRate(samples: heart([55, 56, 57, 58, 59], from: t0, every: 150), asleep: [night], day: day))
+        XCTAssertNil(HealthEstimates.restingHeartRate(samples: [], asleep: [], day: day))
+    }
+
+    func testWorkoutMinutesClipToTheDayAndCountOverlapsOnce() {
+        let day = DateInterval(start: t0, duration: 86_400)
+        let fromYesterday = DateInterval(start: t0.addingTimeInterval(-1800), duration: 3600)
+        let a = DateInterval(start: t0.addingTimeInterval(2 * 3600), duration: 3600)
+        let b = DateInterval(start: t0.addingTimeInterval(2.5 * 3600), duration: 3600)
+        XCTAssertEqual(HealthEstimates.workoutMinutes([fromYesterday, a, b], in: day), 30 + 90)
+        XCTAssertNil(HealthEstimates.workoutMinutes([DateInterval(start: t0.addingTimeInterval(-7200), duration: 3600)], in: day))
+        XCTAssertNil(HealthEstimates.workoutMinutes([], in: day))
+    }
+
+    func testAsleepIntervalsGroupByNightAndSkipInBed() {
+        let core = HealthMetrics.SleepSegment(stage: .asleepCore, interval: DateInterval(start: t0, duration: 3 * 3600))
+        let inBed = HealthMetrics.SleepSegment(stage: .inBed, interval: DateInterval(start: t0, duration: 5 * 3600))
+        let asleep = HealthMetrics.asleepIntervals([core, inBed])
+        XCTAssertEqual(asleep, [DayKey.night(endingAt: core.interval.end): [core.interval]])
+    }
+
+    func testEstimatedFlagsAreSentOnlyWhenSet() throws {
+        let day = DailyMetrics(date: "2026-10-01", restingHeartRate: 52, restingHeartRateEstimated: true)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(day)) as? [String: Any])
+        XCTAssertEqual(sent["restingHeartRateEstimated"] as? Bool, true)
+        XCTAssertNil(sent["exerciseMinutesEstimated"])
+
+        let json = Data(#"{"date":"2026-10-01","restingHeartRate":52,"restingHeartRateEstimated":true,"exerciseMinutesEstimated":false}"#.utf8)
+        let received = try JSONDecoder().decode(DailyMetrics.self, from: json)
+        XCTAssertEqual(received.restingHeartRateEstimated, true)
+        XCTAssertEqual(received.exerciseMinutesEstimated, false)
+    }
+
     func testGreetingByTimeOfDay() {
         let at = { Calendar.current.date(bySettingHour: $0, minute: 0, second: 0, of: self.t0)! }
         XCTAssertEqual(TodayView.greeting(at: at(8)), "Buenos días")
