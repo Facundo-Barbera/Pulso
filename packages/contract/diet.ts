@@ -55,7 +55,7 @@ export type PlanSlot = {
 
 /** The entries tied to a meal, as one meal: "Tortitas de carne de res, queso amarillo y arroz blanco · 965 kcal". */
 export type RealMeal = {
-  /** Entry names in one line, or the person's own words when they gave them. */
+  /** What was eaten in one line: a dish by its name ("Batido de proteína con fresas"), other entries by theirs. `entryIds` expand it. */
   label: string;
   entryIds: string[];
   /** Totals of those entries: kcal and grams. */

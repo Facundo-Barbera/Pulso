@@ -5,11 +5,13 @@
  * phone does not need (editing an entry, eating several plan items at once)
  * live here too, built on the store's own functions.
  */
-import type { DailySummary, FrequentFood, MealEntry, MealInput, MealSlot, NutritionTargets, PlanDay, PlanItem, WaterDay } from "@pulso/contract";
+import type { DailySummary, FrequentFood, MealEntry, MealInput, MealSlot, NutritionTargets, PlanDay, PlanItem, SavedDish, WaterDay } from "@pulso/contract";
 import { MEAL_SLOTS } from "@pulso/contract";
 import { db } from "../db";
 import { addDays, localDate } from "../nutrition/dates";
 import { slotViews } from "../nutrition/horizon";
+import { dishName, dishPosition, joinDish } from "../nutrition/dishes";
+import { untie } from "../nutrition/reconcile";
 import { findSlotRow } from "../nutrition/slots";
 import {
   activePlan,
@@ -19,6 +21,7 @@ import {
   getAdjustment,
   listMeals,
   logMeal,
+  logMeals,
   nutritionDay,
   planDayIndex,
   summaries,
@@ -91,6 +94,8 @@ export type DietaDay = {
   water: WaterDay;
   /** Foods logged most in the last 60 days, for search and one-tap add. */
   frequent: FrequentFood[];
+  /** Saved dishes (Mis platillos), most used first: offered before frequent foods. */
+  dishes: SavedDish[];
 };
 
 const SNACK_GAP_MS = 45 * 60_000;
@@ -171,6 +176,7 @@ export function dietaDay(date: string, today = localDate()): DietaDay {
     next: plan?.meals.find((m) => !logged.has(m.slot) && !m.done) ?? null,
     water: day.water,
     frequent: frequentFoods(40, today),
+    dishes: day.dishes,
   };
 }
 
@@ -245,15 +251,21 @@ export function mealById(id: string): MealEntry | undefined {
  * Rewrites an entry with what the person corrected (name, amount, macros, slot,
  * time). Where it came from — source, plan item, barcode, note — stays, and so
  * does the meal it was tied to while it stays the same meal on the same day;
- * otherwise it is reconciled again. The entry gets a new id. Undefined when it
- * does not exist.
+ * otherwise it is reconciled again. A dish's component stays in its place, at
+ * the dish's time and meal. The entry gets a new id. Undefined when it does not exist.
  */
 export function replaceMeal(id: string, input: MealInput): MealEntry | undefined {
   return db().transaction(() => {
     const old = mealById(id);
     if (!old) return undefined;
-    deleteMeal(id);
-    return logMeal({
+    const position = dishPosition(id);
+    if (old.dish) input = { ...input, slot: old.slot, eatenAt: old.eatenAt, date: old.date };
+    // deleteMeal drops a dish left empty; one replaced in place must outlive it.
+    if (old.dish) {
+      untie([id]);
+      db().query("DELETE FROM meal_entries WHERE id = ?").run(id);
+    } else deleteMeal(id);
+    const meal = logMeal({
       ...input,
       barcode: old.barcode,
       planItemId: old.planItemId,
@@ -261,6 +273,9 @@ export function replaceMeal(id: string, input: MealInput): MealEntry | undefined
       offPlan: old.offPlan,
       note: input.note === undefined ? old.note : input.note,
     }, old.source);
+    if (!old.dish) return meal;
+    joinDish(old.dish.id, [meal.id], position ?? undefined);
+    return mealById(meal.id);
   })();
 }
 
@@ -274,9 +289,10 @@ export function eatSlot(slotId: string): MealEntry[] {
   const row = findSlotRow(slotId);
   const slot = row && slotViews([row])[0];
   if (!slot || slot.status !== "planned") return [];
-  return db().transaction(() =>
-    (slot.adjusted ?? slot.items).map(({ id, ...food }) => logMeal({ ...food, slot: slot.slot, date: slot.date, planItemId: id, slotId }, "plan")),
-  )();
+  const items = slot.adjusted ?? slot.items;
+  // Several foods are one dish, named as the plan names the meal.
+  const dish = items.length > 1 ? { name: slot.name ?? dishName(items) } : undefined;
+  return logMeals(items.map(({ id, ...food }) => ({ ...food, slot: slot.slot, date: slot.date, planItemId: id, slotId })), "plan", dish);
 }
 
 /** "Comí lo del plan": logs each item of the active plan not yet eaten on `date`. Unknown ids are skipped. */

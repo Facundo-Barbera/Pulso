@@ -2,6 +2,9 @@ import { tool } from "@anthropic-ai/claude-agent-sdk";
 import type { FoodProduct, MealInput, PortionEstimate } from "@pulso/contract";
 import { z } from "zod";
 import { lookupBarcode, normalizeBarcode } from "./barcode";
+import { dishTools, safely } from "./dish-tools";
+import { dishName } from "./dishes";
+import { addToDish } from "./logged-dishes";
 import { parseTime } from "./dates";
 import { estimatePortion, PortionError } from "./portion";
 import { dateString, macroShape, mealShape, planItem, planShape, slot, targetsShape, toMealInput } from "./inputs";
@@ -29,7 +32,8 @@ export function logItem(estimate: PortionEstimate) {
 export const nutritionTools = [
   tool(
     "log_meal",
-    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Set `at` to the time they said ('a las 14:30' → '14:30') and `description` to their own words. Pick the item slot from what it was: the meal (desayuno, comida, cena…) for a main meal, 'snack' for snacks and drinks between meals. " +
+    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. " +
+      "Foods eaten together (a plate, a shake, a sandwich, a bowl) are ONE dish: pass every food as its own item and name the dish in `dish` ('Tortitas de carne con queso y arroz', 'Batido de proteína con fresas'); never log them as separate meals and never cram several foods into one item's name. Several items sharing a slot become one dish even without `dish` (named from the foods). If a saved dish matches (list_dishes), use log_dish instead. To add a food to a dish already logged ('también le puse fresas'), pass its dish id (each entry's dish.id) as addToDish. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Set `at` to the time they said ('a las 14:30' → '14:30') and `description` to their own words. Pick the item slot from what it was: the meal (desayuno, comida, cena…) for a main meal, 'snack' for snacks and drinks between meals. " +
       "With an active plan every meal is tied to the plan automatically (Planeado → Real): the slot you pass, else the planned item it is (planItemId from get_active_plan, or the same food name), else the meal it was logged as, else the meal whose time window holds it; it then reads «eaten as planned» when it is the plan's food and «ate this instead» otherwise, and that is undoable. Snacks and drinks under ~250 kcal between meals stay extras; the first food of the day is breakfast. " +
       "Pass slotId (get_diet_horizon) only when you know better than the time (e.g. breakfast eaten at 12:30). Each returned entry has slotId: the meal it became (null = extra). If that is wrong, fix it with place_meal. Then decide by magnitude whether to compensate (rebalance_day, spread_deviation, or nothing)",
     {
@@ -43,8 +47,10 @@ export const nutritionTools = [
       description: z.string().trim().max(300).optional().describe("The person's own words for the meal, in Spanish, e.g. 'Big Mac y papas medianas en McDonald's'"),
       offPlan: z.boolean().optional().describe("Legacy, rarely needed: with slotId, counts the meal as eaten instead of that slot even if it matches the plan's foods. Whether a meal was the plan or not is worked out automatically"),
       slotId: z.string().optional().describe("The plan slot (get_diet_horizon) this meal is, when the time alone would put it in the wrong meal. Omit otherwise"),
+      dish: z.string().trim().min(1).max(120).optional().describe("The dish's name in Spanish, when the items were eaten together as one thing, e.g. 'Batido de proteína con fresas'"),
+      addToDish: z.string().optional().describe("A logged dish's id (entry.dish.id) to add these items to, at its time and meal. at, slotId and dish are ignored"),
     },
-    async ({ items, at, date, description, offPlan, slotId }) => {
+    async ({ items, at, date, description, offPlan, slotId, dish, addToDish: into }) => {
       const when = at ? parseTime(at, date) : null;
       if (at && !when) return fail(`Unreadable time '${at}': use 'HH:MM' or ISO 8601`);
       const meal: MealInput[] = [];
@@ -61,7 +67,15 @@ export const nutritionTools = [
           slotId: slotId ?? null,
         });
       }
-      return json(logMeals(meal, "agent"));
+      if (into) return safely(() => addToDish(into, meal.map(({ slot: _s, eatenAt: _e, date: _d, ...food }) => food), "agent"));
+      const bySlot = new Map<string, MealInput[]>();
+      for (const m of meal) bySlot.set(m.slot, [...(bySlot.get(m.slot) ?? []), m]);
+      const named = bySlot.size === 1 ? dish : undefined;
+      return json(
+        [...bySlot.values()].flatMap((group) =>
+          group.length > 1 || named ? logMeals(group, "agent", { name: named ?? dishName(group) }) : logMeals(group, "agent"),
+        ),
+      );
     },
   ),
   tool(
@@ -121,7 +135,7 @@ export const nutritionTools = [
   ),
   tool(
     "list_meals",
-    "Logged food and drink entries between two local days (YYYY-MM-DD, inclusive), oldest first. Macros are totals per entry: kcal and grams. quantity + unit is the normalized amount (g, ml or serving); measure is the amount as the person said it (e.g. 2 lata, size null = 355 ml each), or null. caffeineMg and alcoholG when known. eatenAt is epoch ms; slotId is the plan meal it is the real meal of (null = an extra), offPlan true when it was eaten instead of that meal, note how the person described it. Defaults to today. Max 62 days.",
+    "Logged food and drink entries between two local days (YYYY-MM-DD, inclusive), oldest first. dish is the dish an entry is a component of ({ id, name, savedDishId }), null for a food logged on its own; a dish's components come together, in order. Macros are totals per entry: kcal and grams. quantity + unit is the normalized amount (g, ml or serving); measure is the amount as the person said it (e.g. 2 lata, size null = 355 ml each), or null. caffeineMg and alcoholG when known. eatenAt is epoch ms; slotId is the plan meal it is the real meal of (null = an extra), offPlan true when it was eaten instead of that meal, note how the person described it. Defaults to today. Max 62 days.",
     { from: dateString.optional(), to: dateString.optional() },
     async ({ from, to }) => {
       const start = from ?? localDate();
@@ -209,5 +223,6 @@ export const nutritionTools = [
     { goalMl: z.number().min(250).max(10000).nullable() },
     async ({ goalMl }) => json(setWaterSettings({ ...getWaterSettings(), goalMl })),
   ),
+  ...dishTools,
   ...planTools,
 ];

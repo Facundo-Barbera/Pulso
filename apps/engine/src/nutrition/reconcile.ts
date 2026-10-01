@@ -12,6 +12,7 @@ import { mealTimesBetween } from "../calendar/store";
 import { db } from "../db";
 import { nameKey } from "../shopping/aggregate";
 import { addDays, localDate } from "./dates";
+import { dishNames, mealNames } from "./dishes";
 import { sum } from "./macros";
 import { revise } from "./revisions";
 import { findSlotRow, itemsOf, linksOf, slotOrder, slotRows, slotWithItem, updateSlot, type LinkRow, type SlotRow } from "./slots";
@@ -167,13 +168,16 @@ export function settle(slotId: string): void {
 /**
  * Ties entries to a slot: plan items as planned, anything
  * else instead of it. A plan item is one logged from the plan (a swapped item of
- * the Coach's adjustment has an id of its own) or one named like the slot's foods
- * ("Avena" for the planned avena, told to the Coach).
+ * the Coach's adjustment has an id of its own), one named like the slot's foods
+ * ("Avena" for the planned avena, told to the Coach) or a component of a dish
+ * named like the meal ("Pollo con arroz").
  */
 export function tie(entries: Logged[], row: SlotRow, forceReplacement = false): void {
   const planned = new Set([row.name, ...itemsOf(row).map((i) => i.name)].filter((n): n is string => !!n).map(nameKey));
+  const dishes = dishNames(entries.map((e) => e.id));
   for (const e of entries) {
-    const asPlanned = !forceReplacement && (!!e.planItemId || planned.has(nameKey(e.name)));
+    const dish = dishes.get(e.id)?.name;
+    const asPlanned = !forceReplacement && (!!e.planItemId || planned.has(nameKey(e.name)) || (!!dish && !!row.name && nameKey(dish) === nameKey(row.name)));
     db().query("DELETE FROM meal_entry_pins WHERE entry_id = ?").run(e.id);
     db().query("INSERT OR REPLACE INTO meal_slot_links (entry_id, slot_id, role) VALUES (?, ?, ?)").run(e.id, row.id, asPlanned ? "planned" : "replacement");
   }
@@ -192,7 +196,7 @@ export function untie(entryIds: string[]): string[] {
 
 /** One line for what tying did, e.g. "Comida del mié 1: tortitas de carne de res y arroz blanco en vez de pasta boloñesa (+348 kcal)." */
 function tieSummary(row: SlotRow, entries: Logged[], before: LinkRow[]): string {
-  const what = lower(eatenWords(entries.map((e) => e.name)));
+  const what = lower(eatenWords(mealNames(entries)));
   const after = linksOf([row.id]);
   if (before.length) return `${where(row)}: también ${what}.`;
   if (after.every((l) => l.role === "planned")) return `${where(row)}: como estaba planeado.`;

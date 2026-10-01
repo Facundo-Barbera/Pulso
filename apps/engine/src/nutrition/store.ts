@@ -19,6 +19,8 @@ import type {
 import { db } from "../db";
 import { addDays, DAY_MS, daysBetween, localDate } from "./dates";
 import { add, MACRO_KEYS, round, zero } from "./macros";
+import { repairDishesOnce } from "./dish-backfill";
+import { attachDish, dropEmptyDishes, listSavedDishes } from "./dishes";
 import { reconcileGroup, repairOnce, untie } from "./reconcile";
 import { dayRow, itemsOf, materialize, planDayIndex, slotRows } from "./slots";
 import { waterDay } from "./water";
@@ -51,6 +53,9 @@ type MealRow = {
   measure_size: number | null;
   caffeine_mg: number | null;
   alcohol_g: number | null;
+  dish_id: string | null;
+  dish_name: string | null;
+  saved_dish_id: string | null;
 };
 
 const measureOf = (r: MealRow): Measure | null =>
@@ -79,12 +84,17 @@ const toEntry = (r: MealRow): MealEntry => ({
   measure: measureOf(r),
   caffeineMg: r.caffeine_mg,
   alcoholG: r.alcohol_g,
+  dish: r.dish_id && r.dish_name !== null ? { id: r.dish_id, name: r.dish_name, savedDishId: r.saved_dish_id } : null,
 });
 
 // Every meal_entries read joins its side tables.
-const ENTRY_SELECT = `SELECT m.*, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g, l.slot_id, l.role
+const ENTRY_SELECT = `SELECT m.*, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g, l.slot_id, l.role,
+    dc.dish_id, md.name AS dish_name, md.saved_dish_id
   FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id LEFT JOIN meal_entry_detail d ON d.entry_id = m.id
-  LEFT JOIN meal_slot_links l ON l.entry_id = m.id`;
+  LEFT JOIN meal_slot_links l ON l.entry_id = m.id
+  LEFT JOIN meal_dish_components dc ON dc.entry_id = m.id LEFT JOIN meal_dishes md ON md.id = dc.dish_id`;
+// A dish's components stay together, in their order.
+const ENTRY_ORDER = "ORDER BY m.date, m.eaten_at, dc.position";
 
 function insertMeal(input: MealInput, source: MealSource): MealEntry {
   const eatenAt = Math.round(input.eatenAt ?? Date.now());
@@ -110,6 +120,7 @@ function insertMeal(input: MealInput, source: MealSource): MealEntry {
     measure: input.measure ?? null,
     caffeineMg: input.caffeineMg ?? null,
     alcoholG: input.alcoholG ?? null,
+    dish: null,
   };
   db()
     .query(
@@ -135,14 +146,25 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
   return logMeals([input], source)[0]!;
 }
 
+/** A dish to log entries as: its name, and the saved dish it came from. */
+export type DishLog = { name: string; savedDishId?: string | null };
+
 /**
  * Logs entries and ties each meal of them (items logged together) to the plan
  * slot it belongs to — the slot given, else the one reconcile.ts infers — or
- * leaves it as an extra. `offPlan` with a slot ties it as eaten instead.
+ * leaves it as an extra. `offPlan` with a slot ties it as eaten instead. With
+ * `dish`, the entries are its components: one meal at the first one's time and slot.
  */
-export function logMeals(inputs: MealInput[], source?: MealSource): MealEntry[] {
+export function logMeals(inputs: MealInput[], source?: MealSource, dish?: DishLog): MealEntry[] {
+  if (dish && inputs.length) {
+    const [first] = inputs as [MealInput];
+    const eatenAt = Math.round(first.eatenAt ?? Date.now());
+    const date = first.date ?? localDate(eatenAt);
+    inputs = inputs.map((i) => ({ ...i, eatenAt, date, slot: first.slot, slotId: first.slotId, offPlan: first.offPlan }));
+  }
   return db().transaction(() => {
     const entries = inputs.map((input) => insertMeal(input, source ?? input.source ?? "manual"));
+    if (dish && entries.length) attachDish(entries.map((e) => e.id), dish.name, dish.savedDishId ?? null);
     const plan = activePlan();
     if (plan) for (const date of new Set(entries.map((e) => e.date))) if (date >= localDate()) materialize(plan, date);
     const given = new Map(entries.map((e, i) => [e.id, inputs[i]!] as const));
@@ -165,22 +187,33 @@ export function logMeals(inputs: MealInput[], source?: MealSource): MealEntry[] 
 export function deleteMeal(id: string): boolean {
   return db().transaction(() => {
     untie([id]);
-    return db().query("DELETE FROM meal_entries WHERE id = ?").run(id).changes > 0;
+    const deleted = db().query("DELETE FROM meal_entries WHERE id = ?").run(id).changes > 0;
+    dropEmptyDishes();
+    return deleted;
   })();
 }
 
 /** Entries from `from` to `to` inclusive (YYYY-MM-DD), in eating order. */
 export function listMeals(from: string, to: string = from): MealEntry[] {
   return db()
-    .query<MealRow, [string, string]>(`${ENTRY_SELECT} WHERE m.date BETWEEN ? AND ? ORDER BY m.date, m.eaten_at`)
+    .query<MealRow, [string, string]>(`${ENTRY_SELECT} WHERE m.date BETWEEN ? AND ? ${ENTRY_ORDER}`)
     .all(from, to)
     .map(toEntry);
 }
 
-/** Duplicates a day's entries onto another day, keeping times of day. */
+/** Duplicates a day's entries onto another day, keeping times of day and dishes. */
 export function copyDay(from: string, to: string): MealEntry[] {
   const shift = daysBetween(from, to) * DAY_MS;
-  return logMeals(listMeals(from).map((m) => ({ ...m, date: to, eatenAt: m.eatenAt + shift })));
+  const copy = (m: MealEntry): MealInput => ({ ...m, date: to, eatenAt: m.eatenAt + shift });
+  const meals = listMeals(from);
+  return db().transaction(() => {
+    const loose = logMeals(meals.filter((m) => !m.dish).map(copy));
+    const dishes = [...new Set(meals.flatMap((m) => (m.dish ? [m.dish.id] : [])))].flatMap((id) => {
+      const parts = meals.filter((m) => m.dish?.id === id);
+      return logMeals(parts.map(copy), undefined, { name: parts[0]!.dish!.name, savedDishId: parts[0]!.dish!.savedDishId });
+    });
+    return [...loose, ...dishes];
+  })();
 }
 
 /**
@@ -373,8 +406,13 @@ export function clearAdjustment(date: string): boolean {
   return db().query("DELETE FROM plan_adjustments WHERE date = ?").run(date).changes > 0;
 }
 
-/** Runs the one-off backfill (reconcile.ts) once today is laid out, so today's loose entries find their meals too. */
+/**
+ * Runs the one-off backfills: entries eaten together become dishes
+ * (dish-backfill.ts), then, once today is laid out, loose entries find their
+ * meals (reconcile.ts).
+ */
 export function ensureReconciled(): void {
+  repairDishesOnce();
   const plan = activePlan();
   if (!plan) return;
   materialize(plan, localDate());
@@ -384,5 +422,5 @@ export function ensureReconciled(): void {
 export function nutritionDay(date: string): NutritionDay {
   ensureReconciled();
   const meals = listMeals(date);
-  return { summary: summarize(date, meals, getTargets()), meals, plan: planForDay(date, meals), water: waterDay(date) };
+  return { summary: summarize(date, meals, getTargets()), meals, plan: planForDay(date, meals), water: waterDay(date), dishes: listSavedDishes() };
 }

@@ -64,6 +64,36 @@ meal (halfway when closer): breakfast at 8 and lunch at 14 → breakfast until 1
   again. A one-off backfill (`nutrition_repairs`) ties loose entries of the last 14
   laid-out days the first time a day is read.
 
+## Dishes (platillos) (`dishes.ts`, `logged-dishes.ts`, `dish-backfill.ts`)
+
+Foods eaten together — a plate, a shake, a sandwich — are **one dish**, never loose
+entries and never several foods crammed into one name.
+
+- **A dish eaten** is a name (`meal_dishes`) over ordinary entries, its components
+  (`meal_dish_components`, in order). Each component keeps its own amount, measure,
+  barcode and macros; the dish's total is theirs. Day totals, history, frequent foods
+  and shopping read the entries as before; `MealEntry.dish` (`{ id, name, savedDishId }`)
+  is null for a food on its own, so old entries read unchanged.
+- One dish is one meal: components share time and meal, and reconcile together. The
+  real meal of a slot reads as the dish's name (`RealMeal.label`), expandable through
+  `entryIds`; a dish named like the planned meal counts as planned. Ticking a planned
+  meal of several foods logs it as a dish with the plan's name.
+- **Saved dishes** (`saved_dishes`, Mis platillos): one default portion of components,
+  a usual slot (null = the meal nearest the time) and uses (dishes eaten from it). Made
+  from a dish eaten («Guardar como platillo»), one portion of a plan recipe, or by hand.
+  Logging one takes a `scale` and one-off `overrides` (a component's new amount, in its
+  own kind of unit, macros in proportion; or removed); the template never changes.
+- **Coach**: `log_meal` takes `dish` (several items of one meal are a dish even without
+  it, named from the foods) and `addToDish`; `list_dishes`, `save_dish`, `log_dish`,
+  `update_dish`, `delete_dish`. The persona says when to use each.
+- **Backfill** (`dishes-backfill`, once, the first time a day is read): loose entries of
+  the same day and meal logged within 5 minutes become a dish; a food that says it went
+  in a shake ("Fresas (…, en el batido)") joins the shake logged closest to it that day
+  (within 90 min). Named after the planned meal when eaten exactly as it, else from the
+  foods ("Tortitas de carne con queso y arroz", "Batido de proteína con fresas"). Entries
+  are not rewritten — a name with several foods in it stays one component, since
+  splitting its macros would be a guess.
+
 ## Adjustments and compensation (`adjust.ts`, `ops.ts`)
 
 - The day's **goal** = targets (or the plan day's total) + `plan_days.shift_kcal`.
@@ -143,6 +173,10 @@ can propose cooking days; it never schedules them itself.
 | `GET/POST recipes`, `GET recipes/[id]` | `{ recipes }`, `{ recipe }` |
 | `GET preps` | `{ preps: PrepBatch[] }` |
 | `GET prep-days?from&days` | ranked days, tight meals, batch recipes |
+| `GET/POST dishes` | `{ dishes }` (most used first); save `{ loggedDishId \| recipeId \| name+components }` → `{ dish }` |
+| `PUT/DELETE dishes/[id]` | update (components replace) → `{ dish }` |
+| `POST dishes/[id]/log` | `{ scale?, overrides?, slot?, eatenAt \| time, date?, slotId? }` → `{ meals }` |
+| `POST meals/dish`, `PATCH meals/dish/[id]` | a new dish eaten from components; rename or `add` → `{ meals }` |
 
 Errors: 400 `invalid_request`, 404 `not_found`, 409 `no_plan` / `plan_conflict`
 (Spanish `message`, engine reason in `detail`) / `cannot_undo`. Existing routes

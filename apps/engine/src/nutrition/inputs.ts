@@ -2,7 +2,7 @@
  * Zod shapes shared by the agent tools (which take raw shapes) and the phone
  * routes (which parse untrusted bodies with `z.object(shape)`).
  */
-import { HOUSEHOLD_UNITS, MEAL_SLOTS, MEASURE_UNITS, QUANTITY_UNITS, WATER_UNITS, type MealInput } from "@pulso/contract";
+import { HOUSEHOLD_UNITS, MEAL_SLOTS, MEASURE_UNITS, QUANTITY_UNITS, WATER_UNITS, type MealInput, type QuantityUnit } from "@pulso/contract";
 import { z } from "zod";
 import { parseMeasure, toQuantity } from "./measure";
 
@@ -49,12 +49,18 @@ export const mealShape = {
 };
 export const mealSchema = z.object(mealShape);
 
+/** One food of a dish: a meal item without its own slot or time (the dish has them). */
+export const componentSchema = mealSchema.omit({ slot: true, eatenAt: true, date: true });
+
+type Amount = { name: string; measure?: z.infer<typeof mealSchema>["measure"]; quantity?: number; unit?: QuantityUnit };
+type Parsed<T> = Omit<T, "measure" | "quantity" | "unit"> & Pick<MealInput, "quantity" | "unit" | "measure">;
+
 /**
- * A parsed meal ready to store: the normalized quantity comes from `measure`
- * when there is one, else from quantity + unit (grams by default). A message
- * instead when the amount is missing or unreadable.
+ * A parsed meal (or dish component) ready to store: the normalized quantity
+ * comes from `measure` when there is one, else from quantity + unit (grams by
+ * default). A message instead when the amount is missing or unreadable.
  */
-export function toMealInput({ measure, quantity, unit: quantityUnit, ...rest }: z.infer<typeof mealSchema>): MealInput | string {
+export function toMealInput<T extends Amount>({ measure, quantity, unit: quantityUnit, ...rest }: T): Parsed<T> | string {
   if (typeof measure === "string") {
     const parsed = parseMeasure(measure);
     return parsed ? { ...rest, ...parsed } : `Unreadable measure '${measure}': say it like '2 latas', '250 ml' or '30 g'`;

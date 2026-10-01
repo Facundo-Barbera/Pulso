@@ -161,4 +161,28 @@ export const NUTRITION_SCHEMA = `
     undone_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS plan_revisions_plan ON plan_revisions (plan_id, created_at);
+  -- Dishes eaten (platillos): entries with a meal_dish_components row are the dish's components.
+  -- Entries without one are single foods, as before.
+  CREATE TABLE IF NOT EXISTS meal_dishes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    saved_dish_id TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS meal_dish_components (
+    entry_id TEXT PRIMARY KEY REFERENCES meal_entries (id) ON DELETE CASCADE,
+    dish_id TEXT NOT NULL REFERENCES meal_dishes (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS meal_dish_components_dish ON meal_dish_components (dish_id);
+  -- Mis platillos: reusable dishes; components_json holds one default portion.
+  CREATE TABLE IF NOT EXISTS saved_dishes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slot TEXT,
+    components_json TEXT NOT NULL,
+    recipe_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
 `;

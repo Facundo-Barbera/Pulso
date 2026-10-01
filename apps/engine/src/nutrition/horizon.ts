@@ -4,6 +4,7 @@ import { db } from "../db";
 import type { Line } from "../shopping/aggregate";
 import { addDays, localDate } from "./dates";
 import { pick, sum } from "./macros";
+import { mealNames } from "./dishes";
 import { eatenWords, mealClock, minuteOfDay, MISSED_AFTER_MIN } from "./reconcile";
 import { findRecipe, ingredientLines, prepRows, type PrepRow } from "./recipes";
 import { lastRevision } from "./revisions";
@@ -25,12 +26,12 @@ export function statusOf(row: SlotRow, links: LinkRow[]): SlotStatus {
 
 type LinkedEntry = Macros & { id: string; name: string; eaten_at: number };
 
-/** The entries tied to a slot, as one real meal. */
+/** The entries tied to a slot, as one real meal: a dish reads as its name. */
 function realMeal(own: LinkRow[], entries: Map<string, LinkedEntry>): RealMeal | null {
   const eaten = own.map((l) => entries.get(l.entry_id)).filter((e): e is LinkedEntry => !!e).sort((a, b) => a.eaten_at - b.eaten_at);
   if (!eaten.length) return null;
   return {
-    label: eatenWords(eaten.map((e) => e.name)),
+    label: eatenWords(mealNames(eaten)),
     entryIds: eaten.map((e) => e.id),
     macros: sum(eaten.map(pick)),
     eatenAt: eaten[0]!.eaten_at,
@@ -65,7 +66,7 @@ export function slotViews(rows: SlotRow[], now = Date.now()): PlanSlot[] {
     const items = itemsOf(row);
     const meal = status === "planned" ? adjustments.get(row.date)?.meals.find((m) => m.slot === row.slot && m.change !== "same") : undefined;
     const adjusted: PlanItem[] | null = meal?.items ?? null;
-    const replacedBy = own.filter((l) => l.role === "replacement").map((l) => entries.get(l.entry_id)?.name).filter(Boolean);
+    const replacedBy = mealNames(own.filter((l) => l.role === "replacement").flatMap((l) => entries.get(l.entry_id) ?? []));
     const recipe = row.kind === "recipe" && row.recipe_id ? findRecipe(row.recipe_id) : null;
     return {
       id: row.id,

@@ -8,6 +8,7 @@ import type {
   Medication,
   NutritionTargets,
   Program,
+  SavedDish,
   SessionSaved,
   WaterEntry,
 } from "@pulso/contract";
@@ -47,7 +48,7 @@ const SUMMARIES: Record<string, Summary> = {
   log_meal: (entries: MealEntry[]) => ({
     title: "Comida registrada",
     detail: [
-      entries[0]?.note ?? (entries.length === 1 ? entries[0]!.name : `${entries.length} alimentos`),
+      entries[0]?.dish?.name ?? entries[0]?.note ?? (entries.length === 1 ? entries[0]!.name : `${entries.length} alimentos`),
       `${n(entries.reduce((sum, e) => sum + e.kcal, 0))} kcal`,
       typeof entries[0]?.eatenAt === "number" ? new Date(entries[0].eatenAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : null,
     ]
@@ -55,6 +56,8 @@ const SUMMARIES: Record<string, Summary> = {
       .join(" · "),
     tab: "dieta",
   }),
+  log_dish: (entries: MealEntry[]) => SUMMARIES.log_meal!(entries),
+  save_dish: (d: SavedDish) => ({ title: "Platillo guardado", detail: `${d.name} · ${n(d.macros.kcal)} kcal`, tab: "dieta" }),
   // The summary already says what changed and where the day ends.
   adjust_day_plan: (a: DayAdjustment & { stored: boolean }) => ({ title: a.stored ? "Plan de hoy ajustado" : "Sin comidas por ajustar", detail: a.summary, tab: "dieta" }),
   log_water: (r: { entry: WaterEntry; totalMl: number; goalMl: number }) => ({

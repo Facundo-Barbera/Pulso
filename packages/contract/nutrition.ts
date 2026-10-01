@@ -77,11 +77,25 @@ export type MealEntry = Macros & Stimulants & {
   note: string | null;
   /** The amount as said ("2 latas"); null when it was logged straight in g, ml or servings. */
   measure: Measure | null;
+  /** The dish (platillo) this entry is a component of; null for a food logged on its own. */
+  dish: DishRef | null;
+};
+
+/**
+ * A dish eaten: several foods eaten together as one thing ("Batido de proteína
+ * con fresas"). Its components are ordinary entries carrying this ref, so day
+ * totals, the plan and history read them as before; the dish's total is theirs.
+ */
+export type DishRef = {
+  id: string;
+  name: string;
+  /** The saved dish (Mis platillos) it was logged from, if any. */
+  savedDishId: string | null;
 };
 
 export type MealInput = Omit<
   MealEntry,
-  "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "slotId" | "offPlan" | "note" | "measure" | "caffeineMg" | "alcoholG"
+  "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "slotId" | "offPlan" | "note" | "measure" | "caffeineMg" | "alcoholG" | "dish"
 > & {
   /** Defaults to now. */
   eatenAt?: number;
@@ -243,8 +257,39 @@ export type WaterDay = {
   settings: WaterSettings;
 };
 
-/** Everything the Dieta tab draws for one day, in one request. */
-export type NutritionDay = { summary: DailySummary; meals: MealEntry[]; plan: PlanForDay | null; water: WaterDay };
+/** Everything the Dieta tab draws for one day, in one request. `dishes` are the saved ones, most used first. */
+export type NutritionDay = { summary: DailySummary; meals: MealEntry[]; plan: PlanForDay | null; water: WaterDay; dishes: SavedDish[] };
+
+/** One food in a saved dish, as it is logged by default. Macros are totals for its amount. */
+export type DishComponent = Macros &
+  Stimulants & { name: string; quantity: number; unit: QuantityUnit; measure: Measure | null; barcode: string | null };
+
+/** A saved dish (Mis platillos): a reusable template, logged in one tap and optionally scaled or tweaked. */
+export type SavedDish = {
+  id: string;
+  name: string;
+  /** The meal it is usually eaten as; null when it varies. */
+  slot: MealSlot | null;
+  /** One default portion. */
+  components: DishComponent[];
+  /** Totals of the components: kcal and grams. */
+  macros: Macros;
+  /** The plan recipe it was saved from, if any. */
+  recipeId: string | null;
+  /** Times logged. */
+  uses: number;
+  lastUsedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** How to log a saved dish this time: scaled ("medio" = 0.5) and with one-off changes to its components. */
+export type LogDishOptions = {
+  /** Portion factor, 1 by default. */
+  scale?: number;
+  /** One-off changes: a component (index or name) with a new amount in words ("300 ml"), or removed. */
+  overrides?: { component: number | string; measure?: string; remove?: boolean }[];
+};
 
 /** A food the person logs often, for quick add. Macros are per one logged `quantity`. */
 export type FrequentFood = Macros &
