@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The phone reaches the Mac over the tailnet in plain HTTP: WireGuard
+	     already encrypts the path. A 100.x address cannot be listed under
+	     NSExceptionDomains, so the blanket exception is the only shape that
+	     works. Same as Delta and Telar. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

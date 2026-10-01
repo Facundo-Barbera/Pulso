@@ -1,0 +1,76 @@
+# The Pulso iPhone app. `xcodegen generate` (or `bun run ios:generate` from
+# the root) writes Pulso.xcodeproj from this file; the project is committed
+# too, so `xcodebuild` works without xcodegen. Edit this, regenerate, commit both.
+#
+# Debug is `com.facundo.pulso.dev`, Release `com.facundo.pulso`: two unrelated
+# apps to iOS, each with its own pairing in its own Keychain.
+name: Pulso
+options:
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "26.0"
+  generateEmptyDirectories: true
+  groupSortPosition: top
+settings:
+  base:
+    DEVELOPMENT_TEAM: MM74W7WGAM
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+    PULSO_APP_BUNDLE_ID: com.facundo.pulso
+  configs:
+    Debug:
+      PULSO_APP_BUNDLE_ID: com.facundo.pulso.dev
+targets:
+  Pulso:
+    type: application
+    platform: iOS
+    sources:
+      - path: Pulso
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PULSO_APP_BUNDLE_ID)
+        INFOPLIST_FILE: Config/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Pulso
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee tus entrenamientos de Salud para guardarlos en tu Mac.
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso no escribe en Salud por ahora.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        CODE_SIGN_ENTITLEMENTS: Config/Pulso.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # xcodegen gives every iOS target "1,2"; iPhone only, said per target.
+        TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          INFOPLIST_KEY_CFBundleDisplayName: Pulso Dev
+  PulsoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PulsoTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.facundo.pulso.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Pulso
+schemes:
+  Pulso:
+    build:
+      targets:
+        Pulso: all
+        PulsoTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - PulsoTests
+    archive:
+      config: Release
