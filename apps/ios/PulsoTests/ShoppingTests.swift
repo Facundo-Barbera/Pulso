@@ -48,4 +48,30 @@ final class ShoppingTests: XCTestCase {
         XCTAssertEqual(patch["category"] as? String, "frutas_verduras")
         XCTAssertEqual(patch["amount"] as? String, "1,1 kg")
     }
+
+    func testDecodesThePantryByAisle() throws {
+        let json = #"""
+        {"items":[{"id":"ab84","name":"Aceite","quantity":null,"unit":null,"amount":null,"category":"despensa","source":"manual","shoppingItemId":null,"boughtOn":"2026-10-01","expiresOn":null,"updatedAt":1},
+          {"id":"96f1","name":"Arroz","quantity":600,"unit":"g","amount":"600 g","category":"panaderia_cereales","source":"list","shoppingItemId":"b","boughtOn":"2026-10-01","expiresOn":null,"updatedAt":1}]}
+        """#
+        struct Response: Decodable { var items: [PantryItem] }
+        let items = try JSONDecoder().decode(Response.self, from: Data(json.utf8)).items
+        XCTAssertEqual(pantrySections(items).map(\.category), [.panaderiaCereales, .despensa])
+        XCTAssertEqual(items.last?.fromList, true)
+        XCTAssertNil(items.first?.quantity)
+    }
+
+    func testPantryDraftDropsTheUnitWithoutAnAmount() throws {
+        var draft = PantryDraft()
+        draft.name = " Huevos "
+        draft.unit = "ud"
+        var body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as! [String: Any]
+        XCTAssertEqual(body["name"] as? String, "Huevos")
+        XCTAssertTrue(body["unit"] is NSNull)
+        XCTAssertTrue(body["quantity"] is NSNull)
+        draft.quantity = 6
+        body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as! [String: Any]
+        XCTAssertEqual(body["unit"] as? String, "ud")
+        XCTAssertEqual(body["quantity"] as? Double, 6)
+    }
 }

@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Dieta · Hoy: the macro hero with the next planned meal under it, water in
-/// one row, and the day's meals as a timeline of collapsible slots.
+/// Dieta · Hoy: the macro hero, water in one row, then today's planned meals
+/// as calm rows with their status (eaten, swapped, skipped) and quick changes,
+/// and whatever was eaten besides the plan as a timeline.
 struct NutritionTodaySection: View {
     let day: NutritionDay
     let store: NutritionStore
@@ -12,12 +13,21 @@ struct NutritionTodaySection: View {
     let copyPrevious: () -> Void
     /// Opens the Coach with this text waiting in the composer.
     let draftForCoach: (String) -> Void
+    var onAction: (SlotAction, PlanSlot) -> Void = { _, _ in }
+
+    private var planDay: DietDay? { store.planDay.flatMap { $0.slots.isEmpty ? nil : $0 } }
+    /// Entries not tied to one of today's slots: snacks, extras, anything logged off the plan.
+    private var extras: [MealEntry] {
+        guard let planDay else { return day.meals }
+        let ids = Set(planDay.slots.map(\.id))
+        return day.meals.filter { $0.slotId.map { !ids.contains($0) } ?? true }
+    }
 
     var body: some View {
         Card {
             MacroHero(summary: day.summary) { sheet = .targets }
                 .padding(.vertical, 6)
-            if let next = store.nextMeal {
+            if planDay == nil, let next = store.nextMeal {
                 Divider().padding(.top, 6)
                 NextMealLine(meal: next, onOpenPlan: showPlan)
             }
@@ -32,12 +42,17 @@ struct NutritionTodaySection: View {
                 onShowEntries: { sheet = .waterEntries }
             )
         }
-        if day.meals.isEmpty {
-            emptyDay
-        } else {
-            MealTimeline(meals: day.meals) { meal in
+        if let planDay {
+            TodayPlanCard(day: planDay, horizon: store.horizon, meals: day.meals, showPlan: showPlan, onAction: onAction) { meal in
                 Task { await store.delete(meal) }
             }
+        }
+        if !extras.isEmpty {
+            MealTimeline(meals: extras, title: planDay == nil ? "Comidas" : "Además del plan") { meal in
+                Task { await store.delete(meal) }
+            }
+        } else if planDay == nil {
+            emptyDay
         }
     }
 
@@ -59,6 +74,42 @@ struct NutritionTodaySection: View {
             }
             .frame(maxWidth: .infinity)
             .symbolEffect(.bounce, value: store.dateKey)
+        }
+    }
+}
+
+/// Today's planned meals, one calm row each, with what was logged against them.
+private struct TodayPlanCard: View {
+    let day: DietDay
+    let horizon: DietHorizon?
+    let meals: [MealEntry]
+    let showPlan: () -> Void
+    let onAction: (SlotAction, PlanSlot) -> Void
+    let onDelete: (MealEntry) -> Void
+
+    var body: some View {
+        Card {
+            Button(action: showPlan) {
+                HStack {
+                    CardTitle(text: "Tu plan de hoy", systemImage: "list.bullet.clipboard")
+                    Spacer(minLength: 4)
+                    Text(day.pending == 0 ? "Resuelto" : "\(day.pending) \(day.pending == 1 ? "pendiente" : "pendientes")")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(day.pending == 0 ? Theme.body : .secondary)
+                        .contentTransition(.numericText())
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Abre el plan")
+            VStack(spacing: 0) {
+                ForEach(day.slots) { slot in
+                    PlanSlotRow(slot: slot, source: horizon?.source(of: slot), recipeId: horizon?.recipeId(of: slot),
+                                entries: meals.filter { $0.slotId == slot.id }, isLast: slot.id == day.slots.last?.id,
+                                onAction: { onAction($0, slot) }, onDeleteEntry: onDelete)
+                }
+            }
         }
     }
 }
@@ -111,6 +162,7 @@ private struct NextMealLine: View {
 /// and drinks are their own dots, where they happened, however many a day.
 struct MealTimeline: View {
     let meals: [MealEntry]
+    var title = "Comidas"
     let onDelete: (MealEntry) -> Void
 
     /// One dot: a meal slot, or one snack — snack entries more than 45 min apart are separate groups.
@@ -145,7 +197,7 @@ struct MealTimeline: View {
     var body: some View {
         Card {
             HStack(spacing: 8) {
-                CardTitle(text: "Comidas", systemImage: "clock")
+                CardTitle(text: title, systemImage: "clock")
                 Spacer(minLength: 4)
                 if caffeineMg > 0 { StimulantBadge(text: "\(Int(caffeineMg)) mg cafeína", systemImage: "bolt.fill", tint: .brown) }
                 if alcoholG > 0 {
@@ -394,6 +446,21 @@ private let previewWater = WaterDay(date: "2026-10-01", totalMl: 250, goalMl: 37
     NarrowPreview {
         previewToday(NutritionDay(summary: previewNutritionSummary, meals: previewMeals, plan: nil, water: previewWater))
     }
+}
+
+#Preview("Hoy · plan · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        Card { MacroHero(summary: previewNutritionSummary) {} }
+        TodayPlanCard(day: previewHorizon.days[0], horizon: previewHorizon, meals: [], showPlan: {}, onAction: { _, _ in }) { _ in }
+        MealTimeline(meals: Array(previewMeals.suffix(2)), title: "Además del plan") { _ in }
+    }
+}
+
+#Preview("Hoy · plan · claro") {
+    NarrowPreview {
+        TodayPlanCard(day: previewHorizon.days[0], horizon: previewHorizon, meals: [], showPlan: {}, onAction: { _, _ in }) { _ in }
+    }
+    .preferredColorScheme(.light)
 }
 
 #Preview("Hoy · vacío · 375 pt · XXL") {

@@ -15,8 +15,16 @@ final class NutritionStore {
     /// Snacks and drinks logged most lately, for the "Snack o bebida" sheet.
     private(set) var frequentSnacks: [FrequentFood] = []
     private(set) var loading = false
+    /// The dated plan from today over its horizon (nil without a plan, or from an engine that predates it).
+    private(set) var horizon: DietHorizon?
+    /// The slot "Lo cambié por…" is replacing: what Registrar logs meanwhile is linked to it when it closes.
+    private(set) var replacing: PlanSlot?
+    private var replacementIds: [String] = []
 
     private var api: PulsoAPI? { PulsoModel.shared.api }
+
+    /// The selected day as the plan lays it out. Only today: past days are never laid out from the phone.
+    var planDay: DietDay? { isToday ? horizon?.day(dateKey) : nil }
     var dateKey: String { NutritionDate.string(date) }
     var isToday: Bool { Calendar.current.isDateInToday(date) }
     var targets: NutritionTargets? { day?.summary.targets }
@@ -59,9 +67,12 @@ final class NutritionStore {
             async let week = api.nutritionHistory(days: 7, to: key)
             async let frequent = api.frequentFoods()
             async let snacks = api.frequentFoods(snacks: true)
+            async let horizon = api.dietHorizon(from: NutritionDate.string(.now))
             let history: (days: [NutritionSummary], water: [String: Double])
             (self.day, history, self.frequent, frequentSnacks) = try await (day, week, frequent, snacks)
             (self.week, weekWater) = history
+            // The dated plan is extra: an older engine without it still shows the day.
+            self.horizon = (try? await horizon) ?? nil
         } catch {
             PulsoModel.shared.handle(error)
         }
@@ -74,7 +85,10 @@ final class NutritionStore {
         var input = input
         input.date = dateKey
         input.eatenAt = (eatenAtNow().timeIntervalSince1970 * 1000).rounded()
-        return await run { _ = try await api.logMeal(input) }
+        return await run {
+            let meal = try await api.logMeal(input)
+            if replacing != nil { replacementIds.append(meal.id) }
+        }
     }
 
     func delete(_ meal: MealEntry) async {
@@ -104,6 +118,51 @@ final class NutritionStore {
         var copied = 0
         await run { copied = try await api.copyMeals(from: NutritionDate.string(previous), to: dateKey).count }
         return copied
+    }
+
+    // MARK: Dated plan
+
+    /// Runs a plan change; the Mac answers with its Spanish summary and the revision to undo.
+    func apply(_ op: PlanOp) async -> PlanChange? {
+        guard let api else { return nil }
+        return await value { try await api.applyPlanOp(op) }
+    }
+
+    /// Undoes a change (the latest when `id` is nil).
+    func undo(_ id: String? = nil) async -> PlanChange? {
+        guard let api else { return nil }
+        return await value { try await api.undoPlanRevision(id) }
+    }
+
+    /// "Me lo comí": logs what the slot holds now (adjusted portions included); the Mac links each entry to it.
+    func eat(_ slot: PlanSlot) async -> [MealEntry] {
+        guard let api else { return [] }
+        return await value { () async throws -> [MealEntry] in
+            var eaten: [MealEntry] = []
+            for item in slot.current { eaten.append(try await api.eatPlanItem(item.id, date: slot.date)) }
+            return eaten
+        } ?? []
+    }
+
+    /// Takes back entries just logged, e.g. undoing "Me lo comí".
+    func deleteMeals(_ ids: [String]) async {
+        guard let api else { return }
+        await run { for id in ids { try await api.deleteMeal(id) } }
+    }
+
+    func beginReplacing(_ slot: PlanSlot) {
+        replacing = slot
+        replacementIds = []
+    }
+
+    /// Registrar closed: what was logged while replacing now replaces the slot. Nil when nothing was logged.
+    func finishReplacing() async -> PlanChange? {
+        guard let slot = replacing else { return nil }
+        let ids = replacementIds
+        replacing = nil
+        replacementIds = []
+        guard !ids.isEmpty else { return nil }
+        return await apply(.replace(slot, entryIds: ids))
     }
 
     // MARK: Water
@@ -182,6 +241,19 @@ final class NutritionStore {
             PulsoModel.shared.handle(error)
             await load()
             return false
+        }
+    }
+
+    /// Like `run`, keeping what the request answered; nil when it failed.
+    private func value<T>(_ action: () async throws -> T) async -> T? {
+        do {
+            let result = try await action()
+            await load()
+            return result
+        } catch {
+            PulsoModel.shared.handle(error)
+            await load()
+            return nil
         }
     }
 
