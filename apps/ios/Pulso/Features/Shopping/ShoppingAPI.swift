@@ -34,4 +34,29 @@ extension PulsoAPI {
     func deleteShoppingItem(id: String) async throws -> ShoppingList {
         try await call("api/mobile/shopping/items/\(id)", method: "DELETE")
     }
+
+    // MARK: Despensa (`/api/mobile/nutrition/pantry`). Every call answers with the whole pantry.
+
+    private struct PantryResponse: Decodable { var items: [PantryItem] }
+    private struct PantryAdd: Encodable { var items: [PantryDraft] }
+
+    func pantry() async throws -> [PantryItem] {
+        let response: PantryResponse = try await call("api/mobile/nutrition/pantry", method: "GET")
+        return response.items
+    }
+
+    func addPantryItem(_ draft: PantryDraft) async throws -> [PantryItem] {
+        let response: PantryResponse = try await call("api/mobile/nutrition/pantry", method: "POST", body: PantryAdd(items: [draft]))
+        return response.items
+    }
+
+    func updatePantryItem(id: String, _ draft: PantryDraft) async throws -> [PantryItem] {
+        let response: PantryResponse = try await call("api/mobile/nutrition/pantry/\(id)", method: "PATCH", body: draft)
+        return response.items
+    }
+
+    func deletePantryItem(id: String) async throws -> [PantryItem] {
+        let response: PantryResponse = try await call("api/mobile/nutrition/pantry/\(id)", method: "DELETE")
+        return response.items
+    }
 }
