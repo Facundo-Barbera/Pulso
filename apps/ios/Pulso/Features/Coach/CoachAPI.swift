@@ -9,10 +9,19 @@ struct AgentThread: Codable, Identifiable, Equatable, Hashable {
     var preview: String?
 }
 
+/// What a tool created or changed (`AgentToolResult`), shown as a card that opens its tab.
+struct AgentToolResult: Codable, Equatable {
+    var title: String
+    var detail: String?
+    /// "hoy", "entreno", "dieta" or "cuerpo".
+    var tab: String
+}
+
 struct AgentToolUse: Codable, Equatable {
     enum Status: String, Codable { case running, done, error }
     var name: String
     var status: Status
+    var result: AgentToolResult? = nil
 }
 
 struct AgentMessage: Codable, Identifiable, Equatable {
@@ -32,19 +41,21 @@ struct AgentMessage: Codable, Identifiable, Equatable {
 enum AgentStreamEvent: Decodable, Equatable {
     case start(messageId: String, userMessageId: String)
     case text(String)
-    case tool(name: String, status: AgentToolUse.Status)
+    case tool(name: String, status: AgentToolUse.Status, result: AgentToolResult? = nil)
     case done(messageId: String)
     case error(String)
     case unknown
 
-    private enum Keys: String, CodingKey { case type, messageId, userMessageId, delta, name, status, message }
+    private enum Keys: String, CodingKey { case type, messageId, userMessageId, delta, name, status, result, message }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         switch try c.decode(String.self, forKey: .type) {
         case "start": self = .start(messageId: try c.decode(String.self, forKey: .messageId), userMessageId: try c.decode(String.self, forKey: .userMessageId))
         case "text": self = .text(try c.decode(String.self, forKey: .delta))
-        case "tool": self = .tool(name: try c.decode(String.self, forKey: .name), status: try c.decode(AgentToolUse.Status.self, forKey: .status))
+        case "tool":
+            // An unreadable result only loses the card, never the event.
+            self = .tool(name: try c.decode(String.self, forKey: .name), status: try c.decode(AgentToolUse.Status.self, forKey: .status), result: try? c.decodeIfPresent(AgentToolResult.self, forKey: .result))
         case "done": self = .done(messageId: try c.decode(String.self, forKey: .messageId))
         case "error": self = .error(try c.decode(String.self, forKey: .message))
         default: self = .unknown
