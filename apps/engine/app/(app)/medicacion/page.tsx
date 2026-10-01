@@ -4,7 +4,6 @@ import { medicationPage, type MedicationPage } from "@/src/web/medication";
 import { Card, CardTitle } from "../../_ui/card";
 import { cn } from "../../_ui/cn";
 import { EmptyState } from "../../_ui/empty-state";
-import { WEEKDAYS } from "../../_ui/fields";
 import { fmtDayLabel, fmtLongDate, fmtNumber, fmtTime } from "../../_ui/format";
 import { Page, PageHeader } from "../../_ui/page-header";
 import { Ring } from "../../_ui/ring";
@@ -16,12 +15,15 @@ export const metadata = { title: "Medicación" };
 
 const MED = "var(--domain-medication)";
 
+// fields.tsx is a client module: its WEEKDAYS would arrive here as a reference, not an array.
+const DAY_LETTERS = ["L", "M", "X", "J", "V", "S", "D"];
+
 const pct = (w: AdherenceWindow) => (w.rate === null ? null : Math.round(w.rate * 100));
 const amount = (dose: number, unit: string) => `${fmtNumber(dose, 2)} ${unit}`;
 
 function scheduleLine(s: MedicationSchedule): string {
   if (s.asNeeded) return "Cuando haga falta";
-  const days = s.days.length === 0 ? "Cada día" : s.days.map((d) => WEEKDAYS[d - 1]!.short).join(" ");
+  const days = s.days.length === 0 ? "Cada día" : s.days.map((d) => DAY_LETTERS[d - 1]).join(" ");
   return `${days} · ${s.times.join(", ")}`;
 }
 
