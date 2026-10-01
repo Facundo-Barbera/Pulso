@@ -2,6 +2,7 @@ import { createSdkMcpServer, query, type HookCallback, type Options } from "@ant
 import type { AgentMessage, AgentStreamEvent } from "@pulso/contract";
 import { hasOutput, newTurnState, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
+import { childEnv, claudeExecutable, providerEnv } from "./provider";
 import { TOOLS } from "./registry";
 import { addMessage, failStreamingMessages, listMessages, sdkSessionOf, setSdkSession, updateMessage } from "./threads";
 import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
@@ -76,8 +77,10 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     hooks: { PreToolUse: [{ matcher: "Read|Write", hooks: [confineTo(cwd)] }] },
     includePartialMessages: true,
     maxTurns: 40,
+    // Like Telar: the installed CLI and a clean env with the configured provider (./provider.ts).
+    pathToClaudeCodeExecutable: claudeExecutable(),
     env: {
-      ...process.env,
+      ...childEnv(providerEnv()),
       CLAUDE_AGENT_SDK_CLIENT_APP: "pulso-coach/0.0.0",
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
