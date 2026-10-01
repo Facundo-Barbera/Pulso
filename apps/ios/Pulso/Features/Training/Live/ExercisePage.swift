@@ -167,6 +167,7 @@ private struct ExerciseHeader: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
+                        if exercise.supersetId != nil { GlassChip("Superserie", systemImage: "link", tint: Theme.training) }
                         if let muscle { GlassChip(muscle, systemImage: "figure.strengthtraining.traditional") }
                         if exercise.skipped { GlassChip("Saltado hoy", systemImage: "forward") }
                     }
