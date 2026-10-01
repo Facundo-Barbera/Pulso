@@ -48,4 +48,28 @@ final class CoachTests: XCTestCase {
         XCTAssertEqual(CoachToolLabel.describe("list_meals").label, "Revisando tu alimentación")
         XCTAssertEqual(CoachToolLabel.describe("log_body_weight").label, "Guardando tus medidas")
     }
+
+    func testProfileSavesShowAsNews() {
+        XCTAssertEqual(CoachToolLabel.doneLabel("update_profile"), "Perfil actualizado")
+        XCTAssertNil(CoachToolLabel.doneLabel("list_meals"))
+    }
+
+    func testBriefsDecodeWithLocalDay() throws {
+        let json = #"{"daily":{"id":"b1","kind":"daily","period":"2026-10-01","status":"done","text":"**Hoy:** Pierna","error":null,"createdAt":1,"updatedAt":2},"weekly":null}"#
+        let briefs = try JSONDecoder().decode(CoachBriefs.self, from: Data(json.utf8))
+        XCTAssertEqual(briefs.daily?.kind, .daily)
+        XCTAssertNil(briefs.weekly)
+        let day = try XCTUnwrap(briefs.daily?.day)
+        XCTAssertEqual(Calendar.current.dateComponents([.year, .month, .day], from: day), DateComponents(year: 2026, month: 10, day: 1))
+    }
+
+    @MainActor
+    func testLauncherHandsEachLaunchOverOnce() {
+        let launcher = CoachLauncher()
+        launcher.ask("Arma mi plan de comidas")
+        XCTAssertEqual(launcher.take()?.request, .prompt("Arma mi plan de comidas", send: true))
+        XCTAssertNil(launcher.take())
+        AskCoachAction()("Diseña mi rutina", send: false)
+        XCTAssertEqual(CoachLauncher.shared.take()?.request, .prompt("Diseña mi rutina", send: false))
+    }
 }

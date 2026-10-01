@@ -5,14 +5,18 @@ struct CoachChatView: View {
     @State private var store: ChatStore
     private let initialTitle: String?
     private let starter: String?
-    @State private var draft = ""
+    private let focusOnAppear: Bool
+    @State private var draft: String
     @State private var started = false
     @FocusState private var composing: Bool
 
-    init(threadId: String?, title: String?, starter: String? = nil) {
+    /// `starter` is sent at once; `draft` waits in the composer. Either, or `focus`, opens the keyboard.
+    init(threadId: String?, title: String?, starter: String? = nil, draft: String? = nil, focus: Bool = false) {
         _store = State(initialValue: ChatStore(threadId: threadId))
+        _draft = State(initialValue: draft ?? "")
         initialTitle = title
         self.starter = starter
+        focusOnAppear = focus || draft != nil
     }
 
     var body: some View {
@@ -56,6 +60,7 @@ struct CoachChatView: View {
             started = true
             await store.load()
             if let starter, store.messages.isEmpty { await store.send(starter) }
+            if focusOnAppear { composing = true }
         }
         .refreshable { await store.load() }
     }
