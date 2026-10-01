@@ -1,4 +1,4 @@
-/** Meal log, daily targets (single row), diet plans and their day adjustments, water, and the Open Food Facts cache. */
+/** Meal log (with measures as said, caffeine and alcohol), daily targets (single row), diet plans and their day adjustments, water, and the Open Food Facts cache. */
 export const NUTRITION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS meal_entries (
     id TEXT PRIMARY KEY,
@@ -46,6 +46,16 @@ export const NUTRITION_SCHEMA = `
     entry_id TEXT PRIMARY KEY REFERENCES meal_entries (id) ON DELETE CASCADE,
     off_plan INTEGER NOT NULL DEFAULT 0,
     note TEXT
+  );
+  -- The amount as the person said it ("2 latas"; meal_entries keeps the normalized g/ml/serving)
+  -- and caffeine/alcohol. Entries without a row are plain g/serving logs, as before.
+  CREATE TABLE IF NOT EXISTS meal_entry_detail (
+    entry_id TEXT PRIMARY KEY REFERENCES meal_entries (id) ON DELETE CASCADE,
+    measure_amount REAL,
+    measure_unit TEXT,
+    measure_size REAL,
+    caffeine_mg REAL,
+    alcohol_g REAL
   );
   CREATE TABLE IF NOT EXISTS plan_adjustments (
     date TEXT PRIMARY KEY,

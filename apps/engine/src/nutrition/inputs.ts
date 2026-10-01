@@ -2,12 +2,13 @@
  * Zod shapes shared by the agent tools (which take raw shapes) and the phone
  * routes (which parse untrusted bodies with `z.object(shape)`).
  */
-import { MEAL_SLOTS, WATER_UNITS } from "@pulso/contract";
+import { HOUSEHOLD_UNITS, MEAL_SLOTS, MEASURE_UNITS, QUANTITY_UNITS, WATER_UNITS, type MealInput } from "@pulso/contract";
 import { z } from "zod";
+import { parseMeasure, toQuantity } from "./measure";
 
 export const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
 export const slot = z.enum(MEAL_SLOTS);
-export const unit = z.enum(["g", "serving"]);
+export const unit = z.enum(QUANTITY_UNITS);
 
 const grams = z.number().min(0).max(2000);
 
@@ -19,17 +20,52 @@ export const macroShape = {
   fiber: grams.default(0).describe("Fiber in grams"),
 };
 
+export const measureSchema = z.object({
+  amount: z.number().positive().max(10000),
+  unit: z.enum(MEASURE_UNITS),
+  size: z.number().positive().max(5000).nullish().describe("g or ml in one household unit, when not its default"),
+});
+
 export const mealShape = {
-  name: z.string().trim().min(1).max(120).describe("Food name in Spanish, e.g. 'Avena con leche'"),
-  slot: slot.describe("Meal slot: desayuno, media_manana, comida, merienda, cena or snack"),
-  quantity: z.number().positive().max(10000).describe("Amount eaten, in `unit`"),
-  unit: unit.default("g").describe("'g' for grams (use for ml too) or 'serving' for units/portions"),
+  name: z.string().trim().min(1).max(120).describe("Food or drink name in Spanish, e.g. 'Avena con leche', 'Coca-Cola'"),
+  slot: slot.describe(
+    "Meal slot: desayuno, media_manana, comida, merienda, cena or snack. Use snack for anything eaten or drunk between meals, at any hour; a day can have several",
+  ),
+  measure: z
+    .union([z.string().trim().min(1).max(80), measureSchema])
+    .optional()
+    .describe(
+      `How much, in the person's words: '2 latas', '1 taza', 'media taza', '250 ml', '33 cl', '30 g', 'un puño', '2 galletas', 'una lata de 330 ml', '2 unidades de 11 g'. Household units and their default sizes: taza 240 ml, vaso 250 ml, lata 355 ml, botella 500 ml, cucharada 15 ml, cucharadita 5 ml, puño 30 g; add the size when it differs ('una botella de 330 ml'). A count of things without a weight ('2 galletas') is stored as servings. Prefer this over quantity + unit`,
+    ),
+  quantity: z.number().positive().max(10000).optional().describe("Amount in `unit`, only when not using `measure`"),
+  unit: unit.optional().describe("'g' for grams, 'ml' for drinks and other liquids, 'serving' for portions. Defaults to 'g'; ignored with `measure`"),
   ...macroShape,
+  caffeineMg: z.number().min(0).max(2000).nullish().describe("Caffeine in mg, for coffee, tea, mate, cola or energy drinks (an espresso ≈ 63 mg, a 355 ml cola ≈ 34 mg)"),
+  alcoholG: z.number().min(0).max(500).nullish().describe("Grams of pure alcohol, for alcoholic drinks: ml × ABV × 0.789 (a 330 ml beer at 5 % ≈ 13 g)"),
   eatenAt: z.number().int().optional().describe("When it was eaten, epoch ms. Defaults to now"),
   date: dateString.optional().describe("Local day it counts toward (YYYY-MM-DD). Defaults to the day of eatenAt"),
   barcode: z.string().max(32).nullish(),
 };
 export const mealSchema = z.object(mealShape);
+
+/**
+ * A parsed meal ready to store: the normalized quantity comes from `measure`
+ * when there is one, else from quantity + unit (grams by default). A message
+ * instead when the amount is missing or unreadable.
+ */
+export function toMealInput({ measure, quantity, unit: quantityUnit, ...rest }: z.infer<typeof mealSchema>): MealInput | string {
+  if (typeof measure === "string") {
+    const parsed = parseMeasure(measure);
+    return parsed ? { ...rest, ...parsed } : `Unreadable measure '${measure}': say it like '2 latas', '250 ml' or '30 g'`;
+  }
+  if (measure) {
+    const household = (HOUSEHOLD_UNITS as readonly string[]).includes(measure.unit);
+    const said = { amount: measure.amount, unit: measure.unit, size: household ? (measure.size ?? null) : null };
+    return { ...rest, measure: said, ...toQuantity(said) };
+  }
+  if (quantity === undefined) return `'${rest.name}' needs a measure or a quantity`;
+  return { ...rest, quantity, unit: quantityUnit ?? "g" };
+}
 
 export const planItem = z.object({
   name: z.string().trim().min(1).max(120),

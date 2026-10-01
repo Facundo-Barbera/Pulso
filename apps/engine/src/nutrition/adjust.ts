@@ -35,9 +35,9 @@ export function mealsAhead(planned: PlanMeal[], eaten: MealEntry[]): PlanMeal[] 
   return planned.filter((m) => !logged.has(m.slot) && (m.slot === "snack" || order(m.slot) > last));
 }
 
-/** Grams to 5 g, servings to halves; never below one step. */
+/** Grams and ml to 5, servings to halves; never below one step. */
 export function roundQuantity(quantity: number, unit: PlanItem["unit"]): number {
-  return unit === "g" ? Math.max(5, Math.round(quantity / 5) * 5) : Math.max(0.5, Math.round(quantity * 2) / 2);
+  return unit !== "serving" ? Math.max(5, Math.round(quantity / 5) * 5) : Math.max(0.5, Math.round(quantity * 2) / 2);
 }
 
 /** Scales an item's portion, then its macros by the portion actually kept after rounding. */

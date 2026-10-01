@@ -8,6 +8,7 @@ import type {
   Macros,
   MealEntry,
   MealInput,
+  Measure,
   MealSlot,
   MealSource,
   NutritionDay,
@@ -50,7 +51,15 @@ type MealRow = {
   plan_item_id: string | null;
   off_plan: number | null;
   note: string | null;
+  measure_amount: number | null;
+  measure_unit: Measure["unit"] | null;
+  measure_size: number | null;
+  caffeine_mg: number | null;
+  alcohol_g: number | null;
 };
+
+const measureOf = (r: MealRow): Measure | null =>
+  r.measure_amount !== null && r.measure_unit !== null ? { amount: r.measure_amount, unit: r.measure_unit, size: r.measure_size } : null;
 
 const toEntry = (r: MealRow): MealEntry => ({
   id: r.id,
@@ -70,7 +79,14 @@ const toEntry = (r: MealRow): MealEntry => ({
   planItemId: r.plan_item_id,
   offPlan: r.off_plan === 1,
   note: r.note,
+  measure: measureOf(r),
+  caffeineMg: r.caffeine_mg,
+  alcoholG: r.alcohol_g,
 });
+
+// Every meal_entries read joins its side tables.
+const ENTRY_SELECT = `SELECT m.*, c.off_plan, c.note, d.measure_amount, d.measure_unit, d.measure_size, d.caffeine_mg, d.alcohol_g
+  FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id LEFT JOIN meal_entry_detail d ON d.entry_id = m.id`;
 
 export function logMeal(input: MealInput, source: MealSource = input.source ?? "manual"): MealEntry {
   const eatenAt = input.eatenAt ?? Date.now();
@@ -92,6 +108,9 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
     planItemId: input.planItemId ?? null,
     offPlan: input.offPlan ?? false,
     note: input.note?.trim() || null,
+    measure: input.measure ?? null,
+    caffeineMg: input.caffeineMg ?? null,
+    alcoholG: input.alcoholG ?? null,
   };
   db()
     .query(
@@ -104,6 +123,11 @@ export function logMeal(input: MealInput, source: MealSource = input.source ?? "
     );
   if (entry.offPlan || entry.note) {
     db().query("INSERT INTO meal_entry_context (entry_id, off_plan, note) VALUES (?, ?, ?)").run(entry.id, entry.offPlan ? 1 : 0, entry.note);
+  }
+  if (entry.measure || entry.caffeineMg !== null || entry.alcoholG !== null) {
+    db()
+      .query("INSERT INTO meal_entry_detail (entry_id, measure_amount, measure_unit, measure_size, caffeine_mg, alcohol_g) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(entry.id, entry.measure?.amount ?? null, entry.measure?.unit ?? null, entry.measure?.size ?? null, entry.caffeineMg, entry.alcoholG);
   }
   return entry;
 }
@@ -119,10 +143,7 @@ export function deleteMeal(id: string): boolean {
 /** Entries from `from` to `to` inclusive (YYYY-MM-DD), in eating order. */
 export function listMeals(from: string, to: string = from): MealEntry[] {
   return db()
-    .query<MealRow, [string, string]>(
-      `SELECT m.*, c.off_plan, c.note FROM meal_entries m LEFT JOIN meal_entry_context c ON c.entry_id = m.id
-       WHERE m.date BETWEEN ? AND ? ORDER BY m.date, m.eaten_at`,
-    )
+    .query<MealRow, [string, string]>(`${ENTRY_SELECT} WHERE m.date BETWEEN ? AND ? ORDER BY m.date, m.eaten_at`)
     .all(from, to)
     .map(toEntry);
 }
@@ -133,19 +154,23 @@ export function copyDay(from: string, to: string): MealEntry[] {
   return logMeals(listMeals(from).map((m) => ({ ...m, date: to, eatenAt: m.eatenAt + shift })));
 }
 
-/** Foods logged most in the last 60 days, with the most recent portion and macros. */
-export function frequentFoods(limit = 12, today = localDate()): FrequentFood[] {
+/**
+ * Foods logged most in the last 60 days, with the most recent portion and macros.
+ * `snacks` keeps those last logged as a snack or in ml (drinks).
+ */
+export function frequentFoods(limit = 12, today = localDate(), snacks = false): FrequentFood[] {
   const rows = db()
     .query<MealRow & { count: number }, [string, number]>(
-      `SELECT m.*, f.count FROM (
+      `SELECT e.*, f.count FROM (
          SELECT lower(name) AS key, count(*) AS count, max(eaten_at) AS last FROM meal_entries WHERE date >= ? GROUP BY key
-       ) f JOIN meal_entries m ON lower(m.name) = f.key AND m.eaten_at = f.last
+       ) f JOIN (${ENTRY_SELECT}) e ON lower(e.name) = f.key AND e.eaten_at = f.last
+       ${snacks ? "WHERE e.slot = 'snack' OR e.unit = 'ml'" : ""}
        GROUP BY f.key ORDER BY f.count DESC, f.last DESC LIMIT ?`,
     )
     .all(addDays(today, -60), limit);
   return rows.map((r) => ({
-    name: r.name, quantity: r.quantity, unit: r.unit, slot: r.slot, barcode: r.barcode, count: r.count,
-    kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat, fiber: r.fiber,
+    name: r.name, quantity: r.quantity, unit: r.unit, measure: measureOf(r), slot: r.slot, barcode: r.barcode, count: r.count,
+    kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat, fiber: r.fiber, caffeineMg: r.caffeine_mg, alcoholG: r.alcohol_g,
   }));
 }
 
@@ -175,13 +200,20 @@ export function setTargets(input: Omit<Macros, "fiber"> & { fiber?: number }): N
 function summarize(date: string, meals: MealEntry[], targets: NutritionTargets | null): DailySummary {
   const totals = zero();
   const bySlot: DailySummary["bySlot"] = {};
+  let caffeineMg = 0;
+  let alcoholG = 0;
   for (const m of meals) {
     add(totals, m);
     bySlot[m.slot] = add(bySlot[m.slot] ?? zero(), m);
+    caffeineMg += m.caffeineMg ?? 0;
+    alcoholG += m.alcoholG ?? 0;
   }
   for (const s of Object.keys(bySlot) as MealSlot[]) bySlot[s] = round(bySlot[s]!);
   const remaining = targets && round(Object.fromEntries(MACRO_KEYS.map((k) => [k, targets[k] - totals[k]])) as Macros);
-  return { date, totals: round(totals), targets, remaining, bySlot, entries: meals.length };
+  return {
+    date, totals: round(totals), targets, remaining, bySlot, entries: meals.length,
+    caffeineMg: Math.round(caffeineMg), alcoholG: Math.round(alcoholG * 10) / 10,
+  };
 }
 
 export function dailySummary(date: string): DailySummary {

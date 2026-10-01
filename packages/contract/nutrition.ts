@@ -6,14 +6,56 @@ export type MealSlot = (typeof MEAL_SLOTS)[number];
 export const MEAL_SOURCES = ["manual", "barcode", "plan", "agent"] as const;
 export type MealSource = (typeof MEAL_SOURCES)[number];
 
-/** `g` for grams (ml counts as g), `serving` for units/portions. */
-export type QuantityUnit = "g" | "serving";
+/** What macros are counted against: grams, millilitres, or whole servings. Older entries logged drinks as `g`. */
+export const QUANTITY_UNITS = ["g", "ml", "serving"] as const;
+export type QuantityUnit = (typeof QUANTITY_UNITS)[number];
+
+export const HOUSEHOLD_UNITS = ["taza", "vaso", "lata", "botella", "cucharada", "cucharadita", "unidad", "puño"] as const;
+/** Measures people say out loud. Each converts to g or ml with a default size, which an entry can override. */
+export type HouseholdUnit = (typeof HOUSEHOLD_UNITS)[number];
+
+/**
+ * Default size of one household unit. `unidad` has none: without a size it
+ * counts as servings ("2 galletas"), with one as grams ("2 galletas de 11 g").
+ */
+export const HOUSEHOLD_SIZES: Record<HouseholdUnit, { base: "g" | "ml"; size: number | null }> = {
+  taza: { base: "ml", size: 240 },
+  vaso: { base: "ml", size: 250 },
+  lata: { base: "ml", size: 355 },
+  botella: { base: "ml", size: 500 },
+  cucharada: { base: "ml", size: 15 },
+  cucharadita: { base: "ml", size: 5 },
+  unidad: { base: "g", size: null },
+  puño: { base: "g", size: 30 },
+};
+
+export const MEASURE_UNITS = [...QUANTITY_UNITS, ...HOUSEHOLD_UNITS] as const;
+export type MeasureUnit = (typeof MEASURE_UNITS)[number];
+
+/** How much, as the person said it: "2 latas", "1 taza de 300 ml", "30 g". */
+export type Measure = {
+  amount: number;
+  unit: MeasureUnit;
+  /** g or ml in one household unit, when not its default (e.g. a 330 ml can). null for g, ml and serving. */
+  size: number | null;
+};
 
 /** Energy in kcal, everything else in grams. */
 export type Macros = { kcal: number; protein: number; carbs: number; fat: number; fiber: number };
 
-/** A logged food. Macros are totals for `quantity`, not per 100 g. */
-export type MealEntry = Macros & {
+/** Caffeine and alcohol in an entry, when the food or drink has them. */
+export type Stimulants = {
+  /** Caffeine in mg. */
+  caffeineMg: number | null;
+  /** Pure alcohol in grams. */
+  alcoholG: number | null;
+};
+
+/**
+ * A logged food or drink. Macros are totals for `quantity`, not per 100 g.
+ * `quantity` + `unit` are the normalized amount; `measure` is what the person said.
+ */
+export type MealEntry = Macros & Stimulants & {
   id: string;
   /** Local calendar day (YYYY-MM-DD) the entry counts toward. */
   date: string;
@@ -31,9 +73,14 @@ export type MealEntry = Macros & {
   offPlan: boolean;
   /** The person's own words for the meal, e.g. "Big Mac y papas medianas". */
   note: string | null;
+  /** The amount as said ("2 latas"); null when it was logged straight in g, ml or servings. */
+  measure: Measure | null;
 };
 
-export type MealInput = Omit<MealEntry, "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "offPlan" | "note"> & {
+export type MealInput = Omit<
+  MealEntry,
+  "id" | "date" | "eatenAt" | "source" | "barcode" | "planItemId" | "offPlan" | "note" | "measure" | "caffeineMg" | "alcoholG"
+> & {
   /** Defaults to now. */
   eatenAt?: number;
   /** Defaults to the local day of `eatenAt`. */
@@ -43,6 +90,9 @@ export type MealInput = Omit<MealEntry, "id" | "date" | "eatenAt" | "source" | "
   planItemId?: string | null;
   offPlan?: boolean;
   note?: string | null;
+  measure?: Measure | null;
+  caffeineMg?: number | null;
+  alcoholG?: number | null;
 };
 
 export type NutritionTargets = Macros & { updatedAt: number };
@@ -56,6 +106,9 @@ export type DailySummary = {
   remaining: Macros | null;
   bySlot: Partial<Record<MealSlot, Macros>>;
   entries: number;
+  /** Caffeine (mg) and alcohol (g) logged that day; 0 when none. */
+  caffeineMg: number;
+  alcoholG: number;
 };
 
 export type PlanItem = Macros & { id: string; name: string; quantity: number; unit: QuantityUnit };
@@ -160,4 +213,5 @@ export type WaterDay = {
 export type NutritionDay = { summary: DailySummary; meals: MealEntry[]; plan: PlanForDay | null; water: WaterDay };
 
 /** A food the person logs often, for quick add. Macros are per one logged `quantity`. */
-export type FrequentFood = Macros & { name: string; quantity: number; unit: QuantityUnit; slot: MealSlot; barcode: string | null; count: number };
+export type FrequentFood = Macros &
+  Stimulants & { name: string; quantity: number; unit: QuantityUnit; measure: Measure | null; slot: MealSlot; barcode: string | null; count: number };
