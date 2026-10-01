@@ -254,30 +254,6 @@ private struct NotesCard: View {
     }
 }
 
-/// Spanish names and symbols for `Exercise.equipment`.
-enum Equipment {
-    static func label(_ equipment: String) -> String {
-        switch equipment {
-        case "barbell": "Barra"
-        case "dumbbell": "Mancuernas"
-        case "machine": "Máquina"
-        case "cable": "Polea"
-        case "bodyweight": "Peso corporal"
-        case "kettlebell": "Kettlebell"
-        default: equipment.capitalized
-        }
-    }
-
-    static func symbol(_ equipment: String) -> String {
-        switch equipment {
-        case "bodyweight": "figure.strengthtraining.functional"
-        case "machine", "cable": "gearshape.2"
-        case "kettlebell": "dumbbell.fill"
-        default: "dumbbell"
-        }
-    }
-}
-
 /// Lays children out left to right, wrapping to a new line when one doesn't fit.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8

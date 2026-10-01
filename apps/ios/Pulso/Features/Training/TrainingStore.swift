@@ -20,6 +20,8 @@ final class TrainingStore {
     private(set) var program: TrainingProgram?
     private(set) var nextDayId: String?
     private(set) var suggestions: [String: LoadSuggestion] = [:]
+    private(set) var hrZones: [HrZoneRange]?
+    private(set) var settings = TrainingSettings(preferredEquipment: [])
     private(set) var sessions: [TrainingSession] = []
     private(set) var loaded = false
     /// Latest weighed scan, newest first from the Cuerpo dashboard.
@@ -40,9 +42,7 @@ final class TrainingStore {
             async let view = api.trainingProgram()
             async let recent = api.trainingSessions()
             let (response, list) = try await (view, recent)
-            program = response.program
-            nextDayId = response.nextDayId
-            suggestions = response.suggestions
+            apply(response)
             sessions = list
         } catch {
             PulsoModel.shared.handle(error)
@@ -51,6 +51,37 @@ final class TrainingStore {
         // Only for the kcal estimate: a failure just hides it.
         if let scans = try? await api.bodyDashboard().scans {
             bodyWeightKg = scans.lazy.compactMap(\.weight).first
+        }
+    }
+
+    /// Takes the program as the engine returns it after a load or an edit.
+    func apply(_ response: ActiveProgramResponse) {
+        program = response.program
+        nextDayId = response.nextDayId
+        suggestions = response.suggestions
+        hrZones = response.hrZones
+        if let fresh = response.settings { settings = fresh }
+    }
+
+    /// Rewrites a day (solo hoy or para siempre) and shows the result. Throws so the editor can stay open.
+    func saveDay(_ dayId: String, scope: EditScope, exercises: [DayExerciseInput]) async throws {
+        guard let api = PulsoModel.shared.api else { return }
+        apply(try await api.saveProgramDay(dayId, edit: DayEdit(scope: scope, exercises: exercises)))
+    }
+
+    /// Drops today's one-off changes to a day.
+    func resetDay(_ dayId: String) async {
+        guard let api = PulsoModel.shared.api else { return }
+        do { apply(try await api.resetProgramDay(dayId)) } catch { PulsoModel.shared.handle(error) }
+    }
+
+    func saveSettings(_ new: TrainingSettings) async {
+        guard let api = PulsoModel.shared.api else { return }
+        let old = settings
+        settings = new
+        do { settings = try await api.saveTrainingSettings(new) } catch {
+            settings = old
+            PulsoModel.shared.handle(error)
         }
     }
 
