@@ -31,3 +31,9 @@ export type PairCode = { code: string; expiresAt: number; address: string | null
 export type ApiError = { code: string; message: string };
 
 export * from "./agent";
+export * from "./nutrition";
+export * from "./training";
+export * from "./body";
+export * from "./daily";
+export * from "./sleep";
+export * from "./medication";

@@ -39,21 +39,10 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Pulso
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
-<<<<<<< HEAD
-        INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee tus entrenamientos de Salud para guardarlos en tu Mac.
-<<<<<<< HEAD
-=======
-        INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee de Salud tus entrenamientos, actividad, sueño y frecuencia cardíaca para guardarlos en tu Mac y calcular tu recuperación.
->>>>>>> telar/hoy-dashboard-y-senales-de-salud-4b8871
-        INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso no escribe en Salud por ahora.
-        INFOPLIST_KEY_NSCameraUsageDescription: Pulso usa la cámara para escanear códigos de barras y el QR de InBody.
-<<<<<<< HEAD
-=======
+        INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee de Salud tus entrenamientos, actividad, sueño, frecuencia cardíaca, peso, composición corporal y medicamentos para guardarlos en tu Mac y calcular tu recuperación y tus proyecciones.
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso guarda en Salud tus sesiones de fuerza como entrenamientos.
+        INFOPLIST_KEY_NSCameraUsageDescription: Pulso usa la cámara para escanear códigos de barras y el QR de InBody.
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
->>>>>>> telar/entreno-rutinas-y-sesiones-en-vivo-d3a9d0
-=======
->>>>>>> telar/cuerpo-inbody-por-qr-y-proyecciones-d0fdf2
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         CODE_SIGN_ENTITLEMENTS: Config/Pulso.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
