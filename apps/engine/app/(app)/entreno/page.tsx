@@ -6,6 +6,7 @@ import { Page, PageHeader } from "../../_ui/page-header";
 import { canEdit } from "./_components/can-edit";
 import { HistoryCard, ProgramCard } from "./_components/cards";
 import { Plan } from "./_components/plan";
+import { DefaultUnit } from "./_components/units";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Entreno" };
@@ -19,7 +20,7 @@ export default async function Entreno() {
   if (!program) {
     return (
       <Page>
-        <PageHeader title="Entreno" subtitle="Programa, sesiones y progresión de cargas." />
+        <PageHeader title="Entreno" subtitle="Programa, sesiones y progresión de cargas." actions={edit && <DefaultUnit value={view.defaultUnit} />} />
         <Card>
           <EmptyState icon={Dumbbell} color="var(--domain-training)" title="Aún no tienes rutina" line="Pídele al Coach un programa: lo verás aquí con los pesos sugeridos para cada día." action={{ href: "/coach", label: "Pedir rutina al Coach" }} />
         </Card>
@@ -44,6 +45,7 @@ export default async function Entreno() {
           </span>
         }
         title={program.name}
+        actions={edit && <DefaultUnit value={view.defaultUnit} />}
       />
       <Plan days={view.days} nextDayId={view.nextDayId} canEdit={edit} />
       <div className="mt-5 grid gap-5 lg:grid-cols-3">

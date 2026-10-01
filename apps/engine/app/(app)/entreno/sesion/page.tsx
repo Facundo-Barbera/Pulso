@@ -25,7 +25,7 @@ export default async function Sesion({ searchParams }: { searchParams: Promise<{
   const view = entrenoOverview();
   return (
     <Page>
-      <Logger days={view.days} programId={view.program?.id ?? null} dayId={dia ?? null} />
+      <Logger days={view.days} programId={view.program?.id ?? null} dayId={dia ?? null} defaultUnit={view.defaultUnit} />
     </Page>
   );
 }

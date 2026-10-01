@@ -1,10 +1,11 @@
 "use client";
 
-import type { PersonalRecord, SessionSaved } from "@pulso/contract";
+import type { PersonalRecord, SessionSaved, WeightUnit } from "@pulso/contract";
 import { Check, ChevronLeft, Minus, Plus, Timer, Trash2, Trophy } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { formatBoth, formatWeight, fromUnit, shown, toUnit } from "@/src/training/units";
 import type { PlanDay } from "@/src/web/entreno";
 import {
   addSet,
@@ -19,6 +20,7 @@ import {
   stepWeight,
   toggleSet,
   toSessionInput,
+  unitOfExercise,
   volumeKg,
   type LiveState,
 } from "@/src/web/entreno-live";
@@ -27,6 +29,7 @@ import { cn } from "../../../_ui/cn";
 import { EmptyState } from "../../../_ui/empty-state";
 import { Skeleton } from "../../../_ui/skeleton";
 import { saveLive, useLive } from "./live-store";
+import { saveExerciseUnit, UnitSwitch } from "./units";
 
 const fmt = (n: number, decimals = 2) => n.toLocaleString("es", { maximumFractionDigits: decimals });
 const clock = (ms: number) => {
@@ -68,12 +71,12 @@ function chime() {
 type Saved = { saved: SessionSaved; state: LiveState };
 
 /**
- * Logging a session at a desk. Each set is a row of three fields (kg, reps,
- * RPE): ↑↓ adjust, Enter checks the set off and jumps to the next one, Esc
+ * Logging a session at a desk. Each set is a row of three fields (load in
+ * the exercise's unit, reps, RPE): ↑↓ adjust, Enter checks the set off and jumps to the next one, Esc
  * skips the rest. The session lives in localStorage until it is finished, then
  * goes to the same store the phone posts to.
  */
-export function Logger({ days, programId, dayId }: { days: PlanDay[]; programId: string | null; dayId: string | null }) {
+export function Logger({ days, programId, dayId, defaultUnit }: { days: PlanDay[]; programId: string | null; dayId: string | null; defaultUnit: WeightUnit }) {
   const [live, ready] = useLive();
   const [saved, setSaved] = useState<Saved | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +92,7 @@ export function Logger({ days, programId, dayId }: { days: PlanDay[]; programId:
     router.replace("/entreno/sesion");
   }, [ready, live, saved, day, programId, router]);
 
-  if (saved) return <Summary {...saved} />;
+  if (saved) return <Summary {...saved} defaultUnit={defaultUnit} />;
   if (!ready || (!live && day)) return <LoggerSkeleton />;
   if (!live) {
     return (
@@ -128,10 +131,10 @@ export function Logger({ days, programId, dayId }: { days: PlanDay[]; programId:
     router.push("/entreno");
   };
 
-  return <LiveView live={live} update={update} finish={finish} discard={() => discard()} busy={busy} error={error} />;
+  return <LiveView live={live} update={update} finish={finish} discard={() => discard()} busy={busy} error={error} defaultUnit={defaultUnit} />;
 }
 
-function LiveView({ live, update, finish, discard, busy, error }: { live: LiveState; update: (s: LiveState) => void; finish: () => void; discard: () => void; busy: boolean; error: string | null }) {
+function LiveView({ live, update, finish, discard, busy, error, defaultUnit }: { live: LiveState; update: (s: LiveState) => void; finish: () => void; discard: () => void; busy: boolean; error: string | null; defaultUnit: WeightUnit }) {
   const now = useNow(true);
   const resting = live.restEndsAt !== null && live.restEndsAt > now;
   const at = current(live);
@@ -181,7 +184,7 @@ function LiveView({ live, update, finish, discard, busy, error }: { live: LiveSt
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[22px] font-semibold tracking-tight">{live.name}</h1>
           <p className="text-muted-foreground tabular text-[13px]">
-            {clock(now - live.startedAt)} · {done}/{total} series · {fmt(Math.round(volumeKg(live)))} kg
+            {clock(now - live.startedAt)} · {done}/{total} series · {fmt(Math.round(toUnit(volumeKg(live), defaultUnit)))} {defaultUnit}
           </p>
         </div>
         <div className="app-no-drag flex items-center gap-2">
@@ -202,22 +205,27 @@ function LiveView({ live, update, finish, discard, busy, error }: { live: LiveSt
       {resting && <RestBar live={live} now={now} update={update} />}
 
       <div className="mt-4 grid gap-5 xl:grid-cols-2">
-        {live.exercises.map((ex, e) => (
+        {live.exercises.map((ex, e) => {
+          const unit = unitOfExercise(ex);
+          const load = (ex.sets.find((s) => s.doneAt === null) ?? ex.sets.at(-1))?.weightKg ?? 0;
+          return (
           <Card key={ex.id} as="article" delay={e * 40} className={cn(at?.exercise === e && "ring-training/50 ring-2")}>
             <div className="mb-3 flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-[17px] font-semibold tracking-tight">{ex.name}</h2>
                 <p className="text-muted-foreground tabular text-[13px]">
                   {ex.target} · descanso {clock(ex.restSeconds * 1000)}
+                  {load > 0 && <span className="block text-[12px]">{formatBoth(load, unit)}</span>}
                 </p>
                 {ex.hint && <p className="text-training mt-1 text-[13px]">{ex.hint}</p>}
                 {ex.notes && <p className="text-muted-foreground mt-1 text-[13px] italic">{ex.notes}</p>}
               </div>
+              <UnitSwitch value={unit} label={`Unidad de ${ex.name}`} onChange={(next) => void saveExerciseUnit(ex.exerciseId, next).then((ok) => !ok && alert("No se pudo cambiar la unidad."))} />
             </div>
             <div role="table" aria-label={`Series de ${ex.name}`} className="text-[14px]">
               <div role="row" className="text-muted-foreground grid grid-cols-[28px_1fr_1fr_1fr_44px] gap-2 px-1 pb-1 text-[11px] font-medium tracking-wide uppercase">
                 <span role="columnheader">#</span>
-                <span role="columnheader">kg</span>
+                <span role="columnheader">{unit}</span>
                 <span role="columnheader">Reps</span>
                 <span role="columnheader">RPE</span>
                 <span role="columnheader" className="sr-only">Hecha</span>
@@ -237,10 +245,10 @@ function LiveView({ live, update, finish, discard, busy, error }: { live: LiveSt
                     </span>
                     <NumberField
                       inputRef={ref("kg")}
-                      label={`Serie ${i + 1}, kg`}
-                      value={set.weightKg}
+                      label={`Serie ${i + 1}, ${unit}`}
+                      value={shown(set.weightKg, unit)}
                       decimals={2}
-                      onCommit={(v) => update(editSet(live, e, i, { weightKg: v ?? 0 }))}
+                      onCommit={(v) => update(editSet(live, e, i, { weightKg: fromUnit(v ?? 0, unit) }))}
                       onStep={(d) => update(stepWeight(live, e, i, d))}
                       onEnter={() => check(e, i)}
                     />
@@ -291,7 +299,8 @@ function LiveView({ live, update, finish, discard, busy, error }: { live: LiveSt
               )}
             </div>
           </Card>
-        ))}
+          );
+        })}
       </div>
       <p className="text-muted-foreground mt-6 hidden text-center text-[12px] md:block">
         <Kbd>Enter</Kbd> marca la serie · <Kbd>↑</Kbd> <Kbd>↓</Kbd> ajustan · <Kbd>Tab</Kbd> pasa al campo siguiente · <Kbd>Esc</Kbd> salta el descanso
@@ -373,9 +382,13 @@ function NumberField({ value, decimals, label, placeholder, inputRef, onCommit, 
 
 const RECORD_ES: Record<PersonalRecord["kind"], string> = { e1rm: "1RM estimado", weight: "Peso máximo", reps: "Más repeticiones" };
 
-function Summary({ saved, state }: Saved) {
+function Summary({ saved, state, defaultUnit }: Saved & { defaultUnit: WeightUnit }) {
   const { session, prs } = saved;
   const volume = session.sets.reduce((n, s) => n + s.weightKg * s.reps, 0);
+  const unitOf = (exerciseId: string) => {
+    const ex = state.exercises.find((e) => e.exerciseId === exerciseId);
+    return ex ? unitOfExercise(ex) : defaultUnit;
+  };
   return (
     <div className="pt-[calc(env(safe-area-inset-top)+20px)] md:pt-[calc(var(--titlebar-height)+12px)]">
       <Card className="relative overflow-hidden !p-8 text-center">
@@ -389,7 +402,7 @@ function Summary({ saved, state }: Saved) {
           <div className="mx-auto mt-6 grid max-w-md grid-cols-3 gap-4">
             <Figure label="Duración" value={clock(session.endedAt - session.startedAt)} />
             <Figure label="Series" value={String(session.sets.length)} />
-            <Figure label="Volumen" value={`${fmt(Math.round(volume))} kg`} />
+            <Figure label="Volumen" value={`${fmt(Math.round(toUnit(volume, defaultUnit)))} ${defaultUnit}`} />
           </div>
           {prs.length > 0 && (
             <ul className="mx-auto mt-8 max-w-md space-y-2 text-left">
@@ -401,8 +414,8 @@ function Summary({ saved, state }: Saved) {
                     <span className="text-muted-foreground text-[12px]">{RECORD_ES[pr.kind]}</span>
                   </span>
                   <span className="tabular text-right text-[14px] font-semibold">
-                    {pr.kind === "reps" ? `${pr.value} reps` : `${fmt(pr.value, 1)} kg`}
-                    {pr.previous !== null && <span className="text-muted-foreground block text-[11px] font-normal">antes {pr.kind === "reps" ? pr.previous : `${fmt(pr.previous, 1)} kg`}</span>}
+                    {pr.kind === "reps" ? `${pr.value} reps` : formatWeight(pr.value, unitOf(pr.exerciseId))}
+                    {pr.previous !== null && <span className="text-muted-foreground block text-[11px] font-normal">antes {pr.kind === "reps" ? pr.previous : formatWeight(pr.previous, unitOf(pr.exerciseId))}</span>}
                   </span>
                 </li>
               ))}

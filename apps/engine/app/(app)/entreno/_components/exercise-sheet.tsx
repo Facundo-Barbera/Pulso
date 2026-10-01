@@ -1,7 +1,10 @@
 "use client";
 
 import { Check, ExternalLink, Lightbulb, ListOrdered, NotebookPen, Trophy, WifiOff, X } from "lucide-react";
+import type { WeightUnit } from "@pulso/contract";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { shown, toUnit } from "@/src/training/units";
 import type { ExerciseView } from "@/src/web/entreno";
 import { cn } from "../../../_ui/cn";
 import { Skeleton } from "../../../_ui/skeleton";
@@ -9,8 +12,9 @@ import { Sparkline } from "../../../_ui/sparkline";
 import { StatTile } from "../../../_ui/stat-tile";
 import { MuscleMap } from "./body-map";
 import { Thumb } from "./thumb";
+import { saveExerciseUnit, UnitSwitch } from "./units";
 
-const kg = (n: number) => n.toLocaleString("es", { maximumFractionDigits: 1 });
+const num = (n: number) => n.toLocaleString("es", { maximumFractionDigits: 1 });
 const day = (at: number) => new Date(at).toLocaleDateString("es", { day: "numeric", month: "short" });
 
 /**
@@ -24,6 +28,15 @@ export function ExerciseSheet({ exerciseId, name, canEdit, onClose }: { exercise
   const [view, setView] = useState<ExerciseView | null>(null);
   const [failed, setFailed] = useState(false);
   const [tab, setTab] = useState<"guide" | "performance">("guide");
+  const router = useRouter();
+
+  const changeUnit = async (unit: WeightUnit) => {
+    if (!view) return;
+    const before = view.unit;
+    setView({ ...view, unit });
+    if (await saveExerciseUnit(view.detail.id, unit)) router.refresh();
+    else setView((v) => v && { ...v, unit: before });
+  };
 
   useEffect(() => {
     const dialog = ref.current;
@@ -63,6 +76,7 @@ export function ExerciseSheet({ exerciseId, name, canEdit, onClose }: { exercise
             <h2 className="mt-0.5 text-[22px] leading-tight font-semibold tracking-tight">{detail?.name ?? name ?? "…"}</h2>
             {detail?.nameEn && <p className="text-muted-foreground text-[13px]">{detail.nameEn}</p>}
           </div>
+          {view && detail?.kind !== "cardio" && (canEdit ? <UnitSwitch value={view.unit} onChange={changeUnit} label="Unidad de esta máquina" /> : <span className="text-muted-foreground mt-2 text-[13px]">{view.unit}</span>)}
           <button onClick={onClose} className="hover:bg-muted focus-visible:ring-ring -mr-2 grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2" aria-label="Cerrar">
             <X className="size-5" />
           </button>
@@ -220,6 +234,8 @@ function Notes({ exerciseId, initial, canEdit }: { exerciseId: string; initial: 
 
 function Performance({ view }: { view: ExerciseView }) {
   const p = view.performance;
+  const { unit } = view;
+  const w = (kg: number) => num(shown(kg, unit));
   if (!p || p.history.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 py-16 text-center">
@@ -234,20 +250,20 @@ function Performance({ view }: { view: ExerciseView }) {
   return (
     <>
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="Peso máximo" value={p.maxWeight ? kg(p.maxWeight.kg) : "—"} unit="kg" caption={p.maxWeight ? `× ${p.maxWeight.reps} · ${day(p.maxWeight.at)}` : undefined} />
-        <StatTile label="1RM estimado" value={p.bestE1rm ? kg(p.bestE1rm.kg) : "—"} unit="kg" caption={p.bestE1rm ? day(p.bestE1rm.at) : undefined} color="var(--domain-training)" />
-        <StatTile label="Volumen" value={p.maxVolume ? kg(p.maxVolume.kg) : "—"} unit="kg" caption={p.maxVolume ? day(p.maxVolume.at) : undefined} />
+        <StatTile label="Peso máximo" value={p.maxWeight ? w(p.maxWeight.kg) : "—"} unit={unit} caption={p.maxWeight ? `× ${p.maxWeight.reps} · ${day(p.maxWeight.at)}` : undefined} />
+        <StatTile label="1RM estimado" value={p.bestE1rm ? w(p.bestE1rm.kg) : "—"} unit={unit} caption={p.bestE1rm ? day(p.bestE1rm.at) : undefined} color="var(--domain-training)" />
+        <StatTile label="Volumen" value={p.maxVolume ? num(Math.round(toUnit(p.maxVolume.kg, unit))) : "—"} unit={unit} caption={p.maxVolume ? day(p.maxVolume.at) : undefined} />
       </div>
       <div className="bg-muted/50 mt-6 rounded-2xl p-4">
         <p className="text-muted-foreground mb-3 text-[12px] font-medium">1RM estimado por sesión</p>
-        <Sparkline points={p.history.map((h) => ({ label: day(h.at), value: h.e1rm || null }))} color="var(--domain-training)" unit="kg" decimals={1} height={96} label="1RM estimado por sesión" />
+        <Sparkline points={p.history.map((h) => ({ label: day(h.at), value: h.e1rm ? toUnit(h.e1rm, unit) : null }))} color="var(--domain-training)" unit={unit} decimals={1} height={96} label="1RM estimado por sesión" />
       </div>
       <ul className="mt-6 space-y-2 text-[14px]">
         {[...p.history].reverse().slice(0, 8).map((h) => (
           <li key={h.at} className="flex justify-between">
             <span className="text-muted-foreground">{day(h.at)}</span>
             <span className="tabular">
-              {kg(h.topWeightKg)} kg · {kg(h.volumeKg)} kg vol.
+              {w(h.topWeightKg)} {unit} · {num(Math.round(toUnit(h.volumeKg, unit)))} {unit} vol.
             </span>
           </li>
         ))}

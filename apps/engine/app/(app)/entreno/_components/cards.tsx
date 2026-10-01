@@ -1,4 +1,5 @@
 import { CalendarDays, ChevronDown, ClipboardList, Dumbbell, History, Repeat, Trophy, Watch } from "lucide-react";
+import { shown } from "@/src/training/units";
 import type { HistoryEntry, ProgramHeader } from "@/src/web/entreno";
 import { Card, CardTitle } from "../../../_ui/card";
 import { EmptyState } from "../../../_ui/empty-state";
@@ -48,9 +49,10 @@ export function HistoryCard({ history, delay, className }: { history: HistoryEnt
                             <span className="flex items-center gap-1.5 font-medium">
                               {e.name}
                               {e.record && <Trophy className="text-carbs size-3" aria-label="Récord" />}
+                              {e.sets.some((s) => s.weightKg > 0) && <span className="text-muted-foreground text-[11px] font-normal">{e.unit}</span>}
                             </span>
                             <span className="text-muted-foreground tabular">
-                              {e.sets.map((s) => (s.weightKg > 0 ? `${fmtNumber(s.weightKg, 2)} × ${s.reps}` : `${s.reps} reps`) + (s.rpe ? ` @${fmtNumber(s.rpe, 1)}` : "")).join(" · ")}
+                              {e.sets.map((s) => (s.weightKg > 0 ? `${fmtNumber(shown(s.weightKg, e.unit), 2)} × ${s.reps}` : `${s.reps} reps`) + (s.rpe ? ` @${fmtNumber(s.rpe, 1)}` : "")).join(" · ")}
                             </span>
                           </li>
                         ))}
