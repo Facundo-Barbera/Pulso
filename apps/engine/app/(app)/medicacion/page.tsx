@@ -1,6 +1,7 @@
-import type { AdherenceReport, AdherenceWindow, Medication, MedicationSchedule } from "@pulso/contract";
-import { BellRing, CalendarCheck, ChartColumn, CircleCheckBig, Flame, Hand, History, List, Pill, TriangleAlert } from "lucide-react";
-import { medicationPage, type MedicationPage } from "@/src/web/medication";
+import type { AdherenceReport, AdherenceWindow, DoseSlot, Medication, MedicationKind } from "@pulso/contract";
+import { BellRing, CalendarCheck, ChartColumn, CircleCheckBig, Dumbbell, Flame, Hand, History, List, Pill, Tablets, TriangleAlert, type LucideIcon } from "lucide-react";
+import { TIME } from "@/src/medication/schedule";
+import { medicationPage, scheduleLine, slotLabel, unitFor, type MedicationPage } from "@/src/web/medication";
 import { Card, CardTitle } from "../../_ui/card";
 import { cn } from "../../_ui/cn";
 import { EmptyState } from "../../_ui/empty-state";
@@ -9,25 +10,22 @@ import { Page, PageHeader } from "../../_ui/page-header";
 import { Ring } from "../../_ui/ring";
 import { DeleteEntryButton, DoseActions, TakeOneButton } from "./_components/doses";
 import { AddMedicationButton, EditMedicationRow, MedicationEditorProvider } from "./_components/editor";
+import { MOMENT_ICON } from "./_components/moment-icons";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Medicación" };
+export const metadata = { title: "Medicación y suplementos" };
 
 const MED = "var(--domain-medication)";
 
-// fields.tsx is a client module: its WEEKDAYS would arrive here as a reference, not an array.
-const DAY_LETTERS = ["L", "M", "X", "J", "V", "S", "D"];
-
 const pct = (w: AdherenceWindow) => (w.rate === null ? null : Math.round(w.rate * 100));
-const amount = (dose: number, unit: string) => `${fmtNumber(dose, 2)} ${unit}`;
+const amount = (dose: number, unit: string) => `${fmtNumber(dose, 2)} ${unitFor(dose, unit)}`;
 
-function scheduleLine(s: MedicationSchedule): string {
-  if (s.asNeeded) return "Cuando haga falta";
-  const days = s.days.length === 0 ? "Cada día" : s.days.map((d) => DAY_LETTERS[d - 1]).join(" ");
-  return `${days} · ${s.times.join(", ")}`;
-}
+const KIND: Record<MedicationKind, { title: string; icon: LucideIcon }> = { medicamento: { title: "Medicamentos", icon: Pill }, suplemento: { title: "Suplementos", icon: Tablets } };
 
-/** Medicación: today's progress as the hero, the doses to tick, as-needed meds, adherence, what you take and the history. */
+/** "a las 09:00", or the moment with its time: "con el desayuno (08:00)". */
+const when = (slot: DoseSlot) => (slot.moment === "hora" || slot.moment === "entreno" ? `a las ${slot.time}` : `${slotLabel(slot.slot)} (${slot.time})`);
+
+/** Medicación y suplementos: today's progress as the hero, the doses to tick, as-needed meds, adherence, what you take and the history. */
 export default function Medicacion() {
   const page = medicationPage();
   const empty = page.medications.length === 0;
@@ -36,12 +34,13 @@ export default function Medicacion() {
   return (
     <MedicationEditorProvider today={page.date}>
       <Page>
-        <PageHeader eyebrow={fmtLongDate(new Date(`${page.date}T12:00:00`))} title="Medicación" subtitle={empty ? undefined : "Marca cada toma y lleva la cuenta sin pensar."} actions={!empty && <AddMedicationButton />} />
+        <PageHeader eyebrow={fmtLongDate(new Date(`${page.date}T12:00:00`))} title="Medicación y suplementos" subtitle={empty ? undefined : "Marca cada toma y lleva la cuenta sin pensar."} actions={!empty && <AddMedicationButton />} />
         {empty ? (
           <Card>
-            <EmptyState icon={Pill} color={MED} title="Anota tus medicamentos y suplementos" line="Con su horario, Pulso te recuerda cada toma en el iPhone y lleva tu adherencia." />
-            <div className="-mt-6 flex justify-center pb-6">
-              <AddMedicationButton label="Añadir medicación" prominent />
+            <EmptyState icon={Pill} color={MED} title="Anota tus medicamentos y suplementos" line="A una hora, con una comida o después de entrenar: Pulso te recuerda cada toma en el iPhone y lleva tu adherencia." />
+            <div className="-mt-6 flex flex-wrap justify-center gap-2 pb-6">
+              <AddMedicationButton label="Suplemento" kind="suplemento" prominent />
+              <AddMedicationButton label="Medicamento" kind="medicamento" />
             </div>
           </Card>
         ) : (
@@ -68,7 +67,22 @@ function Hero({ page }: { page: MedicationPage }) {
   const taken = slots.filter((s) => s.status === "tomada").length;
   const streak = page.adherence.overall.currentStreak;
   const low = page.medications.filter((m) => m.active && m.lowStock);
-  const headline = slots.length === 0 ? "Hoy no hay tomas programadas" : taken === slots.length ? "Todo tomado por hoy" : next ? `Próxima: ${next.name} a las ${next.time}` : `${slots.length - taken} ${slots.length - taken === 1 ? "toma pendiente" : "tomas pendientes"}`;
+  // Just trained: what goes now leads, ahead of the next clock time.
+  const afterWorkout = slots.filter((s) => s.status === "pendiente" && s.training?.state === "trained" && page.time <= s.training.until!);
+  // Nothing left with a time, but something waits for today's workout.
+  const waiting = slots.find((s) => s.status === "pendiente" && s.time === null);
+  const headline =
+    slots.length === 0
+      ? "Hoy no hay tomas programadas"
+      : taken === slots.length
+        ? "Todo tomado por hoy"
+        : afterWorkout.length
+          ? `Ahora: ${new Intl.ListFormat("es").format(afterWorkout.map((s) => s.name))}, antes de las ${afterWorkout.map((s) => s.training!.until!).sort()[0]}`
+          : next
+          ? `Próxima: ${next.name} ${when(next)}`
+          : waiting
+            ? `${waiting.name}, al terminar de entrenar`
+            : `${slots.length - taken} ${slots.length - taken === 1 ? "toma pendiente" : "tomas pendientes"}`;
   return (
     <Card className="relative overflow-hidden !p-6 md:!p-8">
       <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: MED }} aria-hidden />
@@ -84,7 +98,7 @@ function Hero({ page }: { page: MedicationPage }) {
         </Ring>
         <div className="w-full min-w-0 flex-1">
           <p className="flex items-center justify-center gap-2 text-[22px] font-semibold tracking-tight md:justify-start" style={slots.length && taken === slots.length ? { color: "var(--success)" } : undefined}>
-            {slots.length > 0 && taken === slots.length ? <CircleCheckBig className="size-6" /> : next ? <BellRing className="size-5" style={{ color: MED }} /> : null}
+            {slots.length > 0 && taken === slots.length ? <CircleCheckBig className="size-6" /> : afterWorkout.length ? <Dumbbell className="size-5" style={{ color: MED }} /> : next ? <BellRing className="size-5" style={{ color: MED }} /> : waiting ? <Dumbbell className="size-5" style={{ color: MED }} /> : null}
             {headline}
           </p>
           {streak > 1 && (
@@ -154,34 +168,53 @@ function HeroTile({ label, value }: { label: string; value: number | null }) {
 }
 
 function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
-  const { slots, next } = page.day;
+  const { next } = page.day;
   return (
     <Card delay={delay} className="md:col-span-2">
       <CardTitle icon={CalendarCheck} color={MED} title="Hoy" />
-      {slots.length === 0 ? (
-        <EmptyState compact icon={CalendarCheck} color={MED} title="Nada programado hoy" line="Las tomas con horario de hoy aparecerán aquí para marcarlas." />
+      {page.groups.length === 0 ? (
+        <EmptyState compact icon={CalendarCheck} color={MED} title="Nada programado hoy" line="Las tomas de hoy aparecerán aquí, por momento del día, para marcarlas." />
       ) : (
-        <ul className="-mx-2 space-y-0.5">
-          {slots.map((slot) => {
-            const isNext = next?.medicationId === slot.medicationId && next.slot === slot.slot;
-            const late = slot.status === "pendiente" && slot.time !== null && slot.time < page.time;
+        <div className="space-y-4">
+          {page.groups.map((group) => {
+            const Icon = MOMENT_ICON[group.moment];
             return (
-              <li key={`${slot.medicationId}-${slot.slot}`} className={cn("flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", isNext && "bg-muted/60")}>
-                <span className={cn("tabular w-12 text-[14px] font-medium", late ? "text-warning" : "text-muted-foreground")}>{slot.time ?? "—"}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px] font-medium">{slot.name}</span>
-                  <span className="text-muted-foreground block truncate text-[12px]">
-                    {amount(slot.dose, slot.unit)}
-                    {slot.instructions && ` · ${slot.instructions}`}
-                    {isNext && " · siguiente"}
-                    {late && " · se pasó la hora"}
-                  </span>
-                </span>
-                <DoseActions slot={slot} takenLabel={slot.takenAt ? fmtTime(slot.takenAt) : null} />
-              </li>
+              <section key={group.key}>
+                <h3 className="text-muted-foreground mb-1 flex items-center gap-1.5 text-[12px] font-semibold tracking-wide uppercase">
+                  <Icon className="size-3.5" style={{ color: MED }} />
+                  <span className={cn(group.moment === "hora" && "tabular")}>{group.title}</span>
+                  {group.time && <span className="tabular font-medium normal-case">· {group.time}</span>}
+                </h3>
+                <ul className="-mx-2 space-y-0.5">
+                  {group.slots.map((slot) => {
+                    const isNext = next?.medicationId === slot.medicationId && next.slot === slot.slot;
+                    const late = slot.status === "pendiente" && slot.time !== null && slot.time < page.time && slot.training?.state !== "trained";
+                    return (
+                      <li key={`${slot.medicationId}-${slot.slot}`} className={cn("flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", isNext && "bg-muted/60")}>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[15px] font-medium">{slot.name}</span>
+                          <span className="text-muted-foreground block truncate text-[12px]">
+                            {amount(slot.dose, slot.unit)}
+                            {slot.instructions && ` · ${slot.instructions}`}
+                            {isNext && " · siguiente"}
+                          </span>
+                          {(slot.line || late) && (
+                            <span className={cn("block truncate text-[12px]", late ? "text-warning" : "text-foreground/80")}>
+                              {slot.line}
+                              {slot.line && late && " · "}
+                              {late && "se pasó la hora"}
+                            </span>
+                          )}
+                        </span>
+                        <DoseActions slot={slot} takenLabel={slot.takenAt ? fmtTime(slot.takenAt) : null} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
             );
           })}
-        </ul>
+        </div>
       )}
     </Card>
   );
@@ -270,34 +303,45 @@ function AdherenceCard({ report, delay }: { report: AdherenceReport; delay: numb
 }
 
 function MedicationsCard({ medications, delay }: { medications: Medication[]; delay: number }) {
+  const kinds = (["medicamento", "suplemento"] as const).map((kind) => ({ kind, items: medications.filter((m) => m.kind === kind) })).filter((k) => k.items.length > 0);
   return (
     <Card delay={delay}>
       <CardTitle icon={List} color={MED} title="Lo que tomas" />
-      <ul className="-mx-2 space-y-0.5">
-        {medications.map((m) => (
-          <li key={m.id}>
-            <EditMedicationRow medication={m} className="flex min-h-14 items-center gap-3 px-2 py-1.5">
-              <span className="grid size-9 shrink-0 place-items-center rounded-xl" style={{ background: `color-mix(in oklab, ${MED} 16%, transparent)`, color: MED, opacity: m.active ? 1 : 0.5 }}>
-                <Pill className="size-[18px]" />
-              </span>
-              <span className={cn("min-w-0 flex-1", !m.active && "opacity-60")}>
-                <span className="block truncate text-[14px] font-medium">
-                  {m.name}
-                  {!m.active && <span className="text-muted-foreground ml-1.5 text-[12px] font-normal">· en pausa</span>}
-                </span>
-                <span className="text-muted-foreground block truncate text-[12px]">
-                  {amount(m.dose, m.unit)} · {scheduleLine(m.schedule)}
-                </span>
-              </span>
-              {m.stock !== null && (
-                <span className={cn("tabular shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium", m.lowStock ? "text-warning bg-warning/12" : "text-muted-foreground bg-muted")} title={`Quedan ${m.stock} dosis`}>
-                  {fmtNumber(m.stock)}
-                </span>
-              )}
-            </EditMedicationRow>
-          </li>
-        ))}
-      </ul>
+      <div className="space-y-4">
+        {kinds.map(({ kind, items }) => {
+          const Icon = KIND[kind].icon;
+          return (
+            <section key={kind}>
+              <h3 className="text-muted-foreground mb-1 text-[12px] font-semibold tracking-wide uppercase">{KIND[kind].title}</h3>
+              <ul className="-mx-2 space-y-0.5">
+                {items.map((m) => (
+                  <li key={m.id}>
+                    <EditMedicationRow medication={m} className="flex min-h-14 items-center gap-3 px-2 py-1.5">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-xl" style={{ background: `color-mix(in oklab, ${MED} 16%, transparent)`, color: MED, opacity: m.active ? 1 : 0.5 }}>
+                        <Icon className="size-[18px]" />
+                      </span>
+                      <span className={cn("min-w-0 flex-1", !m.active && "opacity-60")}>
+                        <span className="block truncate text-[14px] font-medium">
+                          {m.name}
+                          {!m.active && <span className="text-muted-foreground ml-1.5 text-[12px] font-normal">· en pausa</span>}
+                        </span>
+                        <span className="text-muted-foreground line-clamp-2 block text-[12px]">
+                          {amount(m.dose, m.unit)} · {scheduleLine(m.schedule)}
+                        </span>
+                      </span>
+                      {m.stock !== null && (
+                        <span className={cn("tabular shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium", m.lowStock ? "text-warning bg-warning/12" : "text-muted-foreground bg-muted")} title={`Quedan ${m.stock} dosis`}>
+                          {fmtNumber(m.stock)}
+                        </span>
+                      )}
+                    </EditMedicationRow>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
     </Card>
   );
 }
@@ -320,14 +364,14 @@ function HistoryCard({ page, delay }: { page: MedicationPage; delay: number }) {
               <ul className="-mx-2">
                 {day.entries.map((e) => (
                   <li key={e.id} className="group hover:bg-muted/50 flex min-h-12 items-center gap-3 rounded-xl px-2">
-                    <span className="tabular text-muted-foreground w-12 text-[13px]">{e.takenAt ? fmtTime(e.takenAt) : (e.scheduledTime ?? "—")}</span>
+                    <span className="tabular text-muted-foreground w-12 text-[13px]">{e.takenAt ? fmtTime(e.takenAt) : e.scheduledTime && TIME.test(e.scheduledTime) ? e.scheduledTime : "—"}</span>
                     <span className={cn("size-2 shrink-0 rounded-full", e.status === "tomada" ? "bg-success" : e.status === "pospuesta" ? "bg-warning" : "bg-muted-foreground/40")} />
                     <span className="min-w-0 flex-1 truncate text-[14px]">
                       <span className="font-medium">{e.name}</span>
                       <span className="text-muted-foreground">
                         {" "}
                         · {STATUS[e.status]}
-                        {e.scheduledTime ? ` (las ${e.scheduledTime})` : " · a demanda"} · {amount(e.dose, e.unit)}
+                        {e.scheduledTime ? ` (${slotLabel(e.scheduledTime)})` : " · a demanda"} · {amount(e.dose, e.unit)}
                       </span>
                     </span>
                     <DeleteEntryButton eventId={e.id} label={e.name} />
