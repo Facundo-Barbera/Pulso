@@ -161,10 +161,10 @@ export function MedicationCard({ day, delay }: { day: MedicationDay; delay: numb
           )}
           <ul className="-mx-2 space-y-0.5">
             {day.slots.map((slot) => {
-              const isNext = day.next?.medicationId === slot.medicationId && day.next.time === slot.time;
+              const isNext = day.next?.medicationId === slot.medicationId && day.next.slot === slot.slot;
               return (
-                <li key={`${slot.medicationId}-${slot.time}`} className={cn("flex min-h-11 items-center gap-3 rounded-xl px-2", isNext && "bg-muted/70")}>
-                  <span className="tabular text-muted-foreground w-11 text-[13px]">{slot.time}</span>
+                <li key={`${slot.medicationId}-${slot.slot}`} className={cn("flex min-h-11 items-center gap-3 rounded-xl px-2", isNext && "bg-muted/70")}>
+                  <span className="tabular text-muted-foreground w-11 text-[13px]">{slot.time ?? "—"}</span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14px] font-medium">{slot.name}</span>
                     <span className="text-muted-foreground block text-[12px]">

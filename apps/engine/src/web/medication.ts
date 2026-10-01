@@ -5,7 +5,7 @@
  * medication store, on the Mac's clock.
  */
 import type { AdherenceReport, DoseEvent, Medication, MedicationDay } from "@pulso/contract";
-import { addDays, localNow } from "../medication/schedule";
+import { addDays, localNow, TIME } from "../medication/schedule";
 import { adherence, dosesBetween, listMedications, medicationDay } from "../medication/store";
 
 export type HistoryEntry = DoseEvent & { name: string; dose: number; unit: string };
@@ -36,7 +36,7 @@ export function medicationPage(now = new Date()): MedicationPage {
     .map((medication) => ({ medication, today: day.asNeeded.filter((e) => e.medicationId === medication.id && e.status === "tomada").length }));
 
   // An entry's moment: when it was taken, else its slot, else when it was logged.
-  const moment = (e: DoseEvent) => e.takenAt ?? (e.scheduledTime ? Date.parse(`${e.date}T${e.scheduledTime}:00`) : e.loggedAt);
+  const moment = (e: DoseEvent) => e.takenAt ?? (e.scheduledTime && TIME.test(e.scheduledTime) ? Date.parse(`${e.date}T${e.scheduledTime}:00`) : e.loggedAt);
   const groups = new Map<string, HistoryEntry[]>();
   for (const e of dosesBetween(addDays(date, -(HISTORY_DAYS - 1)), date)) {
     const med = byId.get(e.medicationId);

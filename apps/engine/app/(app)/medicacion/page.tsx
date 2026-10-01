@@ -163,11 +163,11 @@ function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
       ) : (
         <ul className="-mx-2 space-y-0.5">
           {slots.map((slot) => {
-            const isNext = next?.medicationId === slot.medicationId && next.time === slot.time;
-            const late = slot.status === "pendiente" && slot.time < page.time;
+            const isNext = next?.medicationId === slot.medicationId && next.slot === slot.slot;
+            const late = slot.status === "pendiente" && slot.time !== null && slot.time < page.time;
             return (
-              <li key={`${slot.medicationId}-${slot.time}`} className={cn("flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", isNext && "bg-muted/60")}>
-                <span className={cn("tabular w-12 text-[14px] font-medium", late ? "text-warning" : "text-muted-foreground")}>{slot.time}</span>
+              <li key={`${slot.medicationId}-${slot.slot}`} className={cn("flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", isNext && "bg-muted/60")}>
+                <span className={cn("tabular w-12 text-[14px] font-medium", late ? "text-warning" : "text-muted-foreground")}>{slot.time ?? "—"}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[15px] font-medium">{slot.name}</span>
                   <span className="text-muted-foreground block truncate text-[12px]">

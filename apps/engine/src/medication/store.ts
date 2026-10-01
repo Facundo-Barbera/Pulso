@@ -10,20 +10,29 @@ import type {
   MedicationInput,
   MedicationPatch,
   MedicationSchedule,
+  MedicationUpcoming,
 } from "@pulso/contract";
 import { z } from "zod";
 import { db } from "../db";
-import { addDays, computeAdherence, DATE, HISTORY_DAYS, localNow, slotKey, slotTimes, TIME, type StatusIndex } from "./schedule";
+import { dayFacts } from "./facts";
+import { addDays, computeAdherence, DATE, HISTORY_DAYS, isSlotKey, localNow, resolveSlots, slotKey, TIME, type DayFacts, type StatusIndex } from "./schedule";
 
 // Validation shared by the phone routes and the agent tools.
 const text = (max: number) => z.string().trim().min(1).max(max);
 const optText = (max: number) => z.string().trim().max(max).nullish().transform((v) => v || null);
 export const dateSchema = z.string().regex(DATE, "expected YYYY-MM-DD");
 export const timeSchema = z.string().regex(TIME, "expected HH:MM (24h)");
+export const trainingRuleSchema = z.object({
+  withinMinutes: z.number().int().min(5).max(240).default(60),
+  restDayTime: timeSchema.nullable().default(null),
+});
 export const scheduleSchema = z.object({
   asNeeded: z.boolean().default(false),
   times: z.array(timeSchema).max(24).default([]),
   days: z.array(z.number().int().min(1).max(7)).max(7).default([]),
+  training: trainingRuleSchema.nullable().default(null),
+  meals: z.array(z.enum(["desayuno", "comida", "cena"])).max(3).default([]),
+  bedtime: z.boolean().default(false),
 });
 const fields = {
   name: text(80),
@@ -48,13 +57,13 @@ export const medicationInputSchema = z.object({
   stock: fields.stock.optional(),
   lowStockThreshold: fields.lowStockThreshold.optional(),
   active: fields.active.default(true),
-  schedule: scheduleSchema.default({ asNeeded: true, times: [], days: [] }),
+  schedule: scheduleSchema.default({ asNeeded: true, times: [], days: [], training: null, meals: [], bedtime: false }),
 });
 export const medicationPatchSchema = z.object(fields).partial();
 export const doseLogSchema = z.object({
   medicationId: z.string().min(1),
   date: dateSchema,
-  scheduledTime: timeSchema.nullish(),
+  scheduledTime: z.string().refine(isSlotKey, "expected the slot: HH:MM or entreno/desayuno/comida/cena/dormir").nullish(),
   status: z.enum(["tomada", "omitida", "pospuesta"]),
   takenAt: z.number().positive().nullish(),
 });
@@ -105,7 +114,7 @@ const toMedication = (row: MedRow): Medication => ({
   unit: row.unit,
   form: row.form,
   instructions: row.instructions,
-  schedule: JSON.parse(row.schedule) as MedicationSchedule,
+  schedule: readSchedule(row.schedule),
   startDate: row.start_date,
   endDate: row.end_date,
   stock: row.stock,
@@ -127,12 +136,26 @@ const toDose = (row: DoseRow): DoseEvent => ({
   loggedAt: row.logged_at,
 });
 
-/** Times sorted and deduped; as-needed drops times and days. */
+const AS_NEEDED: MedicationSchedule = { asNeeded: true, times: [], days: [], training: null, meals: [], bedtime: false };
+
+/**
+ * Schedules stored before moments existed are just `{ asNeeded, times, days }`:
+ * they read as fixed times with nothing tied to training, meals or bed. Nothing
+ * is rewritten, so this holds on every read.
+ */
+function readSchedule(json: string): MedicationSchedule {
+  return { training: null, meals: [], bedtime: false, ...(JSON.parse(json) as Partial<MedicationSchedule>) } as MedicationSchedule;
+}
+
+/** Times and meals sorted and deduped; as-needed drops everything else. */
 function normalizeSchedule(schedule: MedicationSchedule): MedicationSchedule {
-  if (schedule.asNeeded) return { asNeeded: true, times: [], days: [] };
-  if (schedule.times.length === 0) throw new MedicationError("invalid_request", "a scheduled medication needs at least one time (or asNeeded: true)");
+  if (schedule.asNeeded) return AS_NEEDED;
+  if (schedule.times.length === 0 && schedule.meals.length === 0 && !schedule.bedtime && !schedule.training) {
+    throw new MedicationError("invalid_request", "a scheduled medication needs a time, a meal, bedtime or training (or asNeeded: true)");
+  }
   const days = [...new Set(schedule.days)].sort();
-  return { asNeeded: false, times: [...new Set(schedule.times)].sort(), days: days.length === 7 ? [] : days };
+  const meals = (["desayuno", "comida", "cena"] as const).filter((m) => schedule.meals.includes(m));
+  return { asNeeded: false, times: [...new Set(schedule.times)].sort(), days: days.length === 7 ? [] : days, training: schedule.training, meals, bedtime: schedule.bedtime };
 }
 
 export function listMedications(opts: { includeInactive?: boolean } = {}): Medication[] {
@@ -282,38 +305,52 @@ function statusIndex(events: DoseEvent[]): StatusIndex {
   return index;
 }
 
+/** Every slot of each date with its status, resolved against that date's facts. */
+function slotsOn(meds: Medication[], dates: string[], events: DoseEvent[], factsOf: (date: string) => DayFacts, today: string, now: string): DoseSlot[] {
+  const bySlot = new Map(events.filter((e) => e.scheduledTime).map((e) => [slotKey(e.medicationId, e.date, e.scheduledTime!), e]));
+  return dates.flatMap((date) =>
+    meds
+      .flatMap((med) =>
+        resolveSlots(med, date, factsOf(date), today, now).map((r): DoseSlot => {
+          const event = bySlot.get(slotKey(med.id, date, r.slot));
+          return {
+            medicationId: med.id,
+            name: med.name,
+            kind: med.kind,
+            dose: med.dose,
+            unit: med.unit,
+            instructions: med.instructions,
+            date,
+            ...r,
+            status: event?.status ?? "pendiente",
+            eventId: event?.id ?? null,
+            takenAt: event?.takenAt ?? null,
+          };
+        }),
+      )
+      .sort((a, b) => (a.time ?? "99").localeCompare(b.time ?? "99") || a.name.localeCompare(b.name)),
+  );
+}
+
 /** Every slot of `date` with its status, plus as-needed intakes and the next pending dose from `time` on. */
 export function medicationDay(date: string, time: string): MedicationDay {
-  const meds = listMedications();
   const events = dosesBetween(date, date);
-  const bySlot = new Map(events.filter((e) => e.scheduledTime).map((e) => [slotKey(e.medicationId, e.date, e.scheduledTime!), e]));
-  const slots: DoseSlot[] = meds
-    .flatMap((med) =>
-      slotTimes(med, date).map((t): DoseSlot => {
-        const event = bySlot.get(slotKey(med.id, date, t));
-        return {
-          medicationId: med.id,
-          name: med.name,
-          kind: med.kind,
-          dose: med.dose,
-          unit: med.unit,
-          instructions: med.instructions,
-          date,
-          time: t,
-          status: event?.status ?? "pendiente",
-          eventId: event?.id ?? null,
-          takenAt: event?.takenAt ?? null,
-        };
-      }),
-    )
-    .sort((a, b) => a.time.localeCompare(b.time) || a.name.localeCompare(b.name));
-  const next = slots.find((s) => (s.status === "pendiente" || s.status === "pospuesta") && s.time >= time) ?? null;
+  const slots = slotsOn(listMedications(), [date], events, dayFacts(date, date, date), date, time);
+  const next = slots.find((s) => (s.status === "pendiente" || s.status === "pospuesta") && s.time !== null && s.time >= time) ?? null;
   return { date, slots, asNeeded: events.filter((e) => e.scheduledTime === null), next };
+}
+
+/** The slots of `days` days from `date`, resolved as of `time` today, for planning reminders. */
+export function upcomingSlots(date: string, time: string, days = 7): MedicationUpcoming {
+  const to = addDays(date, days - 1);
+  const dates = Array.from({ length: days }, (_, i) => addDays(date, i));
+  return { from: date, slots: slotsOn(listMedications(), dates, dosesBetween(date, to), dayFacts(date, to, date), date, time) };
 }
 
 export function adherence(date: string, time: string): AdherenceReport {
   // Paused meds drop out; to stop one but keep its history, set an endDate instead.
   const meds = listMedications();
   const events = dosesBetween(addDays(date, -HISTORY_DAYS), date);
-  return { asOf: { date, time }, ...computeAdherence(meds, statusIndex(events), date, time) };
+  const facts = dayFacts(addDays(date, -HISTORY_DAYS), date, date);
+  return { asOf: { date, time }, ...computeAdherence(meds, statusIndex(events), date, time, facts) };
 }

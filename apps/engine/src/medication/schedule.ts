@@ -3,7 +3,7 @@
  * adherence and streaks. Everything works on local "YYYY-MM-DD" / "HH:MM"
  * strings that the phone sends, so the engine never guesses a time zone.
  */
-import type { AdherenceDay, AdherenceWindow, DoseStatus, Medication, MedicationAdherence } from "@pulso/contract";
+import type { AdherenceDay, AdherenceWindow, DoseMeal, DoseMoment, DoseStatus, Medication, MedicationAdherence, TrainingRule, TrainingSlot } from "@pulso/contract";
 
 export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 export const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -31,38 +31,116 @@ export function localNow(at = new Date()): { date: string; time: string } {
   };
 }
 
+/** Minutes since midnight of "HH:MM", and back (clamped to the day). */
+export const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+export const fromMinutes = (minutes: number) => {
+  const m = Math.max(0, Math.min(23 * 60 + 59, Math.round(minutes)));
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+
+/** Used when the calendar has no time for a meal. */
+export const DEFAULT_MEAL_TIMES: Record<DoseMeal, string> = { desayuno: "08:00", comida: "14:00", cena: "21:00" };
+/** "Antes de dormir" reminds this long before the sleep time. */
+export const BEDTIME_LEAD_MINUTES = 30;
+
+/**
+ * What a day looks like for the slots tied to moments, read from training,
+ * Health and the calendar by the store. Times are local "HH:MM".
+ */
+export type DayFacts = {
+  /** When each workout of the day ended: Pulso sessions and Health workouts. */
+  workoutEnds: string[];
+  /** A Pulso session is in progress right now (only ever true for today). */
+  live: boolean;
+  /** Calendar sessions still planned that day (not skipped or moved). */
+  planned: { start: string; end: string }[];
+  meals: Partial<Record<DoseMeal, string>>;
+  sleepTime: string;
+};
+
+export const NO_FACTS: DayFacts = { workoutEnds: [], live: false, planned: [], meals: {}, sleepTime: "23:00" };
+
+/** One slot of one med on one date, before its logged status is attached. */
+export type ResolvedSlot = { slot: string; moment: DoseMoment; time: string | null; training: TrainingSlot | null };
+
 type Schedulable = Pick<Medication, "schedule" | "startDate" | "endDate" | "active">;
 
-/** Sorted slot times for one med on one date; none for as-needed, inactive or out-of-range meds. */
-export function slotTimes(med: Schedulable, date: string): string[] {
+/**
+ * The training slot of a day (see TrainingSlot), or null when there is none:
+ * 1. A workout ended that day → due at the first one's end, to take within the window.
+ * 2. Today, a session in progress → wait for it.
+ * 3. A planned session still ahead (today: its end hasn't passed; future days: any) → wait for it.
+ * 4. Otherwise it is a rest day: due at restDayTime, or no slot with "No tomar". A planned
+ *    session that never happened pushes the rest-day time to its end, so the reminder that
+ *    was waiting for it fires once it is clearly not happening.
+ * While waiting, `fallback` is that rest-day time, so the phone can set a reminder that a
+ * workout later replaces.
+ */
+export function resolveTraining(rule: TrainingRule, date: string, facts: DayFacts, today: string, now: string): TrainingSlot | null {
+  const none = { workoutEnd: null, until: null, plannedAt: null, fallback: null };
+  const ended = [...facts.workoutEnds].sort()[0];
+  if (ended) return { ...none, state: "trained", workoutEnd: ended, until: fromMinutes(toMinutes(ended) + rule.withinMinutes) };
+
+  const latestPlanEnd = facts.planned.map((p) => p.end).sort().at(-1);
+  const fallback = rule.restDayTime && latestPlanEnd && latestPlanEnd > rule.restDayTime ? latestPlanEnd : rule.restDayTime;
+  if (date === today && facts.live) return { ...none, state: "training", fallback };
+  const ahead = date < today ? [] : facts.planned.filter((p) => date > today || p.end > now).sort((a, b) => a.start.localeCompare(b.start));
+  if (ahead[0]) return { ...none, state: "planned", plannedAt: ahead[0].start, fallback };
+  return fallback ? { ...none, state: "rest", fallback } : null;
+}
+
+/** Every slot of one med on one date, sorted by time (waiting ones last); none for as-needed, inactive or out-of-range meds. */
+export function resolveSlots(med: Schedulable, date: string, facts: DayFacts = NO_FACTS, today = date, now = "00:00"): ResolvedSlot[] {
   const { schedule } = med;
   if (!med.active || schedule.asNeeded) return [];
   if (date < med.startDate || (med.endDate && date > med.endDate)) return [];
   if (schedule.days.length > 0 && !schedule.days.includes(isoWeekday(date))) return [];
-  return [...new Set(schedule.times)].sort();
+
+  const slots: ResolvedSlot[] = [...new Set(schedule.times)].map((t) => ({ slot: t, moment: "hora", time: t, training: null }));
+  for (const meal of new Set(schedule.meals)) {
+    slots.push({ slot: meal, moment: meal, time: facts.meals[meal] ?? DEFAULT_MEAL_TIMES[meal], training: null });
+  }
+  if (schedule.bedtime) {
+    // A sleep time past midnight belongs to the night before; remind before midnight instead.
+    const sleep = facts.sleepTime < "12:00" ? "24:00" : facts.sleepTime;
+    slots.push({ slot: "dormir", moment: "dormir", time: fromMinutes(toMinutes(sleep) - BEDTIME_LEAD_MINUTES), training: null });
+  }
+  if (schedule.training) {
+    const training = resolveTraining(schedule.training, date, facts, today, now);
+    if (training) {
+      const time = training.state === "trained" ? training.workoutEnd : training.state === "rest" ? training.fallback : null;
+      slots.push({ slot: "entreno", moment: "entreno", time, training });
+    }
+  }
+  return slots.sort((a, b) => (a.time ?? "99").localeCompare(b.time ?? "99") || a.slot.localeCompare(b.slot));
 }
 
-/** `medicationId|date|time` → status, for the events of scheduled slots. */
+/** Slot keys: "HH:MM" or a moment. */
+export const SLOT_MOMENTS = ["entreno", "desayuno", "comida", "cena", "dormir"] as const;
+export const isSlotKey = (key: string) => TIME.test(key) || (SLOT_MOMENTS as readonly string[]).includes(key);
+
+/** `medicationId|date|slot` → status, for the events of scheduled slots. */
 export type StatusIndex = Map<string, DoseStatus>;
-export const slotKey = (medicationId: string, date: string, time: string) => `${medicationId}|${date}|${time}`;
+export const slotKey = (medicationId: string, date: string, slot: string) => `${medicationId}|${date}|${slot}`;
 
 type DayCount = { due: number; taken: number; /** every slot of the day, due or not, is taken */ allTaken: boolean; slots: number };
 
-function countDay(med: Medication, date: string, statuses: StatusIndex, today: string, now: string): DayCount {
-  const times = slotTimes(med, date);
+function countDay(med: Medication, date: string, statuses: StatusIndex, today: string, now: string, facts: DayFacts): DayCount {
+  const slots = resolveSlots(med, date, facts, today, now);
   let due = 0;
   let taken = 0;
   let allTaken = true;
-  for (const time of times) {
-    const isTaken = statuses.get(slotKey(med.id, date, time)) === "tomada";
+  for (const { slot, time } of slots) {
+    const isTaken = statuses.get(slotKey(med.id, date, slot)) === "tomada";
     if (!isTaken) allTaken = false;
-    // A dose taken early counts as soon as it's taken; otherwise only once its time has come.
-    if (date < today || time <= now || isTaken) {
+    // A dose taken early counts as soon as it's taken; otherwise only once its time has come
+    // (a slot still waiting for a workout isn't due yet).
+    if (date < today || (time !== null && time <= now) || isTaken) {
       due += 1;
       if (isTaken) taken += 1;
     }
   }
-  return { due, taken, allTaken, slots: times.length };
+  return { due, taken, allTaken, slots: slots.length };
 }
 
 const window = (due: number, taken: number): AdherenceWindow => ({ due, taken, rate: due ? taken / due : null });
@@ -87,9 +165,10 @@ function streaks(days: DayCount[]): { current: number; best: number } {
 /** How far back streaks look. */
 export const HISTORY_DAYS = 365;
 
-export function computeAdherence(meds: Medication[], statuses: StatusIndex, today: string, now: string) {
+export function computeAdherence(meds: Medication[], statuses: StatusIndex, today: string, now: string, factsOf: (date: string) => DayFacts = () => NO_FACTS) {
   const dates = Array.from({ length: HISTORY_DAYS }, (_, i) => addDays(today, i - HISTORY_DAYS + 1));
-  const perMed = meds.map((med) => ({ med, days: dates.map((date) => countDay(med, date, statuses, today, now)) }));
+  const facts = dates.map(factsOf);
+  const perMed = meds.map((med) => ({ med, days: dates.map((date, i) => countDay(med, date, statuses, today, now, facts[i]!)) }));
 
   const sum = (days: DayCount[], last: number) => {
     const slice = days.slice(-last);

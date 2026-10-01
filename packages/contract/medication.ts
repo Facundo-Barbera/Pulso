@@ -3,16 +3,43 @@
 export type MedicationKind = "medicamento" | "suplemento";
 export type DoseStatus = "tomada" | "omitida" | "pospuesta";
 
+/** Meals a dose can be tied to (their times come from the calendar's meal times). */
+export type DoseMeal = "desayuno" | "comida" | "cena";
+
 /**
- * When doses are due. Times are local "HH:MM". `days` are ISO weekdays
- * (1 = lunes … 7 = domingo); empty means every day. `asNeeded` meds have no
- * slots and never count against adherence.
+ * A dose tied to training. On a training day it is due when the workout ends
+ * and should be taken within `withinMinutes`; on a day without training it is
+ * due at `restDayTime`, or not at all when that is null ("No tomar").
+ */
+export type TrainingRule = {
+  withinMinutes: number;
+  restDayTime: string | null;
+};
+
+/**
+ * When doses are due. A schedule mixes fixed clock `times` with slots tied to
+ * a moment of the day: after training, with a meal, before bed. Times are
+ * local "HH:MM". `days` are ISO weekdays (1 = lunes … 7 = domingo) and apply
+ * to every slot; empty means every day. `asNeeded` meds have no slots and
+ * never count against adherence.
  */
 export type MedicationSchedule = {
   asNeeded: boolean;
   times: string[];
   days: number[];
+  /** "Después de entrenar"; null when not tied to training. */
+  training: TrainingRule | null;
+  /** "Con una comida". */
+  meals: DoseMeal[];
+  /** "Antes de dormir": 30 min before the calendar's sleep time. */
+  bedtime: boolean;
 };
+
+/** What callers send: the event-linked parts default to off, so old clients keep working. */
+export type MedicationScheduleInput = Pick<MedicationSchedule, "asNeeded" | "times" | "days"> & Partial<Pick<MedicationSchedule, "training" | "meals" | "bedtime">>;
+
+/** What a slot hangs on: a clock time, the end of a workout, a meal or bedtime. */
+export type DoseMoment = "hora" | "entreno" | DoseMeal | "dormir";
 
 export type Medication = {
   id: string;
@@ -47,7 +74,7 @@ export type MedicationInput = {
   unit: string;
   form?: string | null;
   instructions?: string | null;
-  schedule?: MedicationSchedule;
+  schedule?: MedicationScheduleInput;
   startDate?: string;
   endDate?: string | null;
   stock?: number | null;
@@ -63,7 +90,7 @@ export type DoseEvent = {
   medicationId: string;
   /** Local date of the slot, "YYYY-MM-DD". */
   date: string;
-  /** "HH:MM" of the slot; null for an as-needed intake. */
+  /** The slot's key (`DoseSlot.slot`): "HH:MM" or a moment like "entreno"; null for an as-needed intake. */
   scheduledTime: string | null;
   status: DoseStatus;
   /** Epoch ms, when status is "tomada". */
@@ -74,7 +101,7 @@ export type DoseEvent = {
 export type DoseLogInput = {
   medicationId: string;
   date: string;
-  /** Omit or null for as-needed. */
+  /** The slot's key (`DoseSlot.slot`). Omit or null for as-needed. */
   scheduledTime?: string | null;
   status: DoseStatus;
   takenAt?: number | null;
@@ -89,20 +116,55 @@ export type DoseSlot = {
   unit: string;
   instructions: string | null;
   date: string;
-  time: string;
+  /**
+   * The slot's key within the day, sent back as `scheduledTime` when logging:
+   * "HH:MM" for a fixed time, else the moment ("entreno", "desayuno", "comida",
+   * "cena", "dormir"). A training slot keeps its key whether it ends up after a
+   * workout or on the rest-day rule, so it is one dose a day either way.
+   */
+  slot: string;
+  moment: DoseMoment;
+  /** When it is due, "HH:MM"; null while waiting for a workout that is planned or in progress. */
+  time: string | null;
+  training: TrainingSlot | null;
   status: DoseStatus | "pendiente";
   eventId: string | null;
   takenAt: number | null;
 };
 
+/**
+ * How a training-linked slot resolved. `trained`: a workout ended that day (a
+ * Pulso session or a Health workout), due at its end. `training`: one is in
+ * progress. `planned`: a calendar session is still ahead. `rest`: no workout
+ * and none ahead, so the rest-day rule applies.
+ */
+export type TrainingSlot = {
+  state: "trained" | "training" | "planned" | "rest";
+  /** "HH:MM" the workout ended (trained). */
+  workoutEnd: string | null;
+  /** "HH:MM" by which to take it: workout end + withinMinutes (trained). */
+  until: string | null;
+  /** "HH:MM" the planned session starts (planned). */
+  plannedAt: string | null;
+  /**
+   * While waiting (training, planned): when the rest-day rule takes over if no
+   * workout happens, so a reminder can already be set. Null with "No tomar".
+   */
+  fallback: string | null;
+};
+
 export type MedicationDay = {
   date: string;
+  /** Sorted by time; slots still waiting for a workout go last. */
   slots: DoseSlot[];
   /** As-needed intakes logged that day. */
   asNeeded: DoseEvent[];
-  /** First pending slot at or after the given time, if any. */
+  /** First pending slot with a time at or after the given time, if any. */
   next: DoseSlot | null;
 };
+
+/** Slots of the coming days, resolved, for planning reminders. */
+export type MedicationUpcoming = { from: string; slots: DoseSlot[] };
 
 export type AdherenceWindow = {
   /** Slots already due in the window. */
