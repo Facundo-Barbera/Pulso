@@ -23,7 +23,7 @@ The person judges the app by how it looks and feels on their iPhone (iOS 27). Ta
 ## Checks before committing
 - `bun run test` and `bun run typecheck` from the repo root.
 - `apps/ios/check.sh` — compiles the app and tests (there is no simulator runtime on this Mac).
-- To hit the engine over HTTP in a worktree, run `cd apps/engine && PULSO_DATA_DIR=$(mktemp -d) bun --bun next dev --hostname 127.0.0.1 --port <your port>`. Never use 3230 (the person's live engine) or the real `data/`.
+- To hit the engine over HTTP in a worktree, run `cd apps/engine && PULSO_DATA_DIR=$(mktemp -d) bun --bun next dev --hostname 127.0.0.1 --port <your port>`. Never use 3230 (the person's live engine) or the real data in `~/Library/Application Support/Pulso`. The person wants a clean start: never read their iCloud files or other personal folders as context.
 
 ## Don'ts
 - Do not install on the iPhone, push, or open PRs: the coordinator integrates and installs.

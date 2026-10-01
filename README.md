@@ -4,7 +4,7 @@ App personal de fitness. Monorepo con Turborepo y Bun, con la misma forma que De
 
 | | Qué es |
 |---|---|
-| `apps/engine` | Next.js (bajo Bun) en `127.0.0.1:3230`. Sirve la ventana, la API del iPhone (`/api/mobile/*`) y guarda todo en SQLite (`data/pulso.sqlite`, `bun:sqlite`) |
+| `apps/engine` | Next.js (bajo Bun) en `127.0.0.1:3230`. Sirve la ventana, la API del iPhone (`/api/mobile/*`) y guarda todo en SQLite (`~/Library/Application Support/Pulso/engine/pulso.sqlite`, `bun:sqlite`; `PULSO_HOME` o `PULSO_DATA_DIR` lo mueven) |
 | `apps/desktop` | Electron. No contiene servidor: `dev-runner.js` arranca el engine, espera `/api/health` y abre la ventana |
 | `apps/ios` | SwiftUI + HealthKit (XcodeGen). Se empareja con un código de 8 dígitos y sincroniza entrenamientos de Salud |
 | `packages/contract` | Tipos y constantes compartidos entre el engine y sus clientes |

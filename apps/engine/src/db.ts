@@ -1,12 +1,19 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { SCHEMAS } from "./schemas";
 
-/** `PULSO_DATA_DIR`, or `data/` at the repo root (Next's cwd is apps/engine). */
+/** Pulso's home, like Telar's: `PULSO_HOME`, or ~/Library/Application Support/Pulso (shared with the Electron shell's userData). */
+export function pulsoHome(): string {
+  const configured = process.env.PULSO_HOME?.trim();
+  return configured ? path.resolve(configured) : path.join(os.homedir(), "Library", "Application Support", "Pulso");
+}
+
+/** Where the engine keeps its data: `PULSO_DATA_DIR` (tests, scratch copies), or `<home>/engine`. */
 export function dataDir(): string {
   const configured = process.env.PULSO_DATA_DIR?.trim();
-  return configured ? path.resolve(configured) : path.join(process.cwd(), "..", "..", "data");
+  return configured ? path.resolve(configured) : path.join(pulsoHome(), "engine");
 }
 
 // One connection per process; Next's dev reloads re-evaluate modules, so it lives on globalThis.
