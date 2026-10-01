@@ -256,16 +256,154 @@ struct LoadSuggestion: Codable, Hashable {
     var reps: Int
     var reason: String
     var lastSessionAt: Double?
+    /// On an adjusted session: what progression alone said.
+    var normal: NormalLoad? = nil
+
+    struct NormalLoad: Codable, Hashable {
+        var weightKg: Double?
+        var reps: Int
+    }
 }
 
 struct ActiveProgramResponse: Codable {
     var program: TrainingProgram?
+    /// The next day not done this week; nil once the week is complete.
     var nextDayId: String?
     /// Keyed by `ProgramExercise.id`.
     var suggestions: [String: LoadSuggestion]
     /// Nil when the engine knows neither age nor max heart rate.
     var hrZones: [HrZoneRange]? = nil
     var settings: TrainingSettings? = nil
+    /// Every block, oldest first, the active one last. Optional so an older engine still decodes.
+    var blocks: [TrainingBlock]? = nil
+    /// The Coach's review of the next day, when something was noticed.
+    var adjustment: NextAdjustment? = nil
+}
+
+// MARK: - Blocks and weeks
+
+/// A logged session as a week shows it.
+struct WeekSession: Codable, Identifiable, Hashable {
+    var id: String
+    var dayId: String?
+    var name: String
+    var startedAt: Double
+    var endedAt: Double
+    var sets: Int
+    var cardioMinutes: Double
+
+    var start: Date { Date(timeIntervalSince1970: startedAt / 1000) }
+    var minutes: Int { Int(((endedAt - startedAt) / 60_000).rounded()) }
+}
+
+/// "done", "partial", "missed" or "planned".
+enum WeekDayStatus: String, Codable {
+    case done, partial, missed, planned
+
+    var isDone: Bool { self == .done || self == .partial }
+}
+
+struct WeekDay: Codable, Identifiable, Hashable {
+    var dayId: String
+    var name: String
+    var status: WeekDayStatus
+    var sessions: [WeekSession]
+
+    var id: String { dayId }
+    /// The latest session of the day this week.
+    var last: WeekSession? { sessions.max { $0.startedAt < $1.startedAt } }
+}
+
+/// One calendar week of a block (Monday to Sunday; one begun early runs longer). `endsAt` is exclusive.
+struct ProgramWeek: Codable, Identifiable, Hashable {
+    var number: Int
+    var startsAt: Double
+    var endsAt: Double
+    /// "past", "current" or "future".
+    var state: String
+    var startedEarly: Bool
+    var deload: Bool
+    var note: String?
+    var days: [WeekDay]
+    var done: Int
+    /// Sessions in the week that are none of the block's days; they still count.
+    var other: [WeekSession]
+
+    var id: Int { number }
+    var isCurrent: Bool { state == "current" }
+    var isFuture: Bool { state == "future" }
+    var start: Date { Date(timeIntervalSince1970: startsAt / 1000) }
+    /// The week's last day (the end is exclusive).
+    var lastDay: Date { Date(timeIntervalSince1970: (endsAt - 1) / 1000) }
+}
+
+/// A program as a stretch of training. Switching program ends one block and starts the next; nothing is lost.
+struct TrainingBlock: Codable, Identifiable, Hashable {
+    var programId: String
+    var number: Int
+    var name: String
+    var goal: String
+    var startedAt: Double
+    var endedAt: Double?
+    var endReason: String?
+    var active: Bool
+    var resumedFrom: String?
+    /// The program's own days, for previews of other weeks.
+    var days: [ProgramDay]
+    var currentWeek: Int
+    var weekComplete: Bool
+    var canStartNextWeek: Bool
+    var finished: Bool
+    var weeks: [ProgramWeek]
+
+    var id: String { programId }
+    var current: ProgramWeek? { weeks.first { $0.number == currentWeek } }
+    var ended: Date? { endedAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+}
+
+// MARK: - The Coach's review of the next session
+
+struct AdjustmentSignal: Codable, Hashable {
+    /// inactivity, exercise_gap, readiness, health_event, block_switch, missed_sessions.
+    var kind: String
+    var level: String?
+    var days: Int?
+    var programExerciseId: String? = nil
+    var detail: String
+}
+
+struct ExerciseChange: Codable, Hashable {
+    /// adjust, swap, skip or add.
+    var action: String
+    var programExerciseId: String?
+    var loadPercent: Double? = nil
+    var sets: Int? = nil
+    var reps: Int? = nil
+    var toExerciseId: String? = nil
+}
+
+/// The next day as the Coach left it: its decision, and the day and suggestions to start with.
+struct NextAdjustment: Codable, Identifiable, Hashable {
+    var id: String
+    var programId: String
+    var dayId: String
+    /// "reviewing" or "ready".
+    var status: String
+    /// "coach" or "fallback" (the Coach couldn't run).
+    var decidedBy: String?
+    var noChange: Bool
+    var rationale: String?
+    var signals: [AdjustmentSignal]
+    var changes: [ExerciseChange]
+    /// "Entrenar normal".
+    var dismissed: Bool
+    var threadId: String?
+    var day: ProgramDay
+    var suggestions: [String: LoadSuggestion]
+
+    var reviewing: Bool { status == "reviewing" }
+    /// Starting the day uses `day` and `suggestions`.
+    var applies: Bool { status == "ready" && !noChange && !dismissed && !changes.isEmpty }
 }
 
 struct SetLog: Codable, Hashable {
@@ -423,6 +561,35 @@ extension PulsoAPI {
 
     func saveTrainingSettings(_ update: TrainingSettingsUpdate) async throws -> TrainingSettings {
         try await call("api/mobile/training/settings", method: "PUT", body: update)
+    }
+
+    /// One logged session, for a week's done day.
+    func trainingSession(_ id: String) async throws -> TrainingSession {
+        try await call("api/mobile/training/sessions/\(id)", method: "GET")
+    }
+
+    /// "Empezar la semana ya", once this one is complete.
+    func startNextWeek() async throws -> ActiveProgramResponse {
+        try await call("api/mobile/training/program/weeks/next", method: "POST")
+    }
+
+    /// "Retomar": a new block with an earlier block's days.
+    func resumeBlock(_ programId: String) async throws -> ActiveProgramResponse {
+        try await call("api/mobile/training/program/blocks/\(programId)/resume", method: "POST")
+    }
+
+    private struct DismissBody: Encodable { var dismissed: Bool }
+    private struct ThreadResponse: Decodable { var threadId: String }
+
+    /// "Entrenar normal" (true) or back to the Coach's plan (false).
+    func setAdjustmentDismissed(_ id: String, _ dismissed: Bool) async throws -> ActiveProgramResponse {
+        try await call("api/mobile/training/program/adjustment/\(id)", method: "PUT", body: DismissBody(dismissed: dismissed))
+    }
+
+    /// "Ver por qué": the Coach thread about the adjustment.
+    func adjustmentThread(_ id: String) async throws -> String {
+        let response: ThreadResponse = try await call("api/mobile/training/program/adjustment/\(id)/thread", method: "POST")
+        return response.threadId
     }
 
     /// Pins an exercise (library id) to kg or lb; nil follows the default unit again.

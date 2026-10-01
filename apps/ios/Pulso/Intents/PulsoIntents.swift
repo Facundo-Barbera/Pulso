@@ -143,6 +143,9 @@ struct StartWorkoutIntent: AppIntent {
         _ = try PulsoAPI.forIntent()
         if store.program == nil { await store.load() }
         guard let day = store.nextDay else {
+            if store.activeBlock?.weekComplete == true {
+                throw IntentFailure(message: "Ya hiciste todos los días de esta semana.")
+            }
             throw IntentFailure(message: "No tenés un programa activo. Pedile uno al Coach.")
         }
         store.start(day)

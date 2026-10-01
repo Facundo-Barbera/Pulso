@@ -83,36 +83,47 @@ final class TrainingTests: XCTestCase {
         XCTAssertNil(response.suggestions["pe"]?.weightKg)
     }
 
+    // MARK: Weeks, blocks and the Coach's review
+
+    func testDecodesWeeksBlocksAndTheCoachsAdjustment() throws {
+        let day = #"{"id":"d","name":"Pierna A","focus":null,"weekday":null,"exercises":[{"id":"pe","exerciseId":"sentadilla-hack","exerciseName":"Sentadilla hack","equipment":"machine","sets":3,"repMin":6,"repMax":10,"targetRpe":null,"targetRir":2,"restSeconds":150,"notes":null,"supersetId":null}]}"#
+        let json = #"""
+        {"program":null,"nextDayId":"d","suggestions":{},
+         "blocks":[{"programId":"p","number":1,"name":"Torso / Pierna","goal":"x","startedAt":1,"endedAt":null,"endReason":null,"active":true,"resumedFrom":null,
+           "days":[\#(day)],"currentWeek":1,"weekComplete":false,"canStartNextWeek":false,"finished":false,
+           "weeks":[{"number":1,"startsAt":1000,"endsAt":605801000,"state":"current","startedEarly":false,"deload":false,"note":null,"done":1,"other":[],
+             "days":[{"dayId":"d0","name":"Torso A","status":"done","sessions":[
+               {"id":"s1","dayId":"d0","name":"Torso A","startedAt":1000,"endedAt":2461000,"sets":10,"cardioMinutes":0},
+               {"id":"s2","dayId":"d0","name":"Torso A","startedAt":9000,"endedAt":2469000,"sets":12,"cardioMinutes":0}]},
+               {"dayId":"d","name":"Pierna A","status":"planned","sessions":[]}]}]}],
+         "adjustment":{"id":"a","programId":"p","dayId":"d","status":"ready","decidedBy":"coach","noChange":false,
+           "rationale":"Llevas 9 días sin entrenar: hoy un 10 % menos.","signals":[{"kind":"inactivity","level":"moderate","days":9,"detail":"Llevas 9 días sin entrenar"}],
+           "changes":[{"action":"adjust","programExerciseId":"pe","loadPercent":-10,"cardio":null}],"dismissed":false,"threadId":null,"createdAt":1,"updatedAt":1,
+           "day":\#(day),"suggestions":{"pe":{"exerciseId":"sentadilla-hack","weightKg":90,"reps":8,"reason":"Ajuste para hoy","lastSessionAt":1,"normal":{"weightKg":100,"reps":8}}}}}
+        """#
+        let response = try JSONDecoder().decode(ActiveProgramResponse.self, from: Data(json.utf8))
+        let block = try XCTUnwrap(response.blocks?.first)
+        XCTAssertEqual(block.current?.number, 1)
+        let done = try XCTUnwrap(block.current?.days.first)
+        XCTAssertTrue(done.status.isDone)
+        XCTAssertEqual(done.last?.id, "s2")
+        XCTAssertEqual(done.sessions.first?.minutes, 41)
+        let adjustment = try XCTUnwrap(response.adjustment)
+        XCTAssertTrue(adjustment.applies)
+        XCTAssertEqual(adjustment.suggestions["pe"]?.normal?.weightKg, 100)
+        var dismissed = adjustment
+        dismissed.dismissed = true
+        XCTAssertFalse(dismissed.applies)
+    }
+
+    func testAnOlderEngineWithoutBlocksStillDecodes() throws {
+        let json = #"{"program":null,"nextDayId":null,"suggestions":{}}"#
+        let response = try JSONDecoder().decode(ActiveProgramResponse.self, from: Data(json.utf8))
+        XCTAssertNil(response.blocks)
+        XCTAssertNil(response.adjustment)
+    }
+
     // MARK: Plan estimates
-
-    private func program(createdDaysAgo days: Double, weeks: Int, from now: Date) -> TrainingProgram {
-        TrainingProgram(id: "p", name: "P", goal: "", weeks: weeks, notes: nil, active: true,
-                        createdAt: (now.timeIntervalSince1970 - days * 86_400) * 1000, days: [day])
-    }
-
-    func testWeekCountsFromCreationAndStaysWithinTheProgram() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
-        let now = Date(timeIntervalSince1970: 1_790_000_000)
-        XCTAssertEqual(TrainingPlan.week(of: program(createdDaysAgo: 0, weeks: 5, from: now), now: now, calendar: calendar), 1)
-        XCTAssertEqual(TrainingPlan.week(of: program(createdDaysAgo: 6, weeks: 5, from: now), now: now, calendar: calendar), 1)
-        XCTAssertEqual(TrainingPlan.week(of: program(createdDaysAgo: 7, weeks: 5, from: now), now: now, calendar: calendar), 2)
-        XCTAssertEqual(TrainingPlan.week(of: program(createdDaysAgo: 15, weeks: 5, from: now), now: now, calendar: calendar), 3)
-        XCTAssertEqual(TrainingPlan.week(of: program(createdDaysAgo: 90, weeks: 5, from: now), now: now, calendar: calendar), 5)
-        XCTAssertEqual(TrainingPlan.week(of: program(createdDaysAgo: -3, weeks: 5, from: now), now: now, calendar: calendar), 1)
-    }
-
-    func testDeloadFollowsTheNotes() {
-        XCTAssertTrue(TrainingPlan.isDeload(week: 4, weeks: 6, notes: "Progresión lineal. Semana 4 de descarga."))
-        XCTAssertFalse(TrainingPlan.isDeload(week: 3, weeks: 6, notes: "Progresión lineal. Semana 4 de descarga."))
-        XCTAssertTrue(TrainingPlan.isDeload(week: 8, weeks: 8, notes: "Descarga cada 4 semanas"))
-        XCTAssertFalse(TrainingPlan.isDeload(week: 6, weeks: 8, notes: "Descarga cada 4 semanas"))
-        XCTAssertTrue(TrainingPlan.isDeload(week: 5, weeks: 5, notes: "La última semana es de descarga"))
-        XCTAssertFalse(TrainingPlan.isDeload(week: 4, weeks: 5, notes: "La última semana es de descarga"))
-        // Numbers in other sentences don't count.
-        XCTAssertFalse(TrainingPlan.isDeload(week: 3, weeks: 6, notes: "3 días por semana. Sin descarga."))
-        XCTAssertFalse(TrainingPlan.isDeload(week: 1, weeks: 6, notes: nil))
-    }
 
     func testMinutesAndKcalEstimates() {
         // 3 × (120 + 45) + 2 × (60 + 45) = 705 s ≈ 11.75 min → 10 (nearest 5).
