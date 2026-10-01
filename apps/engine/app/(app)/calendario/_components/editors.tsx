@@ -220,7 +220,7 @@ function Footer({ busy, error, onCancel, onDelete, deleteLabel, readOnly = false
   return (
     <>
       {error && <p className="text-destructive text-[13px]">{error}</p>}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
+      <div className="bg-popover sticky -bottom-5 flex flex-wrap items-center gap-2 py-3">
         {onDelete &&
           (sure ? (
             <span className="flex items-center gap-2">

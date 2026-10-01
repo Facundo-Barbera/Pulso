@@ -17,7 +17,9 @@ export function ItemRow({ item, compact = false }: { item: CalendarItem; compact
   const conflict = hasConflict(item);
   const faded = item.kind === "training" && (item.status === "skipped" || item.status === "missed");
   const planned = (item.kind === "training" && (item.status === "planned" || item.status === "moved")) || item.kind === "meal_time";
-  const time = item.allDay ? null : item.kind === "sleep" ? `${timeOf(item.start)}–${timeOf(item.end)}` : timeOf(item.start);
+  // Folded rows (all of a day's meals or doses) carry their times in the subtitle.
+  const folded = item.id.startsWith("meals:") || item.id.startsWith("doses:");
+  const time = item.allDay || folded ? null : item.end && (item.kind === "sleep" || item.kind === "busy") ? `${timeOf(item.start)}–${timeOf(item.end)}` : timeOf(item.start);
   const status = item.kind === "training" ? PLAN_STATUS[item.status ?? ""] : item.kind === "health" ? HEALTH_STATUS[item.status ?? ""] : null;
 
   const body = (
@@ -27,14 +29,15 @@ export function ItemRow({ item, compact = false }: { item: CalendarItem; compact
       <span className="min-w-0 flex-1">
         <span className={cn("flex items-center gap-1.5", compact ? "text-[12px]" : "text-[14px]")}>
           {!compact && <Icon className="size-3.5 shrink-0" style={{ color }} />}
-          {time && <span className="tabular text-muted-foreground shrink-0">{time}</span>}
+          {time && !compact && <span className="tabular text-muted-foreground shrink-0">{time}</span>}
           <span className={cn("truncate font-medium", faded && "text-muted-foreground line-through decoration-1")}>{item.title}</span>
           {item.kind === "training" && item.status === "done" && <Check className="text-success size-3.5 shrink-0" strokeWidth={3} />}
           {conflict && <TriangleAlert className="text-warning size-3.5 shrink-0" />}
         </span>
-        {(item.subtitle || (!compact && status)) && (
-          <span className={cn("block truncate", compact ? "text-[11px]" : "text-[12px]", conflict ? "text-warning" : "text-muted-foreground")}>
-            {[!compact && status, item.subtitle].filter(Boolean).join(" · ")}
+        {/* Narrow columns: the time moves under the title, so the title gets the width. */}
+        {(compact ? time || item.subtitle : item.subtitle || status) && (
+          <span className={cn("tabular block truncate", compact ? "text-[11px]" : "text-[12px]", conflict ? "text-warning" : "text-muted-foreground")}>
+            {(compact ? [time, item.subtitle] : [status, item.subtitle]).filter(Boolean).join(" · ")}
           </span>
         )}
       </span>

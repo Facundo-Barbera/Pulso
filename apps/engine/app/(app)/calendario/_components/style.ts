@@ -81,8 +81,8 @@ export function condense(items: CalendarItem[]): CalendarItem[] {
       ...(meals[0] ?? mealTimes[0])!,
       id: `meals:${date}`,
       kind: meals.length ? "meal" : "meal_time",
-      title: meals.length ? `${meals.length} ${meals.length === 1 ? "comida" : "comidas"}` : "Comidas previstas",
-      subtitle: meals.length ? `${kcal.toLocaleString("es")} kcal${mealTimes.length ? ` · ${mealTimes.length} por registrar` : ""}` : mealTimes.map((m) => timeOf(m.start)).join(" · "),
+      title: "Comidas",
+      subtitle: meals.length ? `${kcal.toLocaleString("es")} kcal · ${meals.length} registradas` : `Previstas ${mealTimes.map((m) => timeOf(m.start)).join(" · ")}`,
       start: (meals[0] ?? mealTimes[0])!.start,
     });
   }
@@ -95,8 +95,8 @@ export function condense(items: CalendarItem[]): CalendarItem[] {
 
 const WEEKDAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
 
-/** "lunes y jueves" from ISO weekdays. */
+/** "lunes y domingos" from ISO weekdays (plural, as in «descansas los …»). */
 export function weekdayList(days: number[]): string {
-  const names = days.map((d) => WEEKDAY_NAMES[d - 1]!);
+  const names = days.map((d) => WEEKDAY_NAMES[d - 1]!).map((n) => (n.endsWith("s") ? n : `${n}s`));
   return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} y ${names.at(-1)}`;
 }
