@@ -1,4 +1,4 @@
-/** Coach threads, their messages, and the person's profile (one row). */
+/** Coach threads, their messages and photos, and the person's profile (one row). */
 export const AGENT_SCHEMA = `
   CREATE TABLE IF NOT EXISTS agent_threads (
     id TEXT PRIMARY KEY,
@@ -19,6 +19,15 @@ export const AGENT_SCHEMA = `
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS agent_messages_thread ON agent_messages (thread_id, created_at);
+  -- Photos on a message; the JPEG lives at attachments/<thread_id>/<id>.jpg under the data dir.
+  CREATE TABLE IF NOT EXISTS agent_attachments (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES agent_messages (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS agent_attachments_message ON agent_attachments (message_id, position);
   CREATE TABLE IF NOT EXISTS agent_profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL,

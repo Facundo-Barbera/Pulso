@@ -1,6 +1,7 @@
 import type { AgentThreadDetail } from "@pulso/contract";
 import { activeTurn } from "@/src/agent/runner";
 import { deleteThread, getThread, listMessages } from "@/src/agent/threads";
+import { removeAttachments } from "@/src/agent/attachments";
 import { removeWorkspace } from "@/src/agent/workspace";
 import { deviceOf, NO_STORE, unpaired } from "../../../auth";
 
@@ -26,5 +27,6 @@ export async function DELETE(request: Request, { params }: Context): Promise<Res
   if (activeTurn(id)) return Response.json({ code: "busy", message: "The Coach is still answering in this conversation." }, { status: 409, headers: NO_STORE });
   if (!deleteThread(id)) return notFound();
   removeWorkspace(id);
+  removeAttachments(id);
   return new Response(null, { status: 204 });
 }

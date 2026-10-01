@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// One conversation with the Coach: streaming replies, tool activity, a glass composer.
@@ -9,7 +10,12 @@ struct CoachChatView: View {
     private let initialTitle: String?
     private let starter: String?
     private let focusOnAppear: Bool
+    private let cameraOnAppear: Bool
     @State private var draft: String
+    @State private var photos: [ChatPhoto] = []
+    @State private var picking = false
+    @State private var shooting = false
+    @State private var picked: [PhotosPickerItem] = []
     @State private var started = false
     @State private var position = ScrollPosition(edge: .bottom)
     /// The person is reading the latest lines: streaming text keeps them in view.
@@ -20,13 +26,15 @@ struct CoachChatView: View {
     /// Comfortable reading width; only matters on wide screens.
     private static let readableWidth: CGFloat = 680
 
-    /// `starter` is sent at once; `draft` waits in the composer. Either, or `focus`, opens the keyboard.
-    init(threadId: String?, title: String?, starter: String? = nil, draft: String? = nil, focus: Bool = false) {
+    /// `starter` is sent at once; `draft` waits in the composer. Either, or `focus`, opens the keyboard;
+    /// `camera` opens the camera instead (the photo library where there is none).
+    init(threadId: String?, title: String?, starter: String? = nil, draft: String? = nil, focus: Bool = false, camera: Bool = false) {
         _store = State(initialValue: ChatStore.store(for: threadId))
         _draft = State(initialValue: draft ?? "")
         initialTitle = title
         self.starter = starter
-        focusOnAppear = focus || draft != nil
+        focusOnAppear = (focus || draft != nil) && !camera
+        cameraOnAppear = camera
     }
 
     var body: some View {
@@ -66,7 +74,8 @@ struct CoachChatView: View {
             if store.loading { ProgressView().controlSize(.large) }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            Composer(draft: $draft, streaming: store.streaming, focused: $composing) { send(draft) }
+            Composer(draft: $draft, photos: $photos, streaming: store.streaming, focused: $composing,
+                     onLibrary: { picking = true }, onCamera: CameraPicker.isAvailable ? { shooting = true } : nil) { send(draft) }
                 .overlay(alignment: .top) {
                     if !atBottom && !store.messages.isEmpty {
                         Button("Ir al final", systemImage: "arrow.down") { scrollToBottom() }
@@ -79,6 +88,22 @@ struct CoachChatView: View {
                     }
                 }
                 .animation(.snappy, value: atBottom)
+        }
+        .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: max(1, ChatPhoto.limit - photos.count), matching: .images)
+        .onChange(of: picked) { _, items in
+            guard !items.isEmpty else { return }
+            picked = []
+            Task {
+                for item in items {
+                    if let photo = await ChatPhoto.load(item) { add(photo) }
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $shooting) {
+            CameraPicker { image in
+                if let photo = ChatPhoto(image) { add(photo) }
+            }
+            .ignoresSafeArea()
         }
         .toolbarVisibility(.hidden, for: .tabBar)
         .navigationTitle(store.title ?? initialTitle ?? "Nueva conversación")
@@ -100,15 +125,27 @@ struct CoachChatView: View {
             scrollToBottom(animated: false)
             if let starter, store.messages.isEmpty { await store.send(starter) }
             if focusOnAppear { composing = true }
+            if cameraOnAppear {
+                // Let Registrar's sheet close and the push land before presenting over them.
+                try? await Task.sleep(for: .milliseconds(450))
+                if CameraPicker.isAvailable { shooting = true } else { picking = true }
+            }
         }
         .refreshable { await store.load() }
     }
 
     private func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !store.streaming else { return }
+        guard !text.isEmpty || !photos.isEmpty, !store.streaming else { return }
+        let sending = photos
         draft = ""
-        Task { await store.send(text) }
+        photos = []
+        Task { await store.send(text, photos: sending) }
+    }
+
+    private func add(_ photo: ChatPhoto) {
+        guard photos.count < ChatPhoto.limit else { return }
+        withAnimation(.snappy) { photos.append(photo) }
     }
 
     private func scrollToBottom(animated: Bool = true) {
@@ -127,20 +164,28 @@ private struct MessageRow: View {
     var body: some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 48)
-                Text(message.text)
-                    .lineSpacing(2)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 11)
-                    .background(Color.accentColor.gradient, in: UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22, bottomTrailingRadius: 6, topTrailingRadius: 22, style: .continuous))
-                    .contentShape(.contextMenuPreview, UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22, bottomTrailingRadius: 6, topTrailingRadius: 22, style: .continuous))
-                    .contextMenu { MessageActions(text: message.text) }
+            VStack(alignment: .trailing, spacing: 6) {
+                if !message.attachments.isEmpty {
+                    MessagePhotos(threadId: message.threadId, photos: message.attachments)
+                }
+                if !message.text.isEmpty { bubble }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 48)
         case .assistant:
             AssistantRow(message: message)
         }
+    }
+
+    private var bubble: some View {
+        Text(message.text)
+            .lineSpacing(2)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .background(Color.accentColor.gradient, in: UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22, bottomTrailingRadius: 6, topTrailingRadius: 22, style: .continuous))
+            .contentShape(.contextMenuPreview, UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22, bottomTrailingRadius: 6, topTrailingRadius: 22, style: .continuous))
+            .contextMenu { MessageActions(text: message.text) }
     }
 }
 
@@ -219,39 +264,62 @@ private struct AssistantRow: View {
 
 private struct Composer: View {
     @Binding var draft: String
+    @Binding var photos: [ChatPhoto]
     let streaming: Bool
     var focused: FocusState<Bool>.Binding
+    let onLibrary: () -> Void
+    /// Nil where there is no camera.
+    let onCamera: (() -> Void)?
     let onSend: () -> Void
 
-    private var canSend: Bool { !streaming && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool { !streaming && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty) }
+    private var placeholder: String {
+        streaming ? "El Coach está respondiendo…" : photos.isEmpty ? "Pregúntale a tu coach…" : "Añade un comentario…"
+    }
 
     var body: some View {
-        GlassEffectContainer(spacing: 10) {
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField(streaming ? "El Coach está respondiendo…" : "Pregúntale a tu coach…", text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused(focused)
-                    .submitLabel(.send)
-                    .onSubmit { if canSend { onSend() } }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 13)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
-                    .overlay {
-                        if streaming { GlowBorder(shape: RoundedRectangle(cornerRadius: 24, style: .continuous)).transition(.opacity) }
+        VStack(alignment: .leading, spacing: 10) {
+            if !photos.isEmpty { thumbnails }
+            GlassEffectContainer(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    Menu {
+                        if let onCamera { Button("Cámara", systemImage: "camera", action: onCamera) }
+                        Button("Fotos", systemImage: "photo.on.rectangle", action: onLibrary)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 30, height: 30)
                     }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .disabled(photos.count >= ChatPhoto.limit)
+                    .accessibilityLabel("Añadir fotos")
 
-                Button(action: onSend) {
-                    Image(systemName: streaming ? "ellipsis" : "arrow.up")
-                        .font(.body.weight(.bold))
-                        .symbolEffect(.variableColor.iterative, options: .repeating, isActive: streaming)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 30, height: 30)
+                    TextField(placeholder, text: $draft, axis: .vertical)
+                        .lineLimit(1...6)
+                        .focused(focused)
+                        .submitLabel(.send)
+                        .onSubmit { if canSend { onSend() } }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 13)
+                        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
+                        .overlay {
+                            if streaming { GlowBorder(shape: RoundedRectangle(cornerRadius: 24, style: .continuous)).transition(.opacity) }
+                        }
+
+                    Button(action: onSend) {
+                        Image(systemName: streaming ? "ellipsis" : "arrow.up")
+                            .font(.body.weight(.bold))
+                            .symbolEffect(.variableColor.iterative, options: .repeating, isActive: streaming)
+                            .contentTransition(.symbolEffect(.replace))
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .disabled(!canSend && !streaming)
+                    .allowsHitTesting(canSend)
+                    .accessibilityLabel("Enviar")
                 }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .disabled(!canSend && !streaming)
-                .allowsHitTesting(canSend)
-                .accessibilityLabel("Enviar")
             }
         }
         .padding(.horizontal, Theme.padding)
@@ -266,5 +334,34 @@ private struct Composer: View {
         }
         .animation(.snappy, value: streaming)
         .animation(.snappy, value: canSend)
+        .animation(.snappy, value: photos)
+        .sensoryFeedback(.selection, trigger: photos.count)
+    }
+
+    /// What goes with the next message; ✕ takes one out.
+    private var thumbnails: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(photos) { photo in
+                    Image(uiImage: photo.preview)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 64, height: 64)
+                        .clipShape(.rect(cornerRadius: 14, style: .continuous))
+                        .overlay(alignment: .topTrailing) {
+                            Button("Quitar foto", systemImage: "xmark") { photos.removeAll { $0.id == photo.id } }
+                                .labelStyle(.iconOnly)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 22, height: 22)
+                                .background(.black.opacity(0.6), in: .circle)
+                                .padding(4)
+                        }
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .scrollClipDisabled()
     }
 }

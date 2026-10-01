@@ -167,6 +167,9 @@ struct NutritionView: View {
         case .plan:
             sheet = nil
             section = .plan
+        case .photo:
+            sheet = nil
+            CoachLauncher.shared.photo("Registra esto")
         }
     }
 

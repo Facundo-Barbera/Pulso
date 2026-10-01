@@ -70,4 +70,42 @@ final class CoachTests: XCTestCase {
         XCTAssertEqual(launcher.takeTab(), "entreno")
         XCTAssertNil(launcher.takeTab())
     }
+
+    func testMessagesCarryTheirPhotosAndOlderOnesDecodeWithout() throws {
+        let base = #""id":"m","threadId":"t","role":"user","text":"","tools":[],"status":"done","error":null,"createdAt":1"#
+        let withPhotos = try JSONDecoder().decode(AgentMessage.self, from: Data(#"{\#(base),"attachments":[{"id":"a","mime":"image/jpeg","width":1600,"height":1200}]}"#.utf8))
+        XCTAssertEqual(withPhotos.attachments, [AgentAttachment(id: "a", width: 1600, height: 1200)])
+        XCTAssertEqual(try JSONDecoder().decode(AgentMessage.self, from: Data("{\(base)}".utf8)).attachments, [])
+    }
+
+    func testPhotosGoAsAMultipartFormWithTheText() throws {
+        let body = PulsoAPI.multipart(text: "Registra esto", photos: [Data([0xFF, 0xD8]), Data([0xFF, 0xD9])], boundary: "b")
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(text.hasPrefix("--b\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nRegistra esto\r\n"))
+        XCTAssertEqual(text.components(separatedBy: #"name="image""#).count - 1, 2)
+        XCTAssertTrue(text.contains(#"filename="foto-2.jpg""#))
+        XCTAssertTrue(text.hasSuffix("--b--\r\n"))
+    }
+
+    func testPhotosAreDownscaledToJpeg() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let big = UIGraphicsImageRenderer(size: CGSize(width: 4000, height: 3000), format: format).image { context in
+            UIColor.orange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 4000, height: 3000))
+        }
+        let photo = try XCTUnwrap(ChatPhoto(big))
+        XCTAssertEqual(photo.attachment.width, 1600)
+        XCTAssertEqual(photo.attachment.height, 1200)
+        XCTAssertEqual(Array(photo.jpeg.prefix(2)), [0xFF, 0xD8])
+        let small = try XCTUnwrap(ChatPhoto(UIGraphicsImageRenderer(size: CGSize(width: 300, height: 200), format: format).image { _ in }))
+        XCTAssertEqual(small.attachment.width, 300)
+    }
+
+    @MainActor
+    func testFotoDeComidaOpensTheCoachWithTheCamera() {
+        let launcher = CoachLauncher()
+        launcher.photo("Registra esto")
+        XCTAssertEqual(launcher.take()?.request, .photo("Registra esto"))
+    }
 }

@@ -1,5 +1,6 @@
-import { createSdkMcpServer, query, type HookCallback, type Options } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentMessage, AgentStreamEvent } from "@pulso/contract";
+import { createSdkMcpServer, query, type HookCallback, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentAttachment, AgentMessage, AgentStreamEvent } from "@pulso/contract";
+import { readImageBase64 } from "./attachments";
 import { hasOutput, newTurnState, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
 import { childEnv, claudeExecutable, providerEnv } from "./provider";
@@ -12,6 +13,9 @@ import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspac
 export type TurnMode = { persona: string; context: string; tools: string[] };
 
 export type QueryFn = typeof query;
+
+type Prompt = Parameters<QueryFn>[0]["prompt"];
+type ContentBlock = Exclude<SDKUserMessage["message"]["content"], string>[number];
 
 /** A turn in flight. Events are kept so a late subscriber gets the whole turn. */
 type Turn = {
@@ -123,10 +127,11 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
 
 /** The prompt for a fresh SDK session when the old one could not be resumed. */
 export function recapPrompt(history: AgentMessage[], text: string): string {
+  const photos = (m: AgentMessage) => (m.attachments.length ? `[${m.attachments.length > 1 ? `${m.attachments.length} fotos` : "foto"}] ` : "");
   const lines = history
-    .filter((m) => m.text.trim())
+    .filter((m) => m.text.trim() || m.attachments.length)
     .slice(-RECAP_MESSAGES)
-    .map((m) => `${m.role === "user" ? "Persona" : "Coach"}: ${m.text.length > RECAP_CHARS ? `${m.text.slice(0, RECAP_CHARS)}…` : m.text}`);
+    .map((m) => `${m.role === "user" ? "Persona" : "Coach"}: ${photos(m)}${m.text.length > RECAP_CHARS ? `${m.text.slice(0, RECAP_CHARS)}…` : m.text}`);
   if (!lines.length) return text;
   return [
     "(Context: this conversation continues from an earlier session whose memory was lost. These are its most recent messages, oldest first. Do not mention this recap.)",
@@ -140,22 +145,40 @@ export function recapPrompt(history: AgentMessage[], text: string): string {
 }
 
 /**
+ * The person's message for the SDK: the text alone, or — with photos — one user
+ * message whose content is the photos as base64 image blocks, then the text.
+ * The photos are read from disk here; they leave the Mac only in this model call.
+ */
+export function userPrompt(threadId: string, text: string, attachments: AgentAttachment[]): Prompt {
+  if (!attachments.length) return text;
+  const content: ContentBlock[] = attachments.map((a) => ({
+    type: "image",
+    source: { type: "base64", media_type: "image/jpeg", data: readImageBase64(threadId, a.id) },
+  }));
+  if (text.trim()) content.push({ type: "text", text });
+  const message: SDKUserMessage = { type: "user", message: { role: "user", content }, parent_tool_use_id: null };
+  return (async function* () {
+    yield message;
+  })();
+}
+
+/**
  * Starts a turn and returns at once; the turn runs to the end and is saved
  * whether or not anyone is listening. Throws `busy` if the thread already has one.
  */
-export function startTurn(threadId: string, text: string, run: QueryFn = query): { turn: Turn; done: Promise<void> } {
+export function startTurn(threadId: string, text: string, run: QueryFn = query, attachments: AgentAttachment[] = []): { turn: Turn; done: Promise<void> } {
   if (turns().has(threadId)) throw new Error("busy");
   const history = listMessages(threadId);
-  const user = addMessage(threadId, "user", text, "done");
+  const user = addMessage(threadId, "user", text, "done", attachments);
   const assistant = addMessage(threadId, "assistant", "", "streaming");
   const turn: Turn = { threadId, messageId: assistant.id, events: [], listeners: new Set(), abortController: new AbortController(), stopped: false };
   turns().set(threadId, turn);
   emit(turn, { type: "start", messageId: assistant.id, userMessageId: user.id });
-  const done = runTurn(turn, history, text, run).finally(() => turns().delete(threadId));
+  const done = runTurn(turn, history, text, attachments, run).finally(() => turns().delete(threadId));
   return { turn, done };
 }
 
-async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: QueryFn): Promise<void> {
+async function runTurn(turn: Turn, history: AgentMessage[], text: string, attachments: AgentAttachment[], run: QueryFn): Promise<void> {
   let state = newTurnState();
   let lastSave = 0;
   const save = (force: boolean) => {
@@ -167,12 +190,13 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: Q
   const { abortController } = turn;
   const timer = setTimeout(() => abortController.abort(), TURN_LIMIT_MS);
 
-  const attempt = async (prompt: string, resume: string | undefined) => {
+  const attempt = async (promptText: string, resume: string | undefined) => {
     state = newTurnState();
     const mode = liveCoachMode(turn.threadId);
     const context = mode?.context ?? claudeMd(getProfile());
     const cwd = prepareWorkspace(turn.threadId, context);
     try {
+      const prompt = userPrompt(turn.threadId, promptText, attachments);
       for await (const message of run({ prompt, options: agentOptions(cwd, context, resume, abortController, mode) })) {
         const known = state.sessionId;
         const events = translate(message, state);

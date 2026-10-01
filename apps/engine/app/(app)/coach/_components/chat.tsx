@@ -115,9 +115,9 @@ function ChatView({ chat, brief, onReply }: { chat: Chat; brief?: CoachBrief | n
           streaming={state.streaming}
           autoFocus={fresh || replying}
           placeholder={replying ? "Contéstale al Coach…" : undefined}
-          onSend={(text) => {
+          onSend={(text, photos) => {
             following.current = true;
-            return chat.send(text);
+            return chat.send(text, photos);
           }}
           onStop={() => void chat.stop()}
         />

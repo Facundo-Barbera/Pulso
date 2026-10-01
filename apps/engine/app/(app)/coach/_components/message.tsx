@@ -1,12 +1,13 @@
 "use client";
 
-import type { AgentMessage, AgentToolResult, AgentToolUse } from "@pulso/contract";
-import { AlertTriangle, Check, ChevronRight, Copy, Share } from "lucide-react";
+import type { AgentAttachment, AgentMessage, AgentToolResult, AgentToolUse } from "@pulso/contract";
+import { AlertTriangle, Check, ChevronRight, Copy, Share, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "../../../_ui/cn";
 import { Markdown } from "../../../_ui/markdown";
 import { CoachAvatar, copyText, ThinkingDots } from "./bits";
+import { photoSrc } from "./photos";
 import { RESULT_PLACES, toolLook } from "./tools";
 
 export function MessageRow({ message, last }: { message: AgentMessage; last: boolean }) {
@@ -15,10 +16,74 @@ export function MessageRow({ message, last }: { message: AgentMessage; last: boo
 
 function UserBubble({ message }: { message: AgentMessage }) {
   return (
-    <div className="group flex items-end justify-end gap-1 pl-10 motion-safe:animate-[pulso-rise_280ms_ease-out_both] md:pl-20">
-      <Actions text={message.text} className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 max-md:hidden" />
-      <p className="bg-primary text-primary-foreground min-w-0 rounded-[22px] rounded-br-md px-4 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{message.text}</p>
+    <div className="flex flex-col items-end gap-1.5 pl-10 motion-safe:animate-[pulso-rise_280ms_ease-out_both] md:pl-20">
+      {message.attachments.length > 0 && <Photos threadId={message.threadId} photos={message.attachments} />}
+      {message.text && (
+        <div className="group flex items-end justify-end gap-1">
+          <Actions text={message.text} className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 max-md:hidden" />
+          <p className="bg-primary text-primary-foreground min-w-0 rounded-[22px] rounded-br-md px-4 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{message.text}</p>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The person's photos, right-aligned like their bubble; one is big, several make a grid. Click opens it full size. */
+function Photos({ threadId, photos }: { threadId: string; photos: AgentAttachment[] }) {
+  const [open, setOpen] = useState<AgentAttachment | null>(null);
+  const single = photos.length === 1;
+  return (
+    <>
+      <ul className={cn("grid gap-1.5", single ? "w-[min(280px,100%)]" : "w-[min(320px,100%)] grid-cols-2")} aria-label={single ? "Foto" : `${photos.length} fotos`}>
+        {photos.map((photo, i) => (
+          <li key={photo.id} className={cn(!single && photos.length === 3 && i === 0 && "col-span-2")}>
+            <button
+              type="button"
+              onClick={() => setOpen(photo)}
+              className="bg-muted focus-visible:ring-ring block w-full overflow-hidden rounded-[18px] outline-none focus-visible:ring-2"
+              aria-label={`Ver foto ${i + 1} en grande`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoSrc(threadId, photo)}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                className={cn("w-full object-cover transition-transform motion-safe:hover:scale-[1.02]", single ? "max-h-[360px]" : "aspect-square")}
+                style={single && photo.width && photo.height ? { aspectRatio: `${photo.width} / ${photo.height}` } : undefined}
+              />
+            </button>
+          </li>
+        ))}
+      </ul>
+      {open && <PhotoViewer src={photoSrc(threadId, open)} onClose={() => setOpen(null)} />}
+    </>
+  );
+}
+
+/** Full size over everything; Esc, the button or a click outside the photo closes it. */
+function PhotoViewer({ src, onClose }: { src: string; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => dialog.current?.showModal(), []);
+  return (
+    <dialog
+      ref={dialog}
+      onClose={onClose}
+      onClick={(e) => e.target === e.currentTarget && dialog.current?.close()}
+      className="m-0 hidden h-dvh max-h-none open:grid w-dvw max-w-none place-items-center bg-transparent p-4 backdrop:bg-black/85 backdrop:backdrop-blur-sm"
+      aria-label="Foto"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" className="max-h-[92dvh] max-w-full rounded-xl object-contain shadow-3 motion-safe:animate-[pulso-rise_200ms_ease-out_both]" />
+      <button
+        type="button"
+        onClick={() => dialog.current?.close()}
+        className="focus-visible:ring-ring fixed top-[max(1rem,env(safe-area-inset-top))] right-4 grid size-11 place-items-center rounded-full bg-white/15 text-white outline-none backdrop-blur hover:bg-white/25 focus-visible:ring-2"
+        aria-label="Cerrar"
+      >
+        <X className="size-5" />
+      </button>
+    </dialog>
   );
 }
 
