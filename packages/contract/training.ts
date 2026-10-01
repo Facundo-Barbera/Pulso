@@ -25,7 +25,13 @@ export type Exercise = {
   secondary: MuscleGroup[];
   equipment: Equipment;
   kind: "compound" | "isolation";
-};
+} & ListMedia;
+
+/**
+ * Demonstration media on list rows (`GET /api/mobile/training/exercises`, program
+ * exercises): same URLs as `ExerciseMedia`. Absent or null without media.
+ */
+export type ListMedia = { thumbnail?: string | null; animation?: string | null };
 
 /** One exercise as prescribed inside a program day. */
 export type ProgramExercise = {
@@ -40,7 +46,7 @@ export type ProgramExercise = {
   targetRir: number | null;
   restSeconds: number;
   notes: string | null;
-};
+} & ListMedia;
 
 export type ProgramDay = {
   id: string;
@@ -62,7 +68,7 @@ export type Program = {
   days: ProgramDay[];
 };
 
-export type ProgramExerciseInput = Omit<ProgramExercise, "id" | "exerciseName" | "equipment" | "targetRpe" | "targetRir" | "notes"> & {
+export type ProgramExerciseInput = Omit<ProgramExercise, "id" | "exerciseName" | "equipment" | "targetRpe" | "targetRir" | "notes" | keyof ListMedia> & {
   targetRpe?: number | null;
   targetRir?: number | null;
   notes?: string | null;
