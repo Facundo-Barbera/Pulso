@@ -37,6 +37,8 @@ struct WidgetSnapshot: Codable, Equatable {
         var date: String
         var time: String
         var due: Date
+        /// The slot key it's logged under ("08:00", "desayuno", "entreno"); nil from older snapshots, where it's `time`.
+        var slot: String? = nil
     }
 
     struct Workout: Codable, Equatable {

@@ -31,6 +31,7 @@ struct TakeDoseIntent: AppIntent {
     @Parameter(title: "Dosis") var doseText: String
     @Parameter(title: "Fecha") var date: String
     @Parameter(title: "Hora") var time: String
+    @Parameter(title: "Toma") var slot: String?
 
     init() {}
 
@@ -40,12 +41,13 @@ struct TakeDoseIntent: AppIntent {
         doseText = dose.doseText
         date = dose.date
         time = dose.time
+        slot = dose.slot
     }
 
     /// The dose these parameters name, or nil when the widget handed over something unusable.
     var dose: WidgetSnapshot.Dose? {
         guard !medicationId.isEmpty, let due = WidgetClock.instant(date: date, time: time) else { return nil }
-        return WidgetSnapshot.Dose(medicationId: medicationId, name: name, doseText: doseText, date: date, time: time, due: due)
+        return WidgetSnapshot.Dose(medicationId: medicationId, name: name, doseText: doseText, date: date, time: time, due: due, slot: slot)
     }
 
     func perform() async throws -> some IntentResult {
