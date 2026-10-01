@@ -1,7 +1,8 @@
 "use client";
 
-import { HOUSEHOLD_SIZES, type FoodProduct, type FrequentFood, type Macros, type MealEntry, type MealSlot, type MeasureUnit, type PortionEstimate } from "@pulso/contract";
-import { Plus, ScanBarcode, Search, Sparkles } from "lucide-react";
+import { HOUSEHOLD_SIZES, type DishRef, type FoodProduct, type FrequentFood, type Macros, type MealEntry, type MealSlot, type MeasureUnit, type PortionEstimate, type SavedDish } from "@pulso/contract";
+import { BookmarkPlus, CookingPot, Plus, ScanBarcode, Search, Sparkles, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
 import type { SlotView } from "@/src/web/dieta-plan";
@@ -25,6 +26,11 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const str = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "" : String(round1(n)));
 const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
 const nowTime = () => new Date().toTimeString().slice(0, 5);
+const PORTIONS = [0.5, 1, 1.5, 2];
+const portionLabel = (x: number) => (x === 0.5 ? "½" : x === 1.5 ? "1½" : String(x));
+
+/** A food in the dish being put together: the body the engine takes, and what the list shows. */
+type Part = { body: Record<string, unknown>; name: string; kcal: number; protein: number; amount: string };
 
 /** Millilitres in the amount, when it is a drink measure. */
 function millilitres(unit: MeasureUnit, amount: number, size: number | null): number | null {
@@ -60,10 +66,16 @@ function fromLogged(f: Logged) {
  * with a product, «Cuánto comiste» in words («una cucharada») fills the amount.
  * With `entry`, the same form corrects a logged entry. With `replacing`, it logs
  * what was eaten instead of a planned meal and ties it to that slot (a plan
- * change with «Deshacer»).
+ * change with «Deshacer»). With `addingTo`, the food joins a dish eaten.
+ *
+ * Mis platillos come first in the search: + logs one as saved; picking one
+ * opens it as a platillo to take a portion (½…2), drop or add something this
+ * time. «Platillo» puts one together from several foods (the form adds each),
+ * optionally keeping it in Mis platillos.
  */
-export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntry; replacing?: SlotView; onClose: () => void }) {
-  const { date: shownDate, frequent } = useDieta();
+export function RegisterSheet({ entry, replacing, addingTo, onClose }: { entry?: DietaEntry; replacing?: SlotView; addingTo?: DishRef; onClose: () => void }) {
+  const { date: shownDate, frequent, dishes } = useDieta();
+  const router = useRouter();
   const date = replacing?.date ?? shownDate;
   const { run, pending: running, error, setError } = useAction();
   const plan = usePlanActions();
@@ -84,6 +96,9 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
   const [scan, setScan] = useState<{ code: string; status: "idle" | "looking" | "missing" } | null>(null);
   const [said, setSaid] = useState("");
   const [portion, setPortion] = useState<{ busy: boolean; assumption: string | null; error: string | null }>({ busy: false, assumption: null, error: null });
+  // A platillo being put together: from a saved dish (its components, a portion, some left out) and/or foods added here.
+  const [dish, setDish] = useState<{ name: string; from: SavedDish | null; scale: number; removed: number[]; parts: Part[]; keep: boolean } | null>(null);
+  const [dishBusy, setDishBusy] = useState(false);
 
   const close = () => {
     setOpen(false);
@@ -109,6 +124,11 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     const q = fold(name);
     return (q ? frequent.filter((f) => fold(f.name).includes(q)) : frequent).slice(0, q ? 6 : 5);
   }, [frequent, name]);
+  const dishMatches = useMemo(() => {
+    if (entry || addingTo || dish) return [];
+    const q = fold(name);
+    return (q ? dishes.filter((d) => fold(d.name).includes(q)) : dishes).slice(0, 3);
+  }, [dishes, name, entry, addingTo, dish]);
 
   function pick(f: FrequentFood) {
     const filled = fromLogged(f);
@@ -142,6 +162,72 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     if (!ok) await send(`meals/${meal.id}`, "DELETE");
     setReplacingBusy(false);
     return ok;
+  }
+
+  /** Logs a dish (saved, or put together here); `keep` then saves it to Mis platillos. Plan meals it replaces are tied to it. */
+  async function logDishBody(path: string, body: Record<string, unknown>, keep = false) {
+    setError(null);
+    setDishBusy(true);
+    const result = await send(path, "POST", { ...body, date, time, ...(replacing ? { slotId: replacing.id } : {}) });
+    const meals = result.ok ? (result.data as { meals: MealEntry[] }).meals : [];
+    if (result.ok && keep && meals[0]?.dish) await send("dishes", "POST", { loggedDishId: meals[0].dish.id });
+    setDishBusy(false);
+    if (!result.ok) return setError(result.message);
+    router.refresh();
+    close();
+  }
+
+  const quickDish = (d: SavedDish) => logDishBody(`dishes/${d.id}/log`, { slot: replacing?.slot ?? d.slot ?? slot });
+
+  function openDish(d: SavedDish | null) {
+    setDish({ name: d?.name ?? "", from: d, scale: 1, removed: [], parts: [], keep: false });
+    if (d?.slot && !replacing) setSlot(d.slot);
+    clearFood();
+    // Calm until the person looks for something to add.
+    setSearching(false);
+  }
+
+  function clearFood() {
+    setName("");
+    setUnit("g");
+    setAmount("100");
+    setSize("");
+    setPer(EMPTY_PER);
+    setBarcode(null);
+    resetPortion();
+    setSearching(true);
+  }
+
+  /** The food in the form as a dish component; a message when it isn't complete. */
+  function foodPart(): Part | string {
+    if (!name.trim()) return "Falta el nombre.";
+    if (amountN <= 0) return "La cantidad tiene que ser mayor que cero.";
+    const body = { name: name.trim(), ...totals, caffeineMg, alcoholG, barcode, ...amountBody(unit, amountN, sizeN) };
+    const label = isHousehold(unit) ? fmtAmount({ amount: amountN, unit, size: sizeN }, amountN, "g") : fmtAmount(null, amountN, unit as "g" | "ml" | "serving");
+    return { body, name: body.name, kcal: totals.kcal, protein: totals.protein, amount: label };
+  }
+
+  function addPart() {
+    const part = foodPart();
+    if (typeof part === "string") return setError(part);
+    setError(null);
+    setDish((d) => d && { ...d, parts: [...d.parts, part] });
+    clearFood();
+  }
+
+  async function logDish() {
+    if (!dish) return;
+    // What is still in the form counts too, so nobody loses the last food.
+    const pending = name.trim() ? foodPart() : null;
+    if (typeof pending === "string") return setError(pending);
+    const parts = pending ? [...dish.parts, pending] : dish.parts;
+    const add = parts.map((p) => p.body);
+    if (dish.from) {
+      const overrides = dish.removed.map((i) => ({ component: i, remove: true }));
+      return logDishBody(`dishes/${dish.from.id}/log`, { slot, scale: dish.scale, overrides, ...(add.length ? { add } : {}) });
+    }
+    if (!add.length) return setError("Añade al menos un ingrediente.");
+    return logDishBody("meals/dish", { name: dish.name.trim() || undefined, slot, components: add }, dish.keep);
   }
 
   async function quickAdd(f: FrequentFood) {
@@ -206,6 +292,13 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
   const clearAssumption = () => portion.assumption && setPortion({ ...portion, assumption: null });
 
   async function save() {
+    if (dish) return logDish();
+    if (addingTo) {
+      const part = foodPart();
+      if (typeof part === "string") return setError(part);
+      if (await run(`meals/dish/${addingTo.id}`, "PATCH", { add: [part.body] })) close();
+      return;
+    }
     if (!name.trim()) return setError("Falta el nombre.");
     if (amountN <= 0) return setError("La cantidad tiene que ser mayor que cero.");
     const body = {
@@ -225,6 +318,15 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     if (ok) close();
   }
 
+  const kept = dish?.from ? dish.from.components.filter((_, i) => !dish.removed.includes(i)) : [];
+  const dishTotals = dish && {
+    kcal: kept.reduce((s, c) => s + c.kcal * dish.scale, 0) + dish.parts.reduce((s, p) => s + p.kcal, 0),
+    protein: kept.reduce((s, c) => s + c.protein * dish.scale, 0) + dish.parts.reduce((s, p) => s + p.protein, 0),
+  };
+  const shown = dishTotals ?? totals;
+  const busy = pending || dishBusy;
+  const title = entry ? "Corregir" : addingTo ? `Añadir a ${addingTo.name}` : dish ? (dish.from?.name ?? "Crear platillo") : replacing ? `Tu ${replacing.title.toLowerCase()}` : "Registrar";
+  const action = entry ? "Guardar" : addingTo ? "Añadir" : dish ? "Registrar platillo" : replacing ? "Cambiar" : "Registrar";
   const perLabel = perHundred(unit) ? `Por 100 ${unit}` : `Por 1 ${unitLabel(unit)}`;
   const defaultSize = isHousehold(unit) ? HOUSEHOLD_SIZES[unit].size : null;
   const sizeBase = isHousehold(unit) ? (unit === "unidad" ? "g" : HOUSEHOLD_SIZES[unit].base) : null;
@@ -233,17 +335,17 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
     <Sheet
       open={open}
       onClose={close}
-      title={entry ? "Corregir" : replacing ? `Tu ${replacing.title.toLowerCase()}` : "Registrar"}
+      title={title}
       footer={
         <>
           <p className="text-muted-foreground mr-auto truncate text-[13px] tabular" aria-live="polite">
-            {fmt(totals.kcal)} kcal · {fmt(totals.protein)} g prot.
+            {fmt(Math.round(shown.kcal))} kcal · {fmt(round1(shown.protein))} g prot.
           </p>
           <button onClick={close} className={buttonQuiet}>
             Cancelar
           </button>
-          <button onClick={save} disabled={pending} className={buttonPrimary}>
-            {entry ? "Guardar" : replacing ? "Cambiar" : "Registrar"}
+          <button onClick={save} disabled={busy} className={buttonPrimary}>
+            {action}
           </button>
         </>
       }
@@ -256,10 +358,84 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
           const target = e.target as HTMLElement;
           if (e.key === "Enter" && !e.defaultPrevented && target.tagName === "INPUT" && (target as HTMLInputElement).type !== "checkbox") {
             e.preventDefault();
-            save();
+            // Putting a platillo together, Enter adds the food in the form; the button logs the dish.
+            if (!dish) save();
+            else if (name.trim()) addPart();
           }
         }}
       >
+        {!entry && !addingTo && (
+          <div className="bg-muted -mt-1 grid grid-cols-2 rounded-xl p-1" role="radiogroup" aria-label="Qué registras">
+            {[
+              { label: "Un alimento", on: !dish, pick: () => setDish(null) },
+              { label: "Un platillo", on: !!dish, pick: () => !dish && openDish(null) },
+            ].map((o) => (
+              <button key={o.label} type="button" role="radio" aria-checked={o.on} onClick={o.pick} className={cn("min-h-9 rounded-lg text-[13px] font-medium transition-colors", o.on ? "bg-background shadow-1" : "text-muted-foreground hover:text-foreground")}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {dish && (
+          <div className="space-y-3">
+            {dish.from ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-medium">Porción</span>
+                <div className="ml-auto flex gap-1">
+                  {PORTIONS.map((x) => (
+                    <button key={x} type="button" onClick={() => setDish({ ...dish, scale: x })} aria-pressed={dish.scale === x} className={cn("min-h-9 min-w-11 rounded-lg px-2 text-[13px] font-medium tabular", dish.scale === x ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent")}>
+                      {portionLabel(x)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium">Nombre del platillo</span>
+                <input value={dish.name} onChange={(e) => setDish({ ...dish, name: e.target.value })} placeholder="«Batido de proteína con fresas» · vacío: se nombra solo" className={cn(field, "w-full")} />
+              </label>
+            )}
+            {(dish.from || dish.parts.length > 0) && (
+              <ul className="border-border divide-y overflow-hidden rounded-xl border" aria-label="Ingredientes">
+                {dish.from?.components.map((c, i) => {
+                  const out = dish.removed.includes(i);
+                  return (
+                    <li key={`saved-${i}`} className={cn("flex min-h-11 items-center gap-3 px-3", out && "opacity-45")}>
+                      <span className="min-w-0 flex-1">
+                        <span className={cn("block truncate text-[14px]", out && "line-through")}>{c.name}</span>
+                        <span className="text-muted-foreground block truncate text-[12px] tabular">{fmtAmount(c.measure && { ...c.measure, amount: c.measure.amount * dish.scale }, c.quantity * dish.scale, c.unit)}</span>
+                      </span>
+                      <span className="text-muted-foreground text-[13px] tabular">{fmt(Math.round(c.kcal * dish.scale))}</span>
+                      <button type="button" onClick={() => setDish({ ...dish, removed: out ? dish.removed.filter((r) => r !== i) : [...dish.removed, i] })} className="text-muted-foreground hover:text-foreground grid size-9 place-items-center rounded-lg" aria-label={out ? `Volver a poner ${c.name}` : `Sin ${c.name} esta vez`} title={out ? "Volver a ponerlo" : "Sin esto esta vez"}>
+                        {out ? <Plus className="size-4" /> : <X className="size-4" />}
+                      </button>
+                    </li>
+                  );
+                })}
+                {dish.parts.map((p, i) => (
+                  <li key={`part-${i}`} className="flex min-h-11 items-center gap-3 px-3">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px]">{p.name}</span>
+                      <span className="text-muted-foreground block truncate text-[12px] tabular">{p.amount}</span>
+                    </span>
+                    <span className="text-muted-foreground text-[13px] tabular">{fmt(Math.round(p.kcal))}</span>
+                    <button type="button" onClick={() => setDish({ ...dish, parts: dish.parts.filter((_, j) => j !== i) })} className="text-muted-foreground hover:text-foreground grid size-9 place-items-center rounded-lg" aria-label={`Quitar ${p.name}`}>
+                      <X className="size-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!dish.from && (
+              <label className="flex min-h-9 items-center gap-2 text-[13px]">
+                <input type="checkbox" checked={dish.keep} onChange={(e) => setDish({ ...dish, keep: e.target.checked })} className="accent-primary size-4" />
+                <BookmarkPlus className="text-muted-foreground size-4" />
+                Guardar en Mis platillos
+              </label>
+            )}
+            <p className="text-muted-foreground border-border border-t pt-3 text-[12px] font-semibold tracking-wide uppercase">{dish.from ? "Añadir algo esta vez" : "Añadir ingrediente"}</p>
+          </div>
+        )}
         {replacing && (
           <p className="bg-muted/60 text-muted-foreground -mt-1 rounded-xl px-3 py-2.5 text-[13px] leading-snug">
             En vez de <span className="text-foreground font-medium">{replacing.label}</span> ({replacing.title.toLowerCase()}, {fmt(replacing.kcal)} kcal). Lo que registres pasa a ser tu {replacing.title.toLowerCase()} de verdad.
@@ -316,6 +492,31 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
               className={cn(field, "w-full pl-9")}
             />
           </div>
+          {searching && dishMatches.length > 0 && (
+            <ul className="border-border mt-2 divide-y overflow-hidden rounded-xl border" aria-label="Mis platillos">
+              {dishMatches.map((d) => (
+                <li key={d.id} className="hover:bg-muted/60 flex items-center">
+                  <button type="button" onClick={() => openDish(d)} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-3 text-left">
+                    <CookingPot className="text-energy size-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate text-[14px] font-medium">{d.name}</span>
+                    <span className="text-muted-foreground shrink-0 text-[12px] tabular">
+                      {d.components.length} ingr. · {fmt(Math.round(d.macros.kcal))} kcal
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => quickDish(d)}
+                    disabled={busy}
+                    className="text-primary hover:bg-primary/10 mr-1 grid size-9 shrink-0 place-items-center rounded-lg"
+                    aria-label={`Registrar ${d.name}`}
+                    title="Registrar el platillo"
+                  >
+                    <Plus className="size-4" strokeWidth={2.4} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           {searching && matches.length > 0 && (
             <ul className="border-border mt-2 divide-y overflow-hidden rounded-xl border" aria-label="Frecuentes">
               {matches.map((f) => (
@@ -326,16 +527,18 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
                       {fmtAmount(f.measure, f.quantity, f.unit)} · {fmt(Math.round(f.kcal))} kcal
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => quickAdd(f)}
-                    disabled={pending}
-                    className="text-primary hover:bg-primary/10 mr-1 grid size-9 shrink-0 place-items-center rounded-lg"
-                    aria-label={`Registrar ${f.name} como la última vez`}
-                    title="Registrar como la última vez"
-                  >
-                    <Plus className="size-4" strokeWidth={2.4} />
-                  </button>
+                  {!dish && !addingTo && (
+                    <button
+                      type="button"
+                      onClick={() => quickAdd(f)}
+                      disabled={pending}
+                      className="text-primary hover:bg-primary/10 mr-1 grid size-9 shrink-0 place-items-center rounded-lg"
+                      aria-label={`Registrar ${f.name} como la última vez`}
+                      title="Registrar como la última vez"
+                    >
+                      <Plus className="size-4" strokeWidth={2.4} />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -419,22 +622,24 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium">Momento</span>
-            <select value={slot} onChange={(e) => setSlot(e.target.value as MealSlot)} className={cn(field, "w-full")}>
-              {SLOT_OPTIONS.map((o) => (
-                <option key={o.slot} value={o.slot}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium">Hora</span>
-            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={cn(field, "w-full tabular")} />
-          </label>
-        </div>
+        {!addingTo && (
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1.5 block text-[13px] font-medium">Momento</span>
+              <select value={slot} onChange={(e) => setSlot(e.target.value as MealSlot)} className={cn(field, "w-full")}>
+                {SLOT_OPTIONS.map((o) => (
+                  <option key={o.slot} value={o.slot}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[13px] font-medium">Hora</span>
+              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={cn(field, "w-full tabular")} />
+            </label>
+          </div>
+        )}
 
         <fieldset>
           <legend className="mb-1.5 text-[13px] font-medium">
@@ -478,6 +683,12 @@ export function RegisterSheet({ entry, replacing, onClose }: { entry?: DietaEntr
             </div>
           </details>
         </fieldset>
+        {dish && (
+          <button type="button" onClick={addPart} className={cn(buttonSoft, "w-full")}>
+            <Plus className="size-4" />
+            Añadir al platillo
+          </button>
+        )}
 
         {error && <p className="text-destructive text-[13px]">{error}</p>}
       </form>

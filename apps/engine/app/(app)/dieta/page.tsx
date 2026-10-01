@@ -53,7 +53,7 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
   const arrow = "text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2";
 
   return (
-    <DietaProvider date={date} isToday={date === today} hasPlan={day.plan !== null} frequent={day.frequent}>
+    <DietaProvider date={date} isToday={date === today} hasPlan={day.plan !== null} frequent={day.frequent} dishes={day.dishes}>
       <Page>
         <PageHeader
           eyebrow={fmtLongDate(new Date(`${date}T12:00:00`))}

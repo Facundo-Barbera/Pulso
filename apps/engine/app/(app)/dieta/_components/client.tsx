@@ -1,6 +1,6 @@
 "use client";
 
-import type { FrequentFood } from "@pulso/contract";
+import type { DishRef, FrequentFood, SavedDish } from "@pulso/contract";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useState, useTransition } from "react";
@@ -53,8 +53,10 @@ type Context = {
   isToday: boolean;
   hasPlan: boolean;
   frequent: FrequentFood[];
-  /** Opens «Registrar»: empty, correcting `entry`, or logging what was eaten instead of a planned meal. */
-  register: (entry?: DietaEntry, replacing?: SlotView) => void;
+  /** Mis platillos, most used first. */
+  dishes: SavedDish[];
+  /** Opens «Registrar»: empty, correcting `entry`, logging what was eaten instead of a planned meal, or adding to a dish eaten. */
+  register: (entry?: DietaEntry, replacing?: SlotView, addingTo?: DishRef) => void;
 };
 
 const DietaContext = createContext<Context | null>(null);
@@ -62,14 +64,14 @@ const DietaContext = createContext<Context | null>(null);
 export const useDieta = () => useContext(DietaContext)!;
 
 /** Holds the day being shown, the toast plan changes answer with, and the one «Registrar» sheet every trigger on the page opens. */
-export function DietaProvider({ date, isToday, hasPlan, frequent, children }: Omit<Context, "register"> & { children: React.ReactNode }) {
-  const [sheet, setSheet] = useState<{ entry?: DietaEntry; replacing?: SlotView; key: number } | null>(null);
-  const register = useCallback((entry?: DietaEntry, replacing?: SlotView) => setSheet({ entry, replacing, key: Date.now() }), []);
+export function DietaProvider({ date, isToday, hasPlan, frequent, dishes, children }: Omit<Context, "register"> & { children: React.ReactNode }) {
+  const [sheet, setSheet] = useState<{ entry?: DietaEntry; replacing?: SlotView; addingTo?: DishRef; key: number } | null>(null);
+  const register = useCallback((entry?: DietaEntry, replacing?: SlotView, addingTo?: DishRef) => setSheet({ entry, replacing, addingTo, key: Date.now() }), []);
   return (
     <ToastHost>
-      <DietaContext.Provider value={{ date, isToday, hasPlan, frequent, register }}>
+      <DietaContext.Provider value={{ date, isToday, hasPlan, frequent, dishes, register }}>
         {children}
-        {sheet && <RegisterSheet key={sheet.key} entry={sheet.entry} replacing={sheet.replacing} onClose={() => setSheet(null)} />}
+        {sheet && <RegisterSheet key={sheet.key} entry={sheet.entry} replacing={sheet.replacing} addingTo={sheet.addingTo} onClose={() => setSheet(null)} />}
       </DietaContext.Provider>
     </ToastHost>
   );

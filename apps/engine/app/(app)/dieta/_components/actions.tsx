@@ -1,6 +1,7 @@
 "use client";
 
-import { CopyPlus, Pencil, Trash2 } from "lucide-react";
+import type { DishRef, Recipe } from "@pulso/contract";
+import { BookmarkCheck, BookmarkPlus, CopyPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
 import { cn } from "../../../_ui/cn";
@@ -35,6 +36,56 @@ export function EntryActions({ entry }: { entry: DietaEntry }) {
       )}
       {error && <span className="text-destructive text-[11px]">{error}</span>}
     </span>
+  );
+}
+
+/** Under a dish's components: add one, or keep the dish in Mis platillos to log it again in one tap. */
+export function DishActions({ dish }: { dish: DishRef }) {
+  const { register } = useDieta();
+  const { run, pending, error } = useAction();
+  const quiet = "text-muted-foreground hover:text-foreground hover:bg-muted flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-[12.5px] font-medium";
+  return (
+    <div className="flex flex-wrap items-center gap-1 py-1">
+      <button onClick={() => register(undefined, undefined, dish)} className={quiet}>
+        <Plus className="size-3.5" />
+        Añadir ingrediente
+      </button>
+      {dish.savedDishId ? (
+        <span className="text-muted-foreground flex min-h-9 items-center gap-1.5 px-2 text-[12.5px]">
+          <BookmarkCheck className="size-3.5" />
+          En Mis platillos
+        </span>
+      ) : (
+        <button onClick={() => run("dishes", "POST", { loggedDishId: dish.id })} disabled={pending} className={quiet}>
+          <BookmarkPlus className="size-3.5" />
+          Guardar como platillo
+        </button>
+      )}
+      <ErrorLine message={error} />
+    </div>
+  );
+}
+
+/** A plan recipe as a saved dish (one portion), so it can be logged in one tap any day. */
+export function SaveRecipeAsDish({ recipe }: { recipe: Recipe }) {
+  const { dishes } = useDieta();
+  const { run, pending, error } = useAction();
+  if (dishes.some((d) => d.recipeId === recipe.id)) {
+    return (
+      <p className="text-muted-foreground flex items-center gap-1.5 text-[12.5px]">
+        <BookmarkCheck className="size-3.5" />
+        En Mis platillos
+      </p>
+    );
+  }
+  return (
+    <div>
+      <button onClick={() => run("dishes", "POST", { recipeId: recipe.id })} disabled={pending} className={buttonSoft}>
+        <BookmarkPlus className="size-4" />
+        Guardar como platillo
+      </button>
+      <ErrorLine message={error} />
+    </div>
   );
 }
 

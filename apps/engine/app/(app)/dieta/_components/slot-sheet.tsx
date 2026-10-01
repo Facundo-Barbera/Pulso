@@ -5,8 +5,9 @@ import { Clock, Users } from "lucide-react";
 import { useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
 import type { SlotView } from "@/src/web/dieta-plan";
-import { EntryActions } from "./actions";
+import { EntryActions, SaveRecipeAsDish } from "./actions";
 import { useDieta } from "./client";
+import { byDish, DishRow } from "./dish";
 import { usePlanActions } from "./plan-actions";
 import { buttonPrimary, buttonQuiet, Sheet } from "./sheet";
 import { SlotRow, statusLabel } from "./slot-row";
@@ -158,18 +159,22 @@ export function SlotSheet({ slot, recipe, entries = [], onClose }: { slot: SlotV
         )}
         {entries.length > 0 && (
           <ul className="-mx-2 -mt-2">
-            {entries.map((e) => (
-              <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px]">{e.name}</span>
-                  <span className="text-muted-foreground block truncate text-[12px] tabular">
-                    {fmtAmount(e.measure, e.quantity, e.unit)} · {e.time}
+            {byDish(entries).map(({ dish, entries: parts }) => {
+              const row = (e: DietaEntry) => (
+                <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px]">{e.name}</span>
+                    <span className="text-muted-foreground block truncate text-[12px] tabular">
+                      {fmtAmount(e.measure, e.quantity, e.unit)}
+                      {!dish && ` · ${e.time}`}
+                    </span>
                   </span>
-                </span>
-                <EntryActions entry={e} />
-                <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmt(Math.round(e.kcal))}</span>
-              </li>
-            ))}
+                  <EntryActions entry={e} />
+                  <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmt(Math.round(e.kcal))}</span>
+                </li>
+              );
+              return dish ? <DishRow key={dish.id} dish={dish} entries={parts} detail={parts[0]!.time} renderEntry={row} /> : row(parts[0]!);
+            })}
           </ul>
         )}
         {slot.real && !slot.real.asPlanned && <p className="text-muted-foreground -mb-2 text-[12px] font-medium">Lo planeado</p>}
@@ -179,6 +184,7 @@ export function SlotSheet({ slot, recipe, entries = [], onClose }: { slot: SlotV
           <>
             {slot.portions !== null && slot.portions !== 1 && <p className="text-[14px]">Te toca {fmt(slot.portions)} porciones.</p>}
             <RecipeDetail recipe={recipe} portions={slot.portions ?? 1} />
+            <SaveRecipeAsDish recipe={recipe} />
           </>
         ) : (
           <>

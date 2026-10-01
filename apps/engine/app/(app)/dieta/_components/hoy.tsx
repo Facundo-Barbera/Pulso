@@ -9,6 +9,7 @@ import { fmtDayLabel, fmtNumber } from "../../../_ui/format";
 import { Ring } from "../../../_ui/ring";
 import { Sparkline } from "../../../_ui/sparkline";
 import { EmptyDayActions, EntryActions } from "./actions";
+import { byDish, DishRow } from "./dish";
 import { PrepChip } from "./prep-chip";
 import { EatButton } from "./slot-row";
 import { SlotList } from "./slot-sheet";
@@ -169,19 +170,22 @@ export function Timeline({ day, className, delay }: { day: DietaDay; className?:
                   </div>
                   {moment.note && <p className="text-muted-foreground mb-1 text-[12px] italic">«{moment.note}»</p>}
                   <ul className="-mx-2">
-                    {moment.entries.map((e) => (
-                      <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px]">{e.name}</span>
-                          <span className="text-muted-foreground block truncate text-[12px] tabular">
-                            {fmtAmount(e.measure, e.quantity, e.unit)}
-                            {e.time !== moment.time && ` · ${e.time}`} · {fmtNumber(e.protein)} g prot.
+                    {byDish(moment.entries).map(({ dish, entries }) => {
+                      const row = (e: DietaEntry) => (
+                        <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[14px]">{e.name}</span>
+                            <span className="text-muted-foreground block truncate text-[12px] tabular">
+                              {fmtAmount(e.measure, e.quantity, e.unit)}
+                              {e.time !== moment.time && ` · ${e.time}`} · {fmtNumber(e.protein)} g prot.
+                            </span>
                           </span>
-                        </span>
-                        <EntryActions entry={e} />
-                        <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmtNumber(e.kcal)}</span>
-                      </li>
-                    ))}
+                          <EntryActions entry={e} />
+                          <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmtNumber(e.kcal)}</span>
+                        </li>
+                      );
+                      return dish ? <DishRow key={dish.id} dish={dish} entries={entries} detail={entries[0]!.time !== moment.time ? entries[0]!.time : undefined} renderEntry={row} /> : row(entries[0]!);
+                    })}
                   </ul>
                 </div>
               </li>
@@ -260,23 +264,29 @@ export function TodayPlan({ day, recipes, entries, title, className, delay }: { 
         <div className="border-border mt-3 border-t pt-3">
           <p className="text-muted-foreground mb-1 text-[12px] font-semibold tracking-wide uppercase">Extras</p>
           <ul className="-mx-2">
-            {extras.map((e) => {
-              const Icon = e.unit === "ml" ? (e.alcoholG ? Wine : CupSoda) : Cookie;
-              return (
-                <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
+            {byDish(extras).map(({ dish, entries: parts }) => {
+              const iconOf = (list: DietaEntry[]) => {
+                const Icon = list.every((e) => e.unit === "ml") ? (list.some((e) => e.alcoholG) ? Wine : CupSoda) : Cookie;
+                return (
                   <span className="bg-energy/12 text-energy grid size-8 shrink-0 place-items-center rounded-full">
                     <Icon className="size-3.5" />
                   </span>
+                );
+              };
+              const row = (e: DietaEntry, inDish = false) => (
+                <li key={e.id} className="group hover:bg-muted/50 flex min-h-11 items-center gap-3 rounded-xl px-2">
+                  {!inDish && iconOf([e])}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14px]">{e.name}</span>
                     <span className="text-muted-foreground block truncate text-[12px] tabular">
-                      {e.time} · {fmtAmount(e.measure, e.quantity, e.unit)}
+                      {inDish ? fmtAmount(e.measure, e.quantity, e.unit) : `${e.time} · ${fmtAmount(e.measure, e.quantity, e.unit)}`}
                     </span>
                   </span>
                   <EntryActions entry={e} />
                   <span className="text-muted-foreground w-12 shrink-0 text-right text-[13px] tabular">{fmtNumber(e.kcal)}</span>
                 </li>
               );
+              return dish ? <DishRow key={dish.id} dish={dish} entries={parts} leading={iconOf(parts)} detail={parts[0]!.time} renderEntry={(e) => row(e, true)} /> : row(parts[0]!);
             })}
           </ul>
         </div>
