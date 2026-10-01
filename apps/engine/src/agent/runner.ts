@@ -10,12 +10,21 @@ import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspac
 export type QueryFn = typeof query;
 
 /** A turn in flight. Events are kept so a late subscriber gets the whole turn. */
-type Turn = { threadId: string; messageId: string; events: AgentStreamEvent[]; listeners: Set<(event: AgentStreamEvent) => void> };
+type Turn = {
+  threadId: string;
+  messageId: string;
+  events: AgentStreamEvent[];
+  listeners: Set<(event: AgentStreamEvent) => void>;
+  abortController: AbortController;
+  /** The person pressed stop, as opposed to the time limit. */
+  stopped: boolean;
+};
 
 const TURN_LIMIT_MS = 15 * 60_000;
 const SAVE_EVERY_MS = 750;
 const RECAP_MESSAGES = 20;
 const RECAP_CHARS = 1500;
+const STOPPED = "Detuviste la respuesta.";
 const BUILTIN_TOOLS = ["Read", "Write", "WebSearch", "WebFetch"];
 
 // Survives Next's dev reloads, like the db connection.
@@ -36,6 +45,15 @@ export function subscribe(turn: Turn, listener: (event: AgentStreamEvent) => voi
   for (const event of turn.events) listener(event);
   turn.listeners.add(listener);
   return () => turn.listeners.delete(listener);
+}
+
+/** The person's stop: ends the turn in flight, keeping what it wrote so far. False when nothing is running. */
+export function stopTurn(threadId: string): boolean {
+  const turn = turns().get(threadId);
+  if (!turn) return false;
+  turn.stopped = true;
+  turn.abortController.abort();
+  return true;
 }
 
 function emit(turn: Turn, event: AgentStreamEvent): void {
@@ -115,7 +133,7 @@ export function startTurn(threadId: string, text: string, run: QueryFn = query):
   const history = listMessages(threadId);
   const user = addMessage(threadId, "user", text, "done");
   const assistant = addMessage(threadId, "assistant", "", "streaming");
-  const turn: Turn = { threadId, messageId: assistant.id, events: [], listeners: new Set() };
+  const turn: Turn = { threadId, messageId: assistant.id, events: [], listeners: new Set(), abortController: new AbortController(), stopped: false };
   turns().set(threadId, turn);
   emit(turn, { type: "start", messageId: assistant.id, userMessageId: user.id });
   const done = runTurn(turn, history, text, run).finally(() => turns().delete(threadId));
@@ -131,7 +149,7 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: Q
     updateMessage(turn.messageId, { text: state.text, tools: state.tools, status: "streaming" });
   };
 
-  const abortController = new AbortController();
+  const { abortController } = turn;
   const timer = setTimeout(() => abortController.abort(), TURN_LIMIT_MS);
 
   const attempt = async (prompt: string, resume: string | undefined) => {
@@ -147,7 +165,7 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: Q
         if (events.length) save(events.some((e) => e.type === "tool"));
       }
     } catch (error) {
-      state.error ??= abortController.signal.aborted ? "La respuesta tardó demasiado y se cortó." : error instanceof Error ? error.message : String(error);
+      state.error ??= turn.stopped ? STOPPED : abortController.signal.aborted ? "La respuesta tardó demasiado y se cortó." : error instanceof Error ? error.message : String(error);
     }
   };
 
@@ -164,12 +182,14 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, run: Q
     clearTimeout(timer);
   }
 
+  // A stop keeps what was written as the answer; with nothing written it reads as stopped, not failed.
+  if (turn.stopped) state.error = state.text ? undefined : STOPPED;
   const failed = state.error !== undefined && !state.text;
   for (const tool of state.tools) if (tool.status === "running") tool.status = failed ? "error" : "done";
   updateMessage(turn.messageId, { text: state.text, tools: state.tools, status: failed ? "error" : "done", error: state.error ?? null });
   if (failed) {
-    console.error(`[agent] turn ${turn.messageId} failed: ${state.error}`);
-    emit(turn, { type: "error", message: "El Coach no pudo responder. Intenta de nuevo en un momento." });
+    if (!turn.stopped) console.error(`[agent] turn ${turn.messageId} failed: ${state.error}`);
+    emit(turn, { type: "error", message: turn.stopped ? STOPPED : "El Coach no pudo responder. Intenta de nuevo en un momento." });
   } else {
     emit(turn, { type: "done", messageId: turn.messageId });
   }

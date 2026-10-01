@@ -14,7 +14,8 @@ app/
     loading.tsx           skeleton shown while a section's server data loads
     page.tsx              Hoy  (/)
     _hoy/                 Hoy's own components
-    coach/ entreno/ dieta/ cuerpo/ sueno/ medicacion/   placeholders → replace page.tsx
+    coach/                the Coach chat (below)
+    entreno/ dieta/ cuerpo/ sueno/ medicacion/   placeholders → replace page.tsx
     ajustes/              pairing, devices, appearance
       _components/
   pair/route.ts           the no-JS pair form for unpaired browsers
@@ -22,6 +23,7 @@ app/
     admin/                Mac-only: pair codes, device list, revoke
     me/                   who is asking; DELETE forgets this browser
     hoy/                  TodayOverview as JSON
+    coach/                threads, turns (NDJSON), stop, briefs: the phone's runner, cookie-authed
 src/web/                  view assemblers: one function per page that reads the feature stores
 ```
 
@@ -44,7 +46,7 @@ src/web/                  view assemblers: one function per page that reads the 
 | `Sparkline` | Line (soft area) or bars, no axes, hover/touch readout, gaps for nulls, optional dashed `target`. Client component: pass preformatted `label`s, `unit`, `decimals` (no functions). |
 | `EmptyState` | Designed empty: tinted symbol, title, one line, one action. `compact` inside cards. Never a bare «Todavía nada». |
 | `Skeleton` | Shimmering placeholder (still for reduced motion). Size it like the content so nothing shifts. |
-| `Markdown` | Minimal, safe renderer for Coach text (paragraphs, lists, bold/italic). |
+| `Markdown` | Safe renderer for Coach text: headings, nested lists, tables, quotes, code, links (http/mailto only, open outside). Parsing is `markdown-parse.ts` (plain data, tested); `plainText` for previews. |
 | `ComingSoon` | The placeholder a section shows until it is built. |
 | `PulsoMark` | The app icon as a mark. |
 | `format.ts` | Spanish `Intl` helpers: `fmtLongDate`, `fmtShortDate`, `fmtDayLabel`, `fmtTime`, `fmtMinutes`, `fmtAgo`, `fmtNumber`, `greeting`. Format on the server so the browser's timezone never changes the render. |
@@ -60,6 +62,10 @@ src/web/                  view assemblers: one function per page that reads the 
 - **Appearance** (`_ui/appearance.ts`): theme, accent (default rose), depth, typeface and Mac-window translucency, per browser in localStorage, applied pre-paint.
 - **Mac window:** `data-telar-shell="macos"` is set inside Electron. The sidebar is an `app-ground` (vibrancy shows through when translucent); content stays opaque. Interactive things in the top 48px band need `app-no-drag`.
 - **Keyboard:** ⌘1–⌘8 sections, ⌘K command palette (add actions in `command-palette.tsx`), ⌘\ folds the sidebar.
+
+## The Coach
+
+`coach/layout.tsx` keeps the thread list mounted beside the chat (on the phone, `/coach` is the list and a chat is its own page). `/coach/nuevo` is a new chat (`?q=` sends a prompt, `?responder=<brief id>` answers a brief); `/coach/<id>` a thread. The client state lives outside React in `_components/chat-store.ts`, one live chat per thread like iOS's `ChatStore`: a reply keeps streaming while the person moves around, and a reload re-attaches to the turn in flight (`GET …/turn`). Turns run in `src/agent/runner.ts`, the same as the phone's; stop is `DELETE …/turn`.
 
 ## Security
 
