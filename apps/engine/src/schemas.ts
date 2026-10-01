@@ -4,5 +4,6 @@
  * every boot, in this order.
  */
 import { CORE_SCHEMA } from "./core-schema";
+import { NUTRITION_SCHEMA } from "./nutrition/schema";
 
-export const SCHEMAS: string[] = [CORE_SCHEMA];
+export const SCHEMAS: string[] = [CORE_SCHEMA, NUTRITION_SCHEMA];
