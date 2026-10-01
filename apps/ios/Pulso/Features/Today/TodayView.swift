@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct WorkoutsView: View {
+struct TodayView: View {
     let model: PulsoModel
 
     var body: some View {
@@ -35,7 +35,7 @@ struct WorkoutsView: View {
                 }
             }
         }
-        .navigationTitle("Pulso")
+        .navigationTitle("Hoy")
         .refreshable { await model.refresh() }
         .toolbar {
             Menu {

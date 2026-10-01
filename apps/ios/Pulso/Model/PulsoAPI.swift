@@ -62,25 +62,25 @@ struct PulsoAPI {
         return response.written
     }
 
-    private func call<Response: Decodable, Body: Encodable>(_ path: String, method: String, body: Body) async throws -> Response {
+    func call<Response: Decodable, Body: Encodable>(_ path: String, method: String, body: Body) async throws -> Response {
         var request = makeRequest(path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONEncoder().encode(body)
         return try await perform(request)
     }
 
-    private func call<Response: Decodable>(_ path: String, method: String) async throws -> Response {
+    func call<Response: Decodable>(_ path: String, method: String) async throws -> Response {
         try await perform(makeRequest(path, method: method))
     }
 
-    private func makeRequest(_ path: String, method: String) -> URLRequest {
+    func makeRequest(_ path: String, method: String) -> URLRequest {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization") }
         return request
     }
 
-    private func perform<Response: Decodable>(_ request: URLRequest) async throws -> Response {
+    func perform<Response: Decodable>(_ request: URLRequest) async throws -> Response {
         let data: Data
         let response: URLResponse
         do {

@@ -1,3 +1,5 @@
 DerivedData/
 *.xcuserstate
 xcuserdata/
+# Generated from project.yml by xcodegen (phone.sh and check.sh run it).
+Pulso.xcodeproj/

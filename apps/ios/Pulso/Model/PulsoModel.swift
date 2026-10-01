@@ -15,7 +15,7 @@ final class PulsoModel {
     var error: String?
     var lastSync: String?
 
-    private var api: PulsoAPI? { credentials.map { PulsoAPI(base: $0.baseURL, token: $0.token) } }
+    var api: PulsoAPI? { credentials.map { PulsoAPI(base: $0.baseURL, token: $0.token) } }
 
     func pair(address: String, code: String) async {
         let trimmed = address.trimmingCharacters(in: .whitespaces)
@@ -74,7 +74,7 @@ final class PulsoModel {
         }
     }
 
-    private func handle(_ error: Error) {
+    func handle(_ error: Error) {
         if let failure = error as? PulsoAPI.Failure, failure.kind == .unpaired {
             unpair()
             pairingError = failure.message

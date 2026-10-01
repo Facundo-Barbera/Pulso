@@ -11,6 +11,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 # xcode-select may point at the command-line tools; xcodebuild needs Xcode.
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
+xcodegen generate --spec "$DIR/project.yml" --project "$DIR" --quiet
+
 CONFIG=Debug
 BUNDLE=com.facundo.pulso.dev
 ACTION=build
