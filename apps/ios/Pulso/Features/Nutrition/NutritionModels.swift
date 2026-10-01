@@ -438,6 +438,23 @@ struct FoodProduct: Codable, Equatable, Identifiable {
     }
 }
 
+/// How much of a packaged product an amount said in words is, with its macros (`PortionEstimate`).
+struct PortionEstimate: Codable, Equatable {
+    var barcode: String
+    var name: String
+    /// g, or ml for a drink.
+    var quantity: Double
+    var unit: FoodUnit
+    /// Totals for `quantity`.
+    var macros: NutritionMacros
+    /// The amount as said, to log; nil for a share of a package that isn't a can or bottle.
+    var measure: Measure?
+    /// Share of the package (0–1) when its size is known.
+    var packageShare: Double?
+    /// "1 cucharada de Crema de cacahuete ≈ 16 g → 94 kcal".
+    var assumption: String
+}
+
 struct FrequentFood: Codable, Equatable, Identifiable {
     var name: String
     var quantity: Double

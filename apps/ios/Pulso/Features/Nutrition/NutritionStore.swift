@@ -227,6 +227,11 @@ final class NutritionStore {
         return try await api.lookupBarcode(code)
     }
 
+    func estimatePortion(_ barcode: String, amount: String) async throws -> PortionEstimate? {
+        guard let api else { return nil }
+        return try await api.estimatePortion(barcode: barcode, amount: amount)
+    }
+
     @discardableResult
     private func run(_ action: () async throws -> Void) async -> Bool {
         do {

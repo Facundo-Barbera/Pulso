@@ -47,6 +47,51 @@ struct BarcodeScanner: UIViewControllerRepresentable {
     }
 }
 
+/// The live scanner with a typed-code fallback; hands over each code it gets. Whoever
+/// resolves the code drives `busy` and `message`; "Escanear otro" calls `onRetry` and rearms the camera.
+struct BarcodeCapture: View {
+    var busy = false
+    var message: String?
+    var onRetry: () -> Void = {}
+    let onCode: (String) -> Void
+    @State private var typed = ""
+    @State private var scanKey = 0
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                if BarcodeScanner.isAvailable {
+                    BarcodeScanner(onCode: onCode)
+                        .id(scanKey)
+                } else {
+                    ContentUnavailableView("Cámara no disponible", systemImage: "barcode.viewfinder",
+                                           description: Text("Escribe el código de barras debajo."))
+                }
+                if busy { ProgressView().controlSize(.large).padding().background(.thinMaterial, in: .circle) }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+            .frame(maxHeight: 360)
+
+            if let message {
+                Label(message, systemImage: "exclamationmark.magnifyingglass")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button("Escanear otro") { onRetry(); scanKey += 1 }
+            }
+
+            HStack {
+                TextField("Código (EAN)", text: $typed)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                Button("Buscar") { onCode(typed.filter(\.isNumber)) }
+                    .buttonStyle(.glassProminent)
+                    .disabled(typed.filter(\.isNumber).count < 8 || busy)
+            }
+            Spacer()
+        }
+        .padding()
+    }
+}
+
 /// Scan → engine lookup (Open Food Facts) → portion picker. Typing the code works too.
 struct BarcodeScanView: View {
     let store: NutritionStore
@@ -54,8 +99,6 @@ struct BarcodeScanView: View {
     @State private var product: FoodProduct?
     @State private var looking = false
     @State private var message: String?
-    @State private var typed = ""
-    @State private var scanKey = 0
 
     var body: some View {
         NavigationStack {
@@ -63,7 +106,7 @@ struct BarcodeScanView: View {
                 if let product {
                     PortionPicker(product: product, store: store) { dismiss() }
                 } else {
-                    scanner
+                    BarcodeCapture(busy: looking, message: message, onRetry: { message = nil }) { code in Task { await lookup(code) } }
                 }
             }
             .navigationTitle(product == nil ? "Escanear" : "Porción")
@@ -72,40 +115,6 @@ struct BarcodeScanView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cerrar") { dismiss() } }
             }
         }
-    }
-
-    private var scanner: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                if BarcodeScanner.isAvailable {
-                    BarcodeScanner { code in Task { await lookup(code) } }
-                        .id(scanKey)
-                } else {
-                    ContentUnavailableView("Cámara no disponible", systemImage: "barcode.viewfinder",
-                                           description: Text("Escribe el código de barras debajo."))
-                }
-                if looking { ProgressView().controlSize(.large).padding().background(.thinMaterial, in: .circle) }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
-            .frame(maxHeight: 360)
-
-            if let message {
-                Label(message, systemImage: "exclamationmark.magnifyingglass")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                Button("Escanear otro") { self.message = nil; scanKey += 1 }
-            }
-
-            HStack {
-                TextField("Código (EAN)", text: $typed)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-                Button("Buscar") { Task { await lookup(typed) } }
-                    .buttonStyle(.glassProminent)
-                    .disabled(typed.count < 8 || looking)
-            }
-            Spacer()
-        }
-        .padding()
     }
 
     private func lookup(_ code: String) async {
@@ -135,6 +144,13 @@ struct PortionPicker: View {
     @State private var measure: Measure?
     @State private var slot: MealSlot
     @State private var saving = false
+    /// "una cucharada", "la mitad": the engine turns it into an amount.
+    @State private var said = ""
+    @State private var estimate: PortionEstimate?
+    @State private var estimating = false
+    @State private var estimateError: String?
+    /// The words last sent, so a submit right after the debounce doesn't ask twice.
+    @State private var asked: String?
 
     init(product: FoodProduct, store: NutritionStore, onDone: @escaping () -> Void) {
         self.product = product
@@ -170,6 +186,35 @@ struct PortionPicker: View {
             }
             Section {
                 HStack {
+                    TextField("«una cucharada», «la mitad», «3 galletas»", text: $said)
+                        .submitLabel(.done)
+                        .onSubmit { Task { await estimatePortion() } }
+                    if estimating {
+                        ProgressView()
+                    } else if estimate != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Theme.body)
+                            .transition(.symbolEffect(.drawOn))
+                    }
+                }
+                .animation(.snappy, value: estimating)
+                .animation(.snappy, value: estimate)
+            } header: {
+                Text("Cuánto comiste")
+            } footer: {
+                if let estimateError {
+                    Label(estimateError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                } else if let estimate {
+                    Label(estimate.assumption, systemImage: "sparkles")
+                }
+            }
+            .task(id: said) {
+                try? await Task.sleep(for: .milliseconds(900))
+                guard !Task.isCancelled else { return }
+                await estimatePortion()
+            }
+            Section {
+                HStack {
                     TextField(unit, value: $amount, format: .number.precision(.fractionLength(0...1)))
                         .keyboardType(.decimalPad)
                         .font(.title2.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
@@ -199,7 +244,9 @@ struct PortionPicker: View {
                 if let measure { Text(foodAmountText(amount, product.unit, measure: measure)) }
             }
             .onChange(of: amount) { _, new in
-                if measure?.quantity.amount != new { measure = nil }
+                // The estimate's measure stands for its own quantity even if rounding differs.
+                if measure?.quantity.amount != new && estimate?.quantity != new { measure = nil }
+                if let estimate, estimate.quantity != new { self.estimate = nil }
             }
             Section("Comida") {
                 Picker("Momento", selection: $slot) {
@@ -209,6 +256,8 @@ struct PortionPicker: View {
             Section {
                 HStack {
                     Text("\(Int(macros.kcal)) kcal").font(.headline).foregroundStyle(Theme.energy).lineLimit(1)
+                        .contentTransition(.numericText(value: macros.kcal))
+                        .animation(.snappy, value: macros.kcal)
                     Spacer(minLength: 8)
                     MacroLine(macros: macros)
                 }
@@ -228,6 +277,36 @@ struct PortionPicker: View {
             }
         }
         .sensoryFeedback(.selection, trigger: amount)
+        .sensoryFeedback(trigger: estimate) { _, new in new == nil ? nil : .success }
+    }
+
+    /// Asks the engine what the words come to and moves the amount (and its measure) there.
+    private func estimatePortion() async {
+        let words = said.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else {
+            estimate = nil
+            estimateError = nil
+            asked = nil
+            return
+        }
+        guard words != asked else { return }
+        asked = words
+        estimating = true
+        defer { estimating = false }
+        do {
+            guard let found = try await store.estimatePortion(product.barcode, amount: words),
+                  words == said.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            estimateError = nil
+            estimate = found
+            measure = found.measure
+            amount = found.quantity
+        } catch {
+            asked = nil
+            guard words == said.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            estimate = nil
+            if (error as? PulsoAPI.Failure)?.kind == .unpaired { PulsoModel.shared.handle(error) }
+            estimateError = error.localizedDescription
+        }
     }
 
     /// Half a can or bottle at a time while on one; 50 ml or 5 g otherwise.

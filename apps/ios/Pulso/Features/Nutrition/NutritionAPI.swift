@@ -11,6 +11,7 @@ extension PulsoAPI {
     private struct FrequentResponse: Decodable { var foods: [FrequentFood] }
     private struct TargetsResponse: Decodable { var targets: NutritionTargets? }
     private struct ProductResponse: Decodable { var product: FoodProduct? }
+    private struct PortionResponse: Decodable { var estimate: PortionEstimate }
     private struct Deleted: Decodable { var deleted: String }
 
     private func get<Response: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> Response {
@@ -71,6 +72,13 @@ extension PulsoAPI {
     func lookupBarcode(_ code: String) async throws -> FoodProduct? {
         let response: ProductResponse = try await get("api/mobile/nutrition/barcode/\(code)")
         return response.product
+    }
+
+    /// What an amount said in words ("una cucharada", "la mitad") comes to of a packaged product.
+    /// Refused with a Spanish message when the words can't be read; 404 when the product is unknown.
+    func estimatePortion(barcode: String, amount: String) async throws -> PortionEstimate {
+        let response: PortionResponse = try await call("api/mobile/nutrition/portion", method: "POST", body: ["barcode": barcode, "amount": amount])
+        return response.estimate
     }
 
     // MARK: Water
