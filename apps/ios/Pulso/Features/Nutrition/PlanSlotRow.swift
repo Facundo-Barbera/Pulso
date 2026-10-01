@@ -2,12 +2,13 @@ import SwiftUI
 
 /// What can be done with a planned meal. Each one is a plan change the Mac can undo.
 enum SlotAction: CaseIterable {
-    case eaten, replaced, skipped, noCook
+    case eaten, replaced, ateOut, skipped, noCook
 
     var title: String {
         switch self {
         case .eaten: "Me lo comí"
-        case .replaced: "Lo cambié por…"
+        case .replaced: "Registrar lo que comí"
+        case .ateOut: "Comí fuera"
         case .skipped: "Me lo salté"
         case .noCook: "Hoy no cocino"
         }
@@ -16,7 +17,8 @@ enum SlotAction: CaseIterable {
     var systemImage: String {
         switch self {
         case .eaten: "checkmark.circle"
-        case .replaced: "arrow.left.arrow.right"
+        case .replaced: "square.and.pencil"
+        case .ateOut: "storefront"
         case .skipped: "minus.circle"
         case .noCook: "frying.pan"
         }
@@ -32,16 +34,17 @@ extension SlotStatus {
     var tint: Color {
         switch self {
         case .planned: Theme.energy
-        case .eaten: Theme.body
-        case .replaced: Theme.carbs
+        case .eaten, .replaced: Theme.body
         case .skipped: .secondary
         }
     }
 }
 
-/// One meal of the dated plan on a timeline: the slot, what it is and where it
-/// comes from, its status. Tap to open the foods; swipe right for "Me lo comí",
-/// left for "Me lo salté", long-press for every change. Without `onAction` it only reads.
+/// One meal of the day on a timeline, as Planeado → Real: what was eaten, prominent,
+/// over what was planned, small and struck; a pending meal shows the plan, and well
+/// past its time («Sin registrar») two quick answers. Tap to open the foods; swipe
+/// right for "Me lo comí", left for "Me lo salté", long-press for every change.
+/// Without `onAction` it only reads.
 struct PlanSlotRow: View {
     let slot: PlanSlot
     /// "Porción del prep · 2 de 4", "Receta rápida · 10 min", "Comer fuera".
@@ -60,12 +63,17 @@ struct PlanSlotRow: View {
 
     private var actions: [SlotAction] { onAction == nil ? [] : SlotAction.available(for: slot) }
     private var tint: Color { slot.status.tint }
-    private var muted: Bool { slot.status == .skipped || slot.status == .replaced }
+    private var muted: Bool { slot.status == .skipped }
+    private var symbol: String {
+        if slot.isMissed { return "clock.badge.questionmark" }
+        if slot.status == .replaced { return "fork.knife.circle.fill" }
+        return slot.isPlanned ? slot.slot.systemImage : slot.status.systemImage
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 0) {
-                Image(systemName: slot.isPlanned ? slot.slot.systemImage : slot.status.systemImage)
+                Image(systemName: symbol)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(tint)
                     .frame(width: 32, height: 32)
@@ -77,6 +85,7 @@ struct PlanSlotRow: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 swipeable(header)
+                if slot.isMissed, onAction != nil { missedActions }
                 if expanded { details.transition(.opacity.combined(with: .move(edge: .top))) }
             }
             .padding(.bottom, isLast ? 0 : 14)
@@ -94,34 +103,54 @@ struct PlanSlotRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(slot.slot.title).font(.headline)
-                        if !slot.isPlanned {
-                            Text(slot.status.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(tint)
+                        if let real = slot.real {
+                            Text(real.eaten, format: .dateTime.hour().minute())
+                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        } else if slot.isMissed {
+                            Text("Sin registrar").font(.caption.weight(.semibold)).foregroundStyle(Theme.energy)
+                        } else if slot.status == .skipped {
+                            Text(slot.status.title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         }
                         if slot.adjusted != nil && slot.isPlanned {
                             Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.training)
                                 .accessibilityLabel("Ajustado por el Coach")
                         }
                     }
-                    Text(slot.status == .replaced ? "Por \(slot.replacedBy ?? "otra cosa")" : slot.what)
-                        .font(.subheadline)
+                    if let real = slot.real {
+                        Text(real.label)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(expanded ? nil : 2)
+                            .multilineTextAlignment(.leading)
+                        Group {
+                            if real.asPlanned {
+                                Label("Como estaba planeado", systemImage: "checkmark")
+                            } else {
+                                Text("Planeado: ") + Text(slot.what).strikethrough(color: .secondary)
+                            }
+                        }
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .strikethrough(slot.status == .skipped, color: .secondary)
-                        .lineLimit(expanded ? nil : 2)
-                        .multilineTextAlignment(.leading)
-                    if let source, slot.status != .replaced {
-                        Label(source, systemImage: sourceSymbol)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                        .lineLimit(1)
+                    } else {
+                        Text(slot.what)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .strikethrough(slot.status == .skipped, color: .secondary)
+                            .lineLimit(expanded ? nil : 2)
+                            .multilineTextAlignment(.leading)
+                        if let source {
+                            Label(source, systemImage: sourceSymbol)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 Spacer(minLength: 6)
-                Text("\(Int(slot.macros.kcal)) kcal")
+                Text("\(Int(slot.kcal)) kcal")
                     .font(.subheadline.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
                     .foregroundStyle(muted ? .tertiary : .primary)
-                    .contentTransition(.numericText(value: slot.macros.kcal))
+                    .contentTransition(.numericText(value: slot.kcal))
                     .lineLimit(1)
                     .layoutPriority(1)
             }
@@ -129,11 +158,23 @@ struct PlanSlotRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(slot.status.title)
+        .accessibilityValue(slot.isMissed ? "Sin registrar" : slot.status.title)
         .accessibilityHint(expanded ? "Pliega" : "Muestra qué lleva")
         .accessibilityActions {
             ForEach(actions, id: \.self) { action in Button(action.title) { onAction?(action) } }
         }
+    }
+
+    /// The two answers to «Sin registrar»: skipped it, or say what was eaten.
+    private var missedActions: some View {
+        HStack(spacing: 8) {
+            Button(SlotAction.skipped.title, systemImage: SlotAction.skipped.systemImage) { onAction?(.skipped) }
+            Button(SlotAction.replaced.title, systemImage: SlotAction.replaced.systemImage) { onAction?(.replaced) }
+        }
+        .buttonStyle(.glass)
+        .controlSize(.small)
+        .lineLimit(1)
+        .font(.footnote.weight(.medium))
     }
 
     private var sourceSymbol: String {
@@ -152,7 +193,11 @@ struct PlanSlotRow: View {
         if let note = slot.note {
             Label(note, systemImage: "sparkles").font(.caption).italic().foregroundStyle(.secondary)
         }
-        if entries.isEmpty {
+        if let real = slot.real, !real.asPlanned {
+            Text("Planeado")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        }
+        if entries.isEmpty || slot.real?.asPlanned == false {
             VStack(spacing: 6) {
                 ForEach(slot.current) { item in
                     HStack(alignment: .firstTextBaseline) {
@@ -164,7 +209,12 @@ struct PlanSlotRow: View {
                     }
                 }
             }
-        } else {
+            .opacity(slot.real == nil ? 1 : 0.6)
+        }
+        if !entries.isEmpty {
+            if slot.real?.asPlanned == false {
+                Text("Comiste").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
             ForEach(entries) { meal in
                 if let onDeleteEntry {
                     SwipeToDelete { onDeleteEntry(meal) } content: { MealRow(meal: meal) }
@@ -214,13 +264,12 @@ struct PlanSlotRow: View {
         } else {
             ZStack {
                 HStack {
-                    swipeHint(.eaten, Theme.body).opacity(drag > 12 ? 1 : 0)
+                    swipeHint(.eaten, Theme.body).opacity(drag > 40 ? 1 : 0)
                     Spacer()
-                    swipeHint(.skipped, .secondary).opacity(drag < -12 ? 1 : 0)
+                    swipeHint(.skipped, .secondary).opacity(drag < -40 ? 1 : 0)
                 }
+                // No fill of its own: the hints only show once the row has moved past them.
                 content
-                    // The card's own fill, so the row covers the hints in light mode too.
-                    .background(.background.secondary)
                     .offset(x: drag)
                     .gesture(
                         DragGesture(minimumDistance: 20)
@@ -257,10 +306,12 @@ let previewSlots = [
         DietPlanItem(id: "i1", name: "Avena", quantity: 60, unit: .g, kcal: 230, protein: 8, carbs: 40, fat: 4, fiber: 6),
         DietPlanItem(id: "i2", name: "Plátano", quantity: 1, unit: .serving, kcal: 105, protein: 1, carbs: 27, fat: 0, fiber: 3),
     ], macros: NutritionMacros(kcal: 335, protein: 9, carbs: 67, fat: 4, fiber: 9), status: .replaced, entryIds: ["e1"],
-             replacedBy: "Vualá de jamón y queso"),
+             replacedBy: "Vualá Big",
+             real: RealMeal(label: "Vualá Big", entryIds: ["e1"], macros: NutritionMacros(kcal: 369, protein: 6, carbs: 48, fat: 17, fiber: 1),
+                            eatenAt: 1_790_874_660_000, asPlanned: false)),
     PlanSlot(id: "s2", date: "2026-10-01", slot: .comida, kind: .prep, name: "Pollo con arroz", prepId: "b1", portions: 1, items: [
         DietPlanItem(id: "i3", name: "Pollo con arroz", quantity: 1, unit: .serving, kcal: 620, protein: 48, carbs: 70, fat: 14, fiber: 4),
-    ], macros: NutritionMacros(kcal: 620, protein: 48, carbs: 70, fat: 14, fiber: 4), status: .planned, entryIds: [], cookMinutes: 0),
+    ], macros: NutritionMacros(kcal: 620, protein: 48, carbs: 70, fat: 14, fiber: 4), status: .planned, entryIds: [], cookMinutes: 0, missed: true),
     PlanSlot(id: "s3", date: "2026-10-01", slot: .merienda, kind: .items, name: nil, items: [
         DietPlanItem(id: "i4", name: "Yogur griego", quantity: 170, unit: .g, kcal: 160, protein: 15, carbs: 6, fat: 8, fiber: 0),
     ], macros: NutritionMacros(kcal: 160, protein: 15, carbs: 6, fat: 8, fiber: 0), status: .skipped, entryIds: []),

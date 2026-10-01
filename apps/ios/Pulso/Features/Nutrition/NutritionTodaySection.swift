@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Dieta · Hoy: the macro hero, water in one row, then today's planned meals
-/// as calm rows with their status (eaten, swapped, skipped) and quick changes,
-/// and whatever was eaten besides the plan as a timeline.
+/// Dieta · Hoy: the macro hero, water in one row, then one «Hoy» timeline: each
+/// planned meal as Planeado → Real with quick changes, and the day's extras under
+/// it. Without a plan, what was eaten is the timeline.
 struct NutritionTodaySection: View {
     let day: NutritionDay
     let store: NutritionStore
@@ -16,7 +16,7 @@ struct NutritionTodaySection: View {
     var onAction: (SlotAction, PlanSlot) -> Void = { _, _ in }
 
     private var planDay: DietDay? { store.planDay.flatMap { $0.slots.isEmpty ? nil : $0 } }
-    /// Entries not tied to one of today's slots: snacks, extras, anything logged off the plan.
+    /// Entries not tied to one of today's slots: snacks and drinks between meals.
     private var extras: [MealEntry] {
         guard let planDay else { return day.meals }
         let ids = Set(planDay.slots.map(\.id))
@@ -43,15 +43,14 @@ struct NutritionTodaySection: View {
             )
         }
         if let planDay {
-            TodayPlanCard(day: planDay, horizon: store.horizon, meals: day.meals, showPlan: showPlan, onAction: onAction) { meal in
+            TodayPlanCard(day: planDay, horizon: store.horizon, meals: day.meals, extras: extras, showPlan: showPlan, onAction: onAction) { meal in
                 Task { await store.delete(meal) }
             }
-        }
-        if !extras.isEmpty {
-            MealTimeline(meals: extras, title: planDay == nil ? "Comidas" : "Además del plan") { meal in
+        } else if !extras.isEmpty {
+            MealTimeline(meals: extras) { meal in
                 Task { await store.delete(meal) }
             }
-        } else if planDay == nil {
+        } else {
             emptyDay
         }
     }
@@ -78,11 +77,12 @@ struct NutritionTodaySection: View {
     }
 }
 
-/// Today's planned meals, one calm row each, with what was logged against them.
+/// The day in one card: each planned meal as Planeado → Real, then the extras.
 private struct TodayPlanCard: View {
     let day: DietDay
     let horizon: DietHorizon?
     let meals: [MealEntry]
+    var extras: [MealEntry] = []
     let showPlan: () -> Void
     let onAction: (SlotAction, PlanSlot) -> Void
     let onDelete: (MealEntry) -> Void
@@ -91,11 +91,12 @@ private struct TodayPlanCard: View {
         Card {
             Button(action: showPlan) {
                 HStack {
-                    CardTitle(text: "Tu plan de hoy", systemImage: "list.bullet.clipboard")
+                    CardTitle(text: "Hoy", systemImage: "list.bullet.clipboard")
                     Spacer(minLength: 4)
-                    Text(day.pending == 0 ? "Resuelto" : "\(day.pending) \(day.pending == 1 ? "pendiente" : "pendientes")")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(day.pending == 0 ? Theme.body : .secondary)
+                    totals
+                        .font(.caption.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                         .contentTransition(.numericText())
                     Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
                 }
@@ -110,6 +111,24 @@ private struct TodayPlanCard: View {
                                 onAction: { onAction($0, slot) }, onDeleteEntry: onDelete)
                 }
             }
+            if !extras.isEmpty {
+                Divider().padding(.vertical, 2)
+                Text("EXTRAS").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    ForEach(extras.sorted { $0.eatenAt < $1.eatenAt }) { meal in
+                        SwipeToDelete { onDelete(meal) } content: { MealRow(meal: meal) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "1.334 real · 1.878 planeado"; the pending count from an older Mac without totals.
+    @ViewBuilder private var totals: some View {
+        if let real = day.real, let planned = day.asPlanned {
+            Text("\(Int(real.kcal)) real · \(Int(planned.kcal)) planeado")
+        } else {
+            Text(day.pending == 0 ? "Resuelto" : "\(day.pending) \(day.pending == 1 ? "pendiente" : "pendientes")")
         }
     }
 }
@@ -239,11 +258,10 @@ private struct SlotRow: View {
 
     private var slot: MealSlot { group.slot }
     private var meals: [MealEntry] { group.meals }
-    private var offPlan: Bool { meals.contains { $0.offPlan == true } }
     private var time: Date { Date(timeIntervalSince1970: (meals.map(\.eatenAt).min() ?? 0) / 1000) }
     private var note: String? { meals.compactMap(\.note).first }
     private var kcal: Double { meals.reduce(0) { $0 + $1.kcal } }
-    private var tint: Color { offPlan ? Theme.carbs : Theme.energy }
+    private var tint: Color { Theme.energy }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -278,17 +296,11 @@ private struct SlotRow: View {
         .sensoryFeedback(.selection, trigger: expanded)
     }
 
-    /// Title, a dot when off the plan, the time; what it was on the second line only when it fits whole.
+    /// Title and time; what it was on the second line only when it fits whole.
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(group.title).font(.headline)
-                    if offPlan {
-                        Circle().fill(Theme.carbs).frame(width: 7, height: 7)
-                            .accessibilityLabel("Fuera del plan")
-                    }
-                }
+                Text(group.title).font(.headline)
                 let clock = Text(time, format: .dateTime.hour().minute())
                 Group {
                     if expanded {
@@ -393,8 +405,9 @@ struct SwipeToDelete<Content: View>: View {
             .tint(.red)
             .opacity(offset < -8 ? 1 : 0)
 
+            // Only covers the delete button while swiped: at rest the card shows through.
             content
-                .background(Color(.secondarySystemGroupedBackground))
+                .background(.background.secondary.opacity(offset == 0 ? 0 : 1))
                 .offset(x: offset)
                 .gesture(
                     DragGesture(minimumDistance: 20)
@@ -421,10 +434,10 @@ private let previewMeals = [
               quantity: 1, unit: .serving, kcal: 385, protein: 17, carbs: 58, fat: 9, fiber: 7, source: "plan"),
     MealEntry(id: "2", date: "2026-10-01", eatenAt: 1_790_848_800_000, slot: .comida, name: "Big Mac (McDonald's)",
               quantity: 1, unit: .serving, kcal: 590, protein: 25, carbs: 45, fat: 34, fiber: 3, source: "agent",
-              offPlan: true, note: "Big Mac y papas medianas"),
+              note: "Big Mac y papas medianas"),
     MealEntry(id: "3", date: "2026-10-01", eatenAt: 1_790_848_800_000, slot: .comida, name: "Papas fritas medianas (McDonald's)",
               quantity: 111, unit: .g, kcal: 320, protein: 4, carbs: 43, fat: 15, fiber: 4, source: "agent",
-              offPlan: true, note: "Big Mac y papas medianas"),
+              note: "Big Mac y papas medianas"),
     MealEntry(id: "4", date: "2026-10-01", eatenAt: 1_790_859_600_000, slot: .snack, name: "Café con leche",
               quantity: 240, unit: .ml, kcal: 90, protein: 5, carbs: 7, fat: 4, fiber: 0, source: "manual",
               measure: Measure(amount: 1, unit: .taza), caffeineMg: 80),
@@ -451,8 +464,8 @@ private let previewWater = WaterDay(date: "2026-10-01", totalMl: 250, goalMl: 37
 #Preview("Hoy · plan · 375 pt · XXL") {
     NarrowPreview(dynamicType: .xxLarge) {
         Card { MacroHero(summary: previewNutritionSummary) {} }
-        TodayPlanCard(day: previewHorizon.days[0], horizon: previewHorizon, meals: [], showPlan: {}, onAction: { _, _ in }) { _ in }
-        MealTimeline(meals: Array(previewMeals.suffix(2)), title: "Además del plan") { _ in }
+        TodayPlanCard(day: previewHorizon.days[0], horizon: previewHorizon, meals: [], extras: Array(previewMeals.suffix(2)), showPlan: {},
+                      onAction: { _, _ in }) { _ in }
     }
 }
 

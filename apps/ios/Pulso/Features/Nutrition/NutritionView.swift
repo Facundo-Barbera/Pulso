@@ -182,6 +182,8 @@ struct NutritionView: View {
         case .replaced:
             store.beginReplacing(slot)
             sheet = .register
+        case .ateOut:
+            Task { if let change = await store.apply(.ateOut(slot)) { showChange(change) } }
         case .skipped:
             Task { if let change = await store.apply(.skip(slot)) { showChange(change) } }
         case .noCook:

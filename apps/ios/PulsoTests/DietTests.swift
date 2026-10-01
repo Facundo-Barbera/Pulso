@@ -51,10 +51,40 @@ final class DietTests: XCTestCase {
         let slots = try XCTUnwrap(try horizon().day("2026-10-01")).slots
         XCTAssertEqual(SlotAction.available(for: slots[0]), [])
         // A batch portion is already cooked: no "Hoy no cocino".
-        XCTAssertEqual(SlotAction.available(for: slots[2]), [.eaten, .replaced, .skipped])
+        XCTAssertEqual(SlotAction.available(for: slots[2]), [.eaten, .replaced, .ateOut, .skipped])
         var dinner = slots[3]
         dinner.status = .planned
-        XCTAssertEqual(SlotAction.available(for: dinner), [.eaten, .replaced, .skipped, .noCook])
+        XCTAssertEqual(SlotAction.available(for: dinner), [.eaten, .replaced, .ateOut, .skipped, .noCook])
+    }
+
+    func testDecodesPlannedVersusRealAndMissedMeals() throws {
+        let json = #"""
+        {"id":"c1","planId":"p","date":"2026-10-01","slot":"comida","kind":"items","name":"Pasta boloñesa","recipeId":null,"prepId":null,"portions":null,
+         "items":[{"id":"i","name":"Pasta boloñesa","quantity":1,"unit":"serving","kcal":617,"protein":37,"carbs":70,"fat":18,"fiber":5}],"adjusted":null,
+         "macros":{"kcal":617,"protein":37,"carbs":70,"fat":18,"fiber":5},"status":"replaced","entryIds":["t","q","a"],"replacedBy":"Tortitas de carne de res, Queso amarillo, Arroz blanco",
+         "real":{"label":"Tortitas de carne de res, queso amarillo y arroz blanco","entryIds":["t","q","a"],"macros":{"kcal":965,"protein":30,"carbs":90,"fat":30,"fiber":3},"eatenAt":1790887260000,"asPlanned":false},
+         "missed":false,"cookMinutes":null,"note":null}
+        """#
+        let slot = try JSONDecoder().decode(PlanSlot.self, from: Data(json.utf8))
+        XCTAssertEqual(slot.real?.label, "Tortitas de carne de res, queso amarillo y arroz blanco")
+        XCTAssertEqual(slot.kcal, 965)
+        XCTAssertFalse(slot.isMissed)
+        var pending = slot
+        pending.status = .planned
+        pending.real = nil
+        pending.missed = true
+        XCTAssertTrue(pending.isMissed)
+        XCTAssertEqual(pending.kcal, 617)
+        // An older Mac sends neither: nothing missed, the plan's kcal.
+        let old = try XCTUnwrap(try horizon().day("2026-10-01")).slots[2]
+        XCTAssertNil(old.real)
+        XCTAssertFalse(old.isMissed)
+    }
+
+    func testAteOutEncodesTheSlot() throws {
+        let slot = try XCTUnwrap(try horizon().day("2026-10-01")).slots[3]
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(PlanOp.ateOut(slot))) as? [String: String])
+        XCTAssertEqual(body, ["op": "ate_out", "date": "2026-10-01", "slotId": "e5e8"])
     }
 
     func testPlanOpsEncodeOnlyTheirFields() throws {

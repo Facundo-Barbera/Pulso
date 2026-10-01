@@ -23,8 +23,8 @@ enum SlotStatus: String, Codable {
     var title: String {
         switch self {
         case .planned: "Pendiente"
-        case .eaten: "Listo"
-        case .replaced: "Cambiado"
+        case .eaten: "Según el plan"
+        case .replaced: "Otra cosa"
         case .skipped: "Saltado"
         }
     }
@@ -57,10 +57,17 @@ struct PlanSlot: Codable, Identifiable, Equatable {
     var replacedBy: String?
     var cookMinutes: Double?
     var note: String?
+    /// What was actually eaten for this meal (the entries tied to it): Planeado → Real.
+    var real: RealMeal? = nil
+    /// Pending well after its time with nothing logged: «Sin registrar», a soft state, not a skip.
+    var missed: Bool? = nil
 
     /// What to eat now: the Coach's adjusted portions when there are some.
     var current: [DietPlanItem] { adjusted ?? items }
     var isPlanned: Bool { status == .planned }
+    var isMissed: Bool { isPlanned && missed == true }
+    /// What it counts now: what was eaten when anything was, else the plan.
+    var kcal: Double { real?.macros.kcal ?? macros.kcal }
     /// Dish name, else the foods.
     var what: String { name ?? items.map(\.name).joined(separator: ", ") }
     /// A meal cooked on the day that takes a while: where "Hoy no cocino" makes sense.
@@ -73,6 +80,18 @@ struct PlanSlot: Codable, Identifiable, Equatable {
     }
 }
 
+/// The entries tied to a meal, as one meal: "Tortitas de carne de res, queso amarillo y arroz blanco".
+struct RealMeal: Codable, Equatable {
+    var label: String
+    var entryIds: [String]
+    var macros: NutritionMacros
+    var eatenAt: Double
+    /// Exactly what the plan had.
+    var asPlanned: Bool
+
+    var eaten: Date { Date(timeIntervalSince1970: eatenAt / 1000) }
+}
+
 struct DietDay: Codable, Identifiable, Equatable {
     var date: String
     /// The rotation's label ("Día C"): secondary to the date.
@@ -82,6 +101,11 @@ struct DietDay: Codable, Identifiable, Equatable {
     var shiftKcal: Double
     var goalKcal: Double
     var adjustment: DayAdjustment?
+    /// Everything the plan had that day, and everything logged (meals and extras). Nil from an older Mac.
+    var asPlanned: NutritionMacros? = nil
+    var real: NutritionMacros? = nil
+    /// Entries that are no meal of the plan: the day's extras.
+    var extraIds: [String]? = nil
     var id: String { date }
 
     var day: Date? { NutritionDate.date(date) }
@@ -220,6 +244,8 @@ struct PlanOp: Encodable, Equatable {
     var cooked: Bool?
 
     static func skip(_ slot: PlanSlot) -> PlanOp { PlanOp(op: "skip", date: slot.date, slotId: slot.id) }
+    /// «Comí fuera»: the Mac logs an estimate (the planned meal × 1.3) as its real meal; undo deletes it.
+    static func ateOut(_ slot: PlanSlot) -> PlanOp { PlanOp(op: "ate_out", date: slot.date, slotId: slot.id) }
     static func replace(_ slot: PlanSlot, entryIds: [String]) -> PlanOp {
         PlanOp(op: "replace", date: slot.date, slotId: slot.id, entryIds: entryIds)
     }

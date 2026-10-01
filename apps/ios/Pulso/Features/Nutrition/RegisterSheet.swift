@@ -8,7 +8,7 @@ struct RegisterSheet: View {
     let foods: [FrequentFood]
     /// The next planned meal of today, for "Comí lo del plan".
     let nextMeal: DietPlanForDay.Meal?
-    /// "Lo cambié por…": the planned meal what is logged here replaces.
+    /// "Registrar lo que comí": the planned meal what is logged here is the real meal of.
     var replacing: PlanSlot? = nil
     let onLog: (MealInput) async -> Bool
     let onEatPlan: (DietPlanForDay.Meal) async -> Bool
@@ -57,15 +57,15 @@ struct RegisterSheet: View {
                     Section {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("En lugar de \(replacing.slot.title.lowercased())")
+                                Text("Tu \(replacing.slot.title.lowercased()) de verdad")
                                     .font(.subheadline.weight(.semibold))
-                                Text(replacing.what).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                Text("Planeado: \(replacing.what)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
                             }
                         } icon: {
-                            Image(systemName: "arrow.left.arrow.right").foregroundStyle(Theme.carbs)
+                            Image(systemName: "fork.knife").foregroundStyle(Theme.body)
                         }
                     } footer: {
-                        Text("Registra lo que comiste; al cerrar, queda en lugar de lo planeado.")
+                        Text("Registra lo que comiste; al cerrar, es lo que comiste en esa comida.")
                     }
                 } else if trimmed.isEmpty, let nextMeal, !planEaten {
                     planSection(nextMeal)
