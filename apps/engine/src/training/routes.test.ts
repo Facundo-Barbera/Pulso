@@ -79,6 +79,20 @@ test("settings, alternatives and day edits over HTTP", async () => {
   await settingsPUT(req({ method: "PUT", body: JSON.stringify({ preferredEquipment: [] }) }));
 });
 
+test("day edits over HTTP carry superset ids, normalized", async () => {
+  const program = createProgram({
+    name: "HTTP superseries",
+    goal: "x",
+    weeks: 4,
+    days: [{ name: "A", exercises: [{ exerciseId: "curl-maquina", sets: 3, repMin: 10, repMax: 12, restSeconds: 60 }, { exerciseId: "press-pecho-maquina", sets: 3, repMin: 10, repMax: 12, restSeconds: 60 }] }],
+  });
+  const [curl, press] = program.days[0]!.exercises;
+  const put = (scope: string, exercises: unknown[]) => dayPUT(req({ method: "PUT", body: JSON.stringify({ scope, exercises }) }), day(program.days[0]!.id));
+  const paired = (await (await put("always", [{ ...curl, supersetId: "a" }, { ...press, supersetId: "a" }, { exerciseId: "eliptica", supersetId: "a" }])).json()) as ActiveProgramResponse;
+  expect(paired.program!.days[0]!.exercises.map((e) => e.supersetId)).toEqual(["a", "a", null]);
+  expect((await put("today", [{ ...curl, supersetId: "x".repeat(33) }])).status).toBe(400);
+});
+
 test("the live session syncs both ways and binds a Coach thread", async () => {
   liveDELETE(req({ method: "DELETE" }));
   expect(await liveGET(req()).json()).toEqual({ session: null });

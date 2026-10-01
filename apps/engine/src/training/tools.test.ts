@@ -146,6 +146,35 @@ test("prefiero máquinas → preferences → machine alternatives first → swap
   await call("set_training_preferences", { preferredEquipment: [] });
 });
 
+test("create_program takes supersets and swap_program_exercise keeps the swapped-in exercise in the pair", async () => {
+  const created = await call("create_program", {
+    name: "Torso superseries",
+    goal: "Hipertrofia",
+    weeks: 4,
+    activate: true,
+    days: [
+      {
+        name: "Torso",
+        exercises: [
+          { exerciseId: "press-banca", sets: 3, repMin: 6, repMax: 8, restSeconds: 120, supersetId: "a" },
+          { exerciseId: "remo-barra", sets: 3, repMin: 8, repMax: 10, restSeconds: 120, supersetId: "a" },
+          { exerciseId: "elevaciones-laterales", sets: 3, repMin: 12, repMax: 15, restSeconds: 60 },
+        ],
+      },
+    ],
+  });
+  expect(created.data.days[0].exercises.map((e: { supersetId: string | null }) => e.supersetId)).toEqual(["a", "a", null]);
+  for (const scope of ["today", "always"]) {
+    expect((await call("swap_program_exercise", { from: "press-banca", to: "press-pecho-maquina", scope })).isError).toBe(false);
+  }
+  const program = (await call("get_active_program", {})).data.program;
+  expect(program.days[0].exercises.map((e: { exerciseId: string; supersetId: string | null }) => [e.exerciseId, e.supersetId])).toEqual([
+    ["press-pecho-maquina", "a"],
+    ["remo-barra", "a"],
+    ["elevaciones-laterales", null],
+  ]);
+});
+
 test("the Coach sees and changes the session in progress", async () => {
   expect((await call("get_live_session", {})).data).toEqual({ session: null });
   expect((await call("edit_live_session", { ops: [{ op: "skip", exercise: 1 }] })).isError).toBe(true);
