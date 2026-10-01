@@ -2,15 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Shared with PulsoWidgets: the widget snapshot and the mirrored pairing. -->
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+	<!-- Same as the app's Info.plist: the snapshot, the mirrored pairing, and
+	     plain HTTP to the Mac over the tailnet. -->
 	<key>PulsoAppGroup</key>
 	<string>group.$(PULSO_APP_BUNDLE_ID)</string>
 	<key>PulsoKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(PULSO_APP_BUNDLE_ID).shared</string>
-	<!-- The phone reaches the Mac over the tailnet in plain HTTP: WireGuard
-	     already encrypts the path. A 100.x address cannot be listed under
-	     NSExceptionDomains, so the blanket exception is the only shape that
-	     works. Same as Delta and Telar. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

@@ -31,6 +31,7 @@ targets:
     platform: iOS
     sources:
       - path: Pulso
+      - path: Shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(PULSO_APP_BUNDLE_ID)
@@ -54,6 +55,7 @@ targets:
           INFOPLIST_KEY_CFBundleDisplayName: Pulso Dev
     dependencies:
       - target: PulsoActivity
+      - target: PulsoWidgets
   # Live Activity (lock screen + Dynamic Island) for a strength session. It
   # shares TrainingActivityAttributes with the app; embedded by the dependency above.
   PulsoActivity:
@@ -69,6 +71,27 @@ targets:
         INFOPLIST_FILE: Config/PulsoActivity.plist
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Pulso
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+  # Home Screen / Lock Screen widgets and the Control Center control. They read
+  # the snapshot the app writes to the App Group (Shared/WidgetSnapshot.swift)
+  # and reach the engine with the pairing the app mirrors to a shared Keychain group.
+  PulsoWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: PulsoWidgets
+      - path: Shared
+      - path: Pulso/Design/Theme.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PULSO_APP_BUNDLE_ID).widgets
+        INFOPLIST_FILE: Config/PulsoWidgets.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Pulso
+        CODE_SIGN_ENTITLEMENTS: Config/PulsoWidgets.entitlements
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
   PulsoTests:
