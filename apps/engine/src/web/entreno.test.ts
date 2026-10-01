@@ -1,16 +1,9 @@
 import { expect, test } from "bun:test";
 import { createProgram, saveSession } from "../training/store";
 import { upsertHealthKitWorkouts } from "../workouts";
-import { dayKcal, dayMinutes, entrenoOverview, exerciseView, isDeload, prescription, programWeek, recentRecords, sessionRecords, target, trainingHistory } from "./entreno";
+import { dayKcal, dayMinutes, entrenoOverview, exerciseView, isDeload, prescription, recentRecords, sessionRecords, target, trainingHistory } from "./entreno";
 
 const DAY = 86_400_000;
-
-test("the program week counts calendar days from creation and stays within the program", () => {
-  const now = new Date(2026, 9, 1, 9);
-  expect(programWeek({ createdAt: new Date(2026, 9, 1, 23).getTime(), weeks: 6 }, now)).toBe(1);
-  expect(programWeek({ createdAt: new Date(2026, 8, 24, 23).getTime(), weeks: 6 }, now)).toBe(2);
-  expect(programWeek({ createdAt: new Date(2026, 5, 1).getTime(), weeks: 6 }, now)).toBe(6);
-});
 
 test("a deload is read from the program's notes like the phone does", () => {
   expect(isDeload(4, 8, "Descarga cada 4 semanas.")).toBe(true);

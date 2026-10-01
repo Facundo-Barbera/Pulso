@@ -23,6 +23,7 @@ import type {
   SessionInput,
   SessionSaved,
   SetLog,
+  TrainingBlock,
   TrainingSession,
   TrainingSettings,
   WeightUnit,
@@ -38,6 +39,7 @@ import { mediaFor, mediaSourceOf } from "./media";
 import { supersetIds } from "./superset";
 import { TECHNIQUE } from "./technique";
 import { VIDEOS } from "./videos";
+import { programWeeks } from "./weeks";
 
 /** A caller error: the message says what to fix. */
 export class TrainingError extends Error {}
@@ -158,15 +160,19 @@ function insertProgramExercise(database: Database, id: string, dayId: string, po
   );
 }
 
-/** Writes a whole program. With `activate`, it becomes the only active one. */
-export function createProgram(input: ProgramInput, activate = true, now = Date.now()): Program {
+/**
+ * Writes a whole program. With `activate` it becomes the active block: the
+ * one before ends (`ended_at`, `input.reason`) and keeps everything it did.
+ * Nothing is deleted; history and suggestions are per exercise, so they carry on.
+ */
+export function createProgram(input: ProgramInput, activate = true, now = Date.now(), resumedFrom: string | null = null): Program {
   validateProgram(input);
   const library = libraryMap();
   const database = db();
   const id = randomUUID();
   database.transaction(() => {
-    if (activate) database.run("UPDATE programs SET active = 0 WHERE active = 1");
-    database.run("INSERT INTO programs (id, name, goal, weeks, notes, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+    if (activate) database.run("UPDATE programs SET active = 0, ended_at = ?, end_reason = ? WHERE active = 1", [now, input.reason?.trim() || null]);
+    database.run("INSERT INTO programs (id, name, goal, weeks, notes, active, created_at, resumed_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
       id,
       input.name.trim(),
       input.goal,
@@ -174,6 +180,7 @@ export function createProgram(input: ProgramInput, activate = true, now = Date.n
       input.notes ?? null,
       activate ? 1 : 0,
       now,
+      resumedFrom,
     ]);
     input.days.forEach((day, d) => {
       const dayId = randomUUID();
@@ -357,18 +364,92 @@ function withOverrides(program: Program, now: number): Program {
 const isoWeekday = (at: number) => ((new Date(at).getDay() + 6) % 7) + 1;
 
 /**
- * The day to train next: one pinned to today's weekday, else the day after
- * the last one done from this program, else the first.
+ * The day to train next: the first not done this week, which is one pinned
+ * to today's weekday, else the one after the last day done this week (skipping
+ * days done), else the week's first. With the week complete it is the day
+ * after the last one done, as next week would start; past the program's last
+ * week, the day after the last one done at all.
  */
 export function nextDay(program: Program, now = Date.now()): ProgramDay | undefined {
-  const pinned = program.days.find((d) => d.weekday === isoWeekday(now));
+  if (program.days.length === 0) return undefined;
+  const block = programWeeks(program, now);
+  const week = block.finished ? undefined : block.weeks[block.currentWeek - 1];
+  const done = new Set(week?.days.filter((d) => d.sessions.length > 0).map((d) => d.dayId) ?? []);
+  const open = program.days.filter((d) => !done.has(d.id));
+  const pinned = open.find((d) => d.weekday === isoWeekday(now));
   if (pinned) return pinned;
-  const last = db()
-    .query<{ day_id: string }, [string]>("SELECT day_id FROM training_sessions WHERE program_id = ? AND day_id IS NOT NULL ORDER BY started_at DESC LIMIT 1")
-    .get(program.id);
-  const index = program.days.findIndex((d) => d.id === last?.day_id);
-  return program.days[index === -1 ? 0 : (index + 1) % program.days.length];
+  const last = week
+    ? week.days.flatMap((d) => d.sessions).sort((a, b) => b.startedAt - a.startedAt)[0]?.dayId
+    : db().query<{ day_id: string }, [string]>("SELECT t.day_id FROM training_sessions t JOIN program_days d ON d.id = t.day_id WHERE d.program_id = ? ORDER BY t.started_at DESC LIMIT 1").get(program.id)?.day_id;
+  const index = program.days.findIndex((d) => d.id === last);
+  if (index === -1) return open[0] ?? program.days[0];
+  for (let k = 1; k <= program.days.length; k++) {
+    const day = program.days[(index + k) % program.days.length]!;
+    if (!done.has(day.id)) return day;
+  }
+  return program.days[(index + 1) % program.days.length];
 }
+
+// ── Blocks ───────────────────────────────────────────────────────────────────
+
+/** Every block (a program that was active at some point), oldest first, each week by week. */
+export function trainingBlocks(now = Date.now()): TrainingBlock[] {
+  return db()
+    .query<{ id: string }, []>("SELECT id FROM programs WHERE active = 1 OR ended_at IS NOT NULL ORDER BY created_at")
+    .all()
+    .map((r) => programWeeks(getProgram(r.id)!, now));
+}
+
+/** Begins the active block's next week now, once every day of this one is done. */
+export function startNextWeek(now = Date.now()): ActiveProgramResponse {
+  const program = getActiveProgram();
+  if (!program) throw new TrainingError("There is no active program.");
+  const block = programWeeks(program, now);
+  if (!block.canStartNextWeek) {
+    throw new TrainingError(block.weekComplete ? "This is the program's last week." : `Week ${block.currentWeek} still has days to do.`);
+  }
+  db().run("INSERT INTO program_week_starts (program_id, week, starts_at) VALUES (?, ?, ?) ON CONFLICT (program_id, week) DO UPDATE SET starts_at = excluded.starts_at", [
+    program.id,
+    block.currentWeek + 1,
+    now,
+  ]);
+  return activeProgramView(now);
+}
+
+/** "Retomar": a new active block with an earlier block's days, from week 1. The block it replaces ends. */
+export function resumeBlock(programId: string, now = Date.now()): ActiveProgramResponse {
+  const old = getProgram(programId);
+  if (!old) throw new TrainingError(`Unknown program id: ${programId}.`);
+  if (old.active) throw new TrainingError("That block is the active one already.");
+  createProgram(
+    {
+      name: old.name,
+      goal: old.goal,
+      weeks: old.weeks,
+      notes: old.notes,
+      reason: `Retomas ${old.name}`,
+      days: old.days.map((d) => ({ name: d.name, focus: d.focus, weekday: d.weekday, exercises: d.exercises.map((ex) => programExerciseInput(ex)) })),
+    },
+    true,
+    now,
+    old.id,
+  );
+  return activeProgramView(now);
+}
+
+const programExerciseInput = (ex: ProgramExercise): ProgramExerciseInput => ({
+  exerciseId: ex.exerciseId,
+  sets: ex.sets,
+  repMin: ex.repMin,
+  repMax: ex.repMax,
+  targetRpe: ex.targetRpe,
+  targetRir: ex.targetRir,
+  restSeconds: ex.restSeconds,
+  notes: ex.notes,
+  cardio: ex.cardio,
+  weightKg: ex.weightKg ?? null,
+  supersetId: ex.supersetId,
+});
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
@@ -562,11 +643,13 @@ export function activeProgramToday(now = Date.now()): Program | undefined {
 /** What the phone's Entreno tab opens with. */
 export function activeProgramView(now = Date.now()): ActiveProgramResponse {
   const program = activeProgramToday(now);
-  const extras = { hrZones: hrZones(now), settings: trainingSettings() };
+  const blocks = trainingBlocks(now);
+  const extras = { hrZones: hrZones(now), settings: trainingSettings(), blocks };
   if (!program) return { program: null, nextDayId: null, suggestions: {}, ...extras };
+  const complete = blocks.find((b) => b.programId === program.id)?.weekComplete ?? false;
   return {
     program,
-    nextDayId: nextDay(program, now)?.id ?? null,
+    nextDayId: complete ? null : (nextDay(program, now)?.id ?? null),
     suggestions: Object.assign({}, ...program.days.map(suggestDay)),
     ...extras,
   };

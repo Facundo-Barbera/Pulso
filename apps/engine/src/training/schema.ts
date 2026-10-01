@@ -123,6 +123,34 @@ export const TRAINING_SCHEMA = `
     thread_id TEXT,
     updated_at INTEGER NOT NULL
   );
+  -- A week of a block begun before its calendar Monday ("empezar la semana ya"). Missing = it starts on its Monday.
+  CREATE TABLE IF NOT EXISTS program_week_starts (
+    program_id TEXT NOT NULL REFERENCES programs (id) ON DELETE CASCADE,
+    week INTEGER NOT NULL,
+    starts_at INTEGER NOT NULL,
+    PRIMARY KEY (program_id, week)
+  );
+  -- The Coach's review of the next workout. \`since\` is the last session before it (or ''), so a row
+  -- belongs to one upcoming session; \`key\` is that session plus the signals that fired, for dedupe.
+  CREATE TABLE IF NOT EXISTS session_adjustments (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    program_id TEXT NOT NULL,
+    day_id TEXT NOT NULL,
+    since TEXT NOT NULL,
+    status TEXT NOT NULL,
+    decided_by TEXT,
+    no_change INTEGER NOT NULL DEFAULT 0,
+    rationale TEXT,
+    signals TEXT NOT NULL DEFAULT '[]',
+    changes TEXT NOT NULL DEFAULT '[]',
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    thread_id TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS session_adjustments_day ON session_adjustments (day_id, since, created_at DESC);
   CREATE INDEX IF NOT EXISTS program_days_program ON program_days (program_id, position);
   CREATE INDEX IF NOT EXISTS program_exercises_day ON program_exercises (day_id, position);
   CREATE INDEX IF NOT EXISTS training_sessions_started ON training_sessions (started_at DESC);
@@ -136,4 +164,17 @@ export function migrateTraining(database: Database): void {
   for (const column of ["cardio TEXT", "weight_kg REAL", "weight_set_at INTEGER", "superset_id TEXT"]) {
     if (!existing.has(column.split(" ")[0]!)) database.exec(`ALTER TABLE program_exercises ADD COLUMN ${column}`);
   }
+  // Programs are blocks: switching ends one (ended_at, end_reason) instead of just deactivating it.
+  const programs = new Set(database.query<{ name: string }, []>("PRAGMA table_info(programs)").all().map((c) => c.name));
+  for (const column of ["ended_at INTEGER", "end_reason TEXT", "resumed_from TEXT"]) {
+    if (!programs.has(column.split(" ")[0]!)) database.exec(`ALTER TABLE programs ADD COLUMN ${column}`);
+  }
+  // Programs replaced before blocks existed and trained on become ended blocks, ending when the next one began.
+  database.exec(`
+    UPDATE programs SET ended_at = COALESCE(
+      (SELECT MIN(n.created_at) FROM programs n WHERE n.created_at > programs.created_at),
+      (SELECT MAX(t.ended_at) FROM training_sessions t JOIN program_days d ON d.id = t.day_id WHERE d.program_id = programs.id))
+    WHERE active = 0 AND ended_at IS NULL
+      AND EXISTS (SELECT 1 FROM training_sessions t JOIN program_days d ON d.id = t.day_id WHERE d.program_id = programs.id)
+  `);
 }

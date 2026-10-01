@@ -121,14 +121,14 @@ export const trainingTools = [
 
   tool(
     "create_program",
-    "Write a whole training program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes) and, if wanted, cardio blocks (a cardio exercise with a `cardio` target: duration, heart-rate zone, distance, speed/pace, incline/level, intervals) — mixed in a day or as cardio-only days. Exercise ids must be library ids from list_exercises; respect the person's preferred equipment (get_training_preferences) and, when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno (replacing the previous one, whose history is kept). Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish. " + SUPERSETS,
+    "Write a whole training program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes) and, if wanted, cardio blocks (a cardio exercise with a `cardio` target: duration, heart-rate zone, distance, speed/pace, incline/level, intervals) — mixed in a day or as cardio-only days. Exercise ids must be library ids from list_exercises; respect the person's preferred equipment (get_training_preferences) and, when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno: a new block. The previous block ends (pass `reason`) but nothing is deleted: its sessions, records and the per-exercise history stay, and load suggestions carry over wherever an exercise repeats, so switching focus never restarts the person from zero. Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish. " + SUPERSETS,
     { ...programShape, activate: z.boolean().default(true).describe("Make it the active program.") },
     async ({ activate, ...program }) => guard(() => createProgram(program, activate)),
   ),
 
   tool(
     "get_active_program",
-    "The active program with its days and prescriptions, plus `nextDayId` (the day to train next: pinned to today's weekday, else the one after the last day done) and `suggestions` (next load per program exercise id, kg, on the steps of each exercise's unit: see get_training_preferences). `program` is null when none is active.",
+    "The active program with its days and prescriptions, plus `nextDayId` (the next day not done this program week: pinned to today's weekday, else the one after the last day done this week; null when the week is complete), `blocks` (every program so far, oldest first, the active one last: its weeks with each day done / partial / missed / planned and the sessions behind it; weeks are Monday–Sunday, week 1 being the week of the block's first session), `adjustment` (your review of the next session, when the app noticed a break, low readiness, an injury…) and `suggestions` (next load per program exercise id, kg, on the steps of each exercise's unit: see get_training_preferences). `program` is null when none is active.",
     {},
     async () => guard(() => activeProgramView()),
   ),
