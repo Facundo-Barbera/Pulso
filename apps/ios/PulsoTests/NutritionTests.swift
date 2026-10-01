@@ -162,6 +162,16 @@ final class WaterTests: XCTestCase {
         XCTAssertEqual(WaterSettings.litres(2_000), "2 L")
     }
 
+    func testProgressReadsInThePersonsUnit() {
+        let glasses = WaterSettings(goalMl: nil, unit: .vaso, glassMl: 250, bottleMl: 500)
+        XCTAssertEqual(glasses.progress(250, of: 3_700), "1 de 15 vasos")
+        XCTAssertEqual(glasses.quickAddMl, 250)
+        let millilitres = WaterSettings(goalMl: nil, unit: .ml, glassMl: 250, bottleMl: 500)
+        XCTAssertEqual(millilitres.progress(750, of: 2_000), "750 ml de 2 L")
+        let bottles = WaterSettings(goalMl: nil, unit: .botella, glassMl: 250, bottleMl: 500)
+        XCTAssertEqual(bottles.quickAddMl, 500)
+    }
+
     func testPresetsUseTheirSizesAndAddALitre() {
         XCTAssertEqual(WaterPreset.presets(settings).map(\.ml), [250, 750, 1_000])
         var litreBottle = settings

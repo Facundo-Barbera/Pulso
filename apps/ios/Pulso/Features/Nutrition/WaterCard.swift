@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The day's water: a glass that fills, the total in the person's unit, one-tap
-/// presets of their own glass and bottle, another amount, and undo.
+/// The day's water in one row: a small ring, "1 de 15 vasos", and one button
+/// that adds their glass. Hold it for a bottle, a litre, another amount,
+/// undo and the water settings.
 struct WaterCard: View {
     let water: WaterDay
     let onAdd: (Double) -> Void
@@ -14,132 +15,79 @@ struct WaterCard: View {
 
     var body: some View {
         Card {
-            HStack {
-                CardTitle(text: "Agua", systemImage: "drop.fill")
-                Spacer()
-                Button("Ajustes de agua", systemImage: "slider.horizontal.3", action: onSettings)
-                    .labelStyle(.iconOnly)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 32, minHeight: 32)
-            }
-            HStack(alignment: .center, spacing: 18) {
-                WaterGlass(progress: water.progress)
-                    .frame(width: 58, height: 84)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(settings.format(water.totalMl))
-                        .font(.system(.title, design: .rounded, weight: .bold))
-                        .contentTransition(.numericText(value: water.totalMl))
-                    Text("de \(settings.format(water.goalMl))")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    Label(done ? "Objetivo cumplido" : "Quedan \(settings.format(water.leftMl))",
-                          systemImage: done ? "checkmark.seal.fill" : "drop")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(done ? Theme.body : Theme.water)
-                        .symbolEffect(.bounce, value: done)
-                        .padding(.top, 2)
+            // At large text the button drops below rather than squeezing the count.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    summary
+                    Spacer(minLength: 8)
+                    addButton
                 }
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .animation(.snappy, value: water.totalMl)
-                Spacer(minLength: 0)
-            }
-            presets
-            if let last = water.entries.last {
-                Button(action: onUndo) {
-                    Label("Deshacer +\(WaterSettings.litres(last.amountMl))", systemImage: "arrow.uturn.backward")
-                        .font(.footnote.weight(.medium))
+                VStack(alignment: .leading, spacing: 12) {
+                    summary
+                    addButton
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .transition(.opacity)
             }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: water.totalMl) { old, new in new > old }
         .sensoryFeedback(.success, trigger: done) { _, new in new }
     }
 
-    /// Glass, bottle, a litre and "Otra"; two per row when four don't fit (375 pt at large text).
-    private var presets: some View {
-        GlassEffectContainer(spacing: 8) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 8)], spacing: 8) {
-                ForEach(WaterPreset.presets(settings)) { preset in
-                    Button { onAdd(preset.ml) } label: {
-                        VStack(spacing: 2) {
-                            Image(systemName: preset.systemImage).font(.subheadline)
-                            Text(WaterSettings.litres(preset.ml)).font(.caption.weight(.semibold).monospacedDigit())
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.glass)
-                    .tint(Theme.water)
-                    .accessibilityLabel("Añadir \(preset.title.lowercased()), \(WaterSettings.litres(preset.ml))")
-                }
-                Button(action: onCustom) {
-                    VStack(spacing: 2) {
-                        Image(systemName: "plus").font(.subheadline)
-                        Text("Otra").font(.caption.weight(.semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.glass)
-                .accessibilityLabel("Otra cantidad")
+    private var summary: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                ProgressRing(progress: water.progress, color: Theme.water, lineWidth: 6)
+                Image(systemName: done ? "checkmark" : "drop.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.water)
+                    .contentTransition(.symbolEffect(.replace))
             }
-            .lineLimit(1)
+            .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Agua").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(settings.progress(water.totalMl, of: water.goalMl))
+                    .font(.title3.weight(.semibold)).fontDesign(.rounded)
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: water.totalMl))
+                    .fixedSize()
+            }
+            .animation(.snappy, value: water.totalMl)
         }
-    }
-}
-
-/// A glass that fills to `progress`, sloshing a little each time it changes.
-struct WaterGlass: View {
-    let progress: Double
-    @State private var phase: Double = 0
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-        ZStack {
-            shape.fill(Theme.water.opacity(0.10))
-            WaterWave(level: min(progress, 1), phase: phase)
-                .fill(LinearGradient(colors: [Theme.water.opacity(0.75), Theme.water], startPoint: .top, endPoint: .bottom))
-            shape.strokeBorder(Theme.water.opacity(0.35), lineWidth: 1.5)
-        }
-        .clipShape(shape)
-        .onChange(of: progress) {
-            withAnimation(.snappy(duration: 0.9)) { phase += .pi * 2 }
-        }
-        .animation(.snappy(duration: 0.8), value: progress)
-        .accessibilityElement()
-        .accessibilityLabel("Agua")
-        .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
-    }
-}
-
-/// The water's surface: a gentle sine whose height decays as the slosh settles.
-private struct WaterWave: Shape {
-    var level: Double
-    var phase: Double
-
-    var animatableData: AnimatablePair<Double, Double> {
-        get { AnimatablePair(level, phase) }
-        set { (level, phase) = (newValue.first, newValue.second) }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(done ? "Objetivo cumplido" : "Quedan \(settings.format(water.leftMl))")
     }
 
-    func path(in rect: CGRect) -> Path {
-        // Waves only while the phase is between turns; still water is flat.
-        let settle = sin(phase.truncatingRemainder(dividingBy: .pi * 2) / 2)
-        let amplitude = level > 0 && level < 1 ? 4 * abs(settle) : 0
-        let top = rect.maxY - rect.height * level
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        for x in stride(from: rect.minX, through: rect.maxX, by: 2) {
-            let y = top + amplitude * sin(x / rect.width * .pi * 2 + phase)
-            path.addLine(to: CGPoint(x: x, y: y))
+    private var addButton: some View {
+        let ml = settings.quickAddMl
+        return Menu {
+            ForEach(WaterPreset.presets(settings).filter { $0.ml != ml }) { preset in
+                Button("\(preset.title) · \(WaterSettings.litres(preset.ml))", systemImage: preset.systemImage) { onAdd(preset.ml) }
+            }
+            Button("Otra cantidad…", systemImage: "plus.circle", action: onCustom)
+            Divider()
+            if let last = water.entries.last {
+                Button("Deshacer +\(WaterSettings.litres(last.amountMl))", systemImage: "arrow.uturn.backward", action: onUndo)
+            }
+            Button("Ajustes de agua", systemImage: "slider.horizontal.3", action: onSettings)
+        } label: {
+            Label(quickAddTitle(ml), systemImage: "plus")
+                .font(.subheadline.weight(.semibold))
+                .fixedSize()
+        } primaryAction: {
+            onAdd(ml)
         }
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.closeSubpath()
-        return path
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .tint(Theme.water)
+        .accessibilityHint("Mantén pulsado para otras cantidades y ajustes")
+    }
+
+    /// "1 vaso", "1 botella" or "250 ml", in how they count.
+    private func quickAddTitle(_ ml: Double) -> String {
+        switch settings.unit {
+        case .ml: WaterSettings.litres(ml)
+        case .vaso: "1 vaso"
+        case .botella: "1 botella"
+        }
     }
 }
 
@@ -259,8 +207,9 @@ struct WaterSettingsSheet: View {
     }
 }
 
+
 #Preview("Agua · 375 pt · XXL") {
-    let water = WaterDay(date: "2026-10-01", totalMl: 1250, goalMl: 2750, goalSource: "weight",
+    let water = WaterDay(date: "2026-10-01", totalMl: 250, goalMl: 3700, goalSource: "weight",
                          entries: [WaterEntry(id: "1", date: "2026-10-01", loggedAt: 0, amountMl: 250, source: "manual")],
                          settings: .standard)
     NarrowPreview(dynamicType: .xxLarge) {
