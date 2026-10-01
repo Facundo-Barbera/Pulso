@@ -119,14 +119,17 @@ struct DoseRow: View {
                     .font(.body.weight(.medium))
                     .strikethrough(slot.status == .omitida, color: .secondary)
                     .foregroundStyle(slot.status == .omitida ? .secondary : .primary)
+                    .lineLimit(2)
                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             Text(LocalClock.display(slot.time))
                 .font(.subheadline.weight(.semibold))
                 .fontDesign(.rounded)
                 .monospacedDigit()
                 .foregroundStyle(isLate ? Theme.energy : .secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
         }
         .contentShape(.rect)
         .contextMenu {

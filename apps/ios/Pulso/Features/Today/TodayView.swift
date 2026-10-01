@@ -30,16 +30,38 @@ struct TodayView: View {
     }
 
     /// Today's date and a quiet sync status; errors show here too, never as a blocking row.
+    /// Side by side when they fit; on a 375 pt phone or large text the status drops below.
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer()
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
-                status
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                today
+                Spacer()
+                syncStatus
             }
+            VStack(alignment: .leading, spacing: 6) {
+                today
+                syncStatus
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var today: some View {
+        Text(Self.sentenceCase(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide))))
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private var syncStatus: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            status
+        }
+    }
+
+    /// "miércoles, 1 de octubre" → "Miércoles, 1 de octubre" (`.capitalized` would give "1 De Octubre").
+    static func sentenceCase(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
     }
 
     @ViewBuilder private var status: some View {
@@ -58,6 +80,7 @@ struct TodayView: View {
             label
         }
         .font(.caption)
+        .lineLimit(1)
         .foregroundStyle(model.error != nil ? AnyShapeStyle(Theme.protein) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
