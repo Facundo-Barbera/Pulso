@@ -39,7 +39,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Pulso
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
-        INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee tus entrenamientos de Salud para guardarlos en tu Mac.
+        INFOPLIST_KEY_NSHealthShareUsageDescription: Pulso lee de Salud tus entrenamientos, actividad, sueño y frecuencia cardíaca para guardarlos en tu Mac y calcular tu recuperación.
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso no escribe en Salud por ahora.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         CODE_SIGN_ENTITLEMENTS: Config/Pulso.entitlements
