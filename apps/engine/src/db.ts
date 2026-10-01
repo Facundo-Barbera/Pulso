@@ -35,12 +35,13 @@ export function db(): Database {
     database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
     g[KEY] = database;
   }
-  if (g[APPLIED] !== SCHEMAS) {
+  const applied = g[APPLIED] as { database: Database; schemas: string[] } | undefined;
+  if (applied?.database !== database || applied.schemas !== SCHEMAS) {
     for (const schema of SCHEMAS) database.exec(schema);
     migrateDevices(database);
     migrateWorkouts(database);
     migrateDaily(database);
-    g[APPLIED] = SCHEMAS;
+    g[APPLIED] = { database, schemas: SCHEMAS };
   }
   return database;
 }
