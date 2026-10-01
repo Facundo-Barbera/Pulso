@@ -30,6 +30,14 @@ enum CoachToolLabel {
         }
         return (writes ? "Guardando cambios" : "Consultando tus datos", "sparkles", .accentColor)
     }
+
+    /// What a finished tool says, when it is news for the person rather than activity.
+    static func doneLabel(_ name: String) -> String? {
+        switch name {
+        case "update_profile": return "Perfil actualizado"
+        default: return nil
+        }
+    }
 }
 
 struct ToolChip: View {
@@ -37,6 +45,7 @@ struct ToolChip: View {
 
     var body: some View {
         let info = CoachToolLabel.describe(tool.name)
+        let news = tool.status == .done ? CoachToolLabel.doneLabel(tool.name) : nil
         HStack(spacing: 6) {
             Group {
                 switch tool.status {
@@ -50,13 +59,14 @@ struct ToolChip: View {
             }
             .foregroundStyle(tool.status == .error ? AnyShapeStyle(.orange) : AnyShapeStyle(info.color))
             .contentTransition(.symbolEffect(.replace))
-            Text(tool.status == .running ? "\(info.label)…" : info.label)
-                .foregroundStyle(tool.status == .running ? .primary : .secondary)
+            Text(tool.status == .running ? "\(info.label)…" : news ?? info.label)
+                .foregroundStyle(tool.status == .running || news != nil ? .primary : .secondary)
+                .contentTransition(.opacity)
         }
         .font(.footnote.weight(.medium))
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .glassEffect(.regular.tint(info.color.opacity(tool.status == .running ? 0.18 : 0.06)), in: .capsule)
+        .glassEffect(.regular.tint(info.color.opacity(tool.status == .running || news != nil ? 0.18 : 0.06)), in: .capsule)
         .animation(.snappy, value: tool.status)
     }
 }
