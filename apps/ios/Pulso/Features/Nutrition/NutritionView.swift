@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The Dieta tab: Hoy (the macro hero, water and the day's meals), Plan (the
-/// plan as the Coach adjusted it, with "comido" ticks) and Progreso (the week),
-/// under a plain section switch and a compact day row. Everything that adds
-/// food starts from one floating "Registrar" button on Hoy.
+/// The Dieta tab: Hoy (the macro hero, water and today's planned meals with
+/// their status), Plan (the dated plan over its horizon) and Progreso (the week),
+/// under a plain section switch. Everything that adds food starts from one
+/// floating "Registrar" button on Hoy; changes to the plan come back as a toast
+/// with its undo, and the Coach bar on Plan is where most of them start.
 struct NutritionView: View {
     let model: PulsoModel
     @State private var store = NutritionStore()
@@ -13,6 +14,8 @@ struct NutritionView: View {
     @State private var showShopping = false
     /// What was typed in Registrar when it hands over to the manual form.
     @State private var draftName = ""
+    /// The day open on Plan.
+    @State private var planDate = NutritionDate.string(.now)
     @Environment(\.askCoach) private var askCoach
 
     enum Sheet: String, Identifiable {
@@ -36,7 +39,7 @@ struct NutritionView: View {
                         ForEach(DietSection.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    DaySwitcher(store: store)
+                    if section != .plan { DaySwitcher(store: store) }
                 }
                 if let day = store.day {
                     content(day)
@@ -54,6 +57,7 @@ struct NutritionView: View {
             // The Registrar button is a safe-area inset, so the scroll already ends above it.
             .padding(.bottom, 24)
             .animation(.snappy, value: store.day)
+            .animation(.snappy, value: store.horizon)
             .animation(.snappy, value: section)
         }
         .background(Color(.systemGroupedBackground))
@@ -65,12 +69,15 @@ struct NutritionView: View {
         .safeAreaInset(edge: .bottom) {
             if section == .hoy && store.day != nil {
                 registerButton.transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if section == .plan && store.horizon != nil {
+                CoachPlanBar { askCoach(coachDraft, send: false) }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { sheet in
             switch sheet {
             case .register:
-                RegisterSheet(foods: store.allFrequent, nextMeal: store.isToday ? store.nextMeal : nil,
+                RegisterSheet(foods: store.allFrequent, nextMeal: store.isToday ? store.nextMeal : nil, replacing: store.replacing,
                               onLog: { await store.log($0) }, onEatPlan: { await store.eat($0) }, onRoute: route)
                     .presentationDetents([.large])
             case .quickAdd: QuickAddView(store: store, initialName: draftName).presentationDetents([.medium, .large])
@@ -89,6 +96,11 @@ struct NutritionView: View {
                 WaterEntriesSheet(store: store).presentationDetents([.medium, .large])
             }
         }
+        // "Lo cambié por…": once Registrar (or the form it handed over to) closes, what was logged replaces the slot.
+        .onChange(of: sheet) { _, new in
+            guard new == nil, store.replacing != nil else { return }
+            Task { if let change = await store.finishReplacing() { showChange(change) } }
+        }
         .overlay(alignment: .top) {
             if let toast { ToastView(toast: toast) { self.toast = nil } }
         }
@@ -102,10 +114,11 @@ struct NutritionView: View {
         case .hoy:
             NutritionTodaySection(day: day, store: store, sheet: $sheet, showPlan: { section = .plan },
                                   addWater: addWater, undoWater: { Task { await store.undoWater() } },
-                                  copyPrevious: { Task { await copyPrevious() } }, draftForCoach: { askCoach($0, send: false) })
+                                  copyPrevious: { Task { await copyPrevious() } }, draftForCoach: { askCoach($0, send: false) },
+                                  onAction: act)
                 .transition(.opacity)
         case .plan:
-            NutritionPlanSection(day: day, store: store, askCoach: { askCoach($0) })
+            NutritionPlanSection(store: store, askCoach: { askCoach($0) }, onAction: act, onChange: showChange, selected: $planDate)
                 .transition(.opacity)
         case .progreso:
             NutritionProgressSection(week: store.week, water: store.weekWater, settings: day.water?.settings ?? .standard,
@@ -157,6 +170,39 @@ struct NutritionView: View {
         }
     }
 
+    /// A quick change on a planned meal. Each answers with a toast that can undo it.
+    private func act(_ action: SlotAction, on slot: PlanSlot) {
+        switch action {
+        case .eaten:
+            Task {
+                let eaten = await store.eat(slot)
+                guard !eaten.isEmpty else { return }
+                show("\(slot.slot.title): como en el plan") { Task { await store.deleteMeals(eaten.map(\.id)) } }
+            }
+        case .replaced:
+            store.beginReplacing(slot)
+            sheet = .register
+        case .skipped:
+            Task { if let change = await store.apply(.skip(slot)) { showChange(change) } }
+        case .noCook:
+            Task { if let change = await store.apply(.noTimeToCook(slot)) { showChange(change) } }
+        }
+    }
+
+    /// The Mac's Spanish summary of a plan change, with "Deshacer" reverting that revision.
+    private func showChange(_ change: PlanChange) {
+        show(change.summary) {
+            Task { if let undone = await store.undo(change.revision.id) { show(undone.summary) } }
+        }
+    }
+
+    /// What the Coach bar leaves in the composer: the day, so the Coach reads the right slots.
+    private var coachDraft: String {
+        let today = NutritionDate.string(.now)
+        guard planDate != today, let date = NutritionDate.date(planDate) else { return "Hoy cambió algo en mi dieta: " }
+        return "Sobre mi dieta del \(date.formatted(.dateTime.weekday(.wide).day().month(.wide))): "
+    }
+
     private func addWater(_ ml: Double) {
         Task {
             guard let entry = await store.addWater(ml: ml) else { return }
@@ -173,7 +219,8 @@ struct NutritionView: View {
         let next = Toast(message: message, undo: undo)
         withAnimation(.snappy) { toast = next }
         Task {
-            try? await Task.sleep(for: .seconds(undo == nil ? 2 : 4))
+            // A plan change's summary is a sentence: give it time to be read and undone.
+            try? await Task.sleep(for: .seconds(undo == nil ? 2.5 : 6))
             withAnimation(.snappy) { if toast == next { toast = nil } }
         }
     }

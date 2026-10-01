@@ -1,21 +1,38 @@
 import SwiftUI
 
-/// Dieta · Plan: the active plan's day as it should be eaten now — with the
-/// Coach's adjustment laid over it — one card per meal with "comido" ticks.
+/// Dieta · Plan: the dated plan over its horizon. A strip of dates picks the
+/// day; the hero is that day's kcal; then the batch to cook that day, its meals
+/// and the latest change with its undo. Adjustments happen talking to the Coach
+/// (the bar under the screen), not by regenerating anything here.
 struct NutritionPlanSection: View {
-    let day: NutritionDay
     let store: NutritionStore
     let askCoach: (String) -> Void
+    let onAction: (SlotAction, PlanSlot) -> Void
+    let onChange: (PlanChange) -> Void
+    @Binding var selected: String
 
     var body: some View {
-        if let plan = day.plan {
-            PlanHeaderCard(plan: plan, store: store)
-            if let adjustment = plan.adjustment {
-                AdjustmentCard(adjustment: adjustment) { Task { await store.clearAdjustment() } }
-                    .transition(.blurReplace)
+        if let horizon = store.horizon {
+            let day = horizon.day(selected) ?? horizon.days.first
+            WeekStrip(horizon: horizon, selected: $selected)
+            if let day {
+                DayHero(day: day)
+                ForEach(horizon.preps(cookingOn: day.date)) { batch in
+                    PrepSessionCard(batch: batch) { cooked in
+                        Task { if let change = await store.apply(.prepCooked(batch, cooked)) { onChange(change) } }
+                    }
+                }
+                mealsCard(day, horizon: horizon)
             }
-            ForEach(plan.meals) { meal in
-                PlanMealCard(meal: meal, store: store)
+            ChangesCard(store: store, last: horizon.lastRevision) { revision in
+                Task { if let change = await store.undo(revision.id) { onChange(change) } }
+            }
+        } else if store.day?.plan != nil {
+            Card {
+                EmptyStateView(systemImage: "calendar.badge.exclamationmark", title: "No se pudo cargar tu plan",
+                               message: "La Mac no devolvió los próximos días.", tint: Theme.body, actionTitle: "Reintentar") {
+                    Task { await store.load() }
+                }
             }
         } else {
             Card {
@@ -27,177 +44,264 @@ struct NutritionPlanSection: View {
             }
         }
     }
-}
 
-/// The plan's name and day, how much of it is eaten, and its notes.
-private struct PlanHeaderCard: View {
-    let plan: DietPlanForDay
-    let store: NutritionStore
-    @State private var notesExpanded = false
-
-    private var items: [DietPlanItem] { plan.meals.flatMap(\.items) }
-    private var eatenCount: Int { items.filter { store.isEaten($0) }.count }
-
-    var body: some View {
+    @ViewBuilder
+    private func mealsCard(_ day: DietDay, horizon: DietHorizon) -> some View {
+        let isToday = day.date == NutritionDate.string(.now)
         Card {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    CardTitle(text: plan.day.label, systemImage: "list.bullet.clipboard")
-                    Text(plan.plan.name).font(.title3.weight(.semibold)).lineLimit(2)
+            CardTitle(text: "Comidas", systemImage: "fork.knife")
+            if day.slots.isEmpty {
+                EmptyStateView(systemImage: "calendar.day.timeline.left", title: "Día sin comidas planeadas",
+                               message: "Pídele al Coach que llene este día.", tint: Theme.body)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(day.slots) { slot in
+                        PlanSlotRow(slot: slot, source: horizon.source(of: slot), recipeId: horizon.recipeId(of: slot),
+                                    isLast: slot.id == day.slots.last?.id,
+                                    onAction: isToday ? { onAction($0, slot) } : nil)
+                    }
                 }
-                Spacer(minLength: 8)
-                Gauge(value: Double(eatenCount), in: 0...Double(max(items.count, 1))) {
-                    EmptyView()
-                } currentValueLabel: {
-                    Text("\(eatenCount)/\(items.count)").fontDesign(.rounded)
-                }
-                .gaugeStyle(.accessoryCircularCapacity)
-                .tint(Theme.body)
-                .accessibilityLabel("\(eatenCount) de \(items.count) comidos")
-            }
-            if let notes = plan.plan.notes, !notes.isEmpty {
-                Button { withAnimation(.snappy) { notesExpanded.toggle() } } label: {
-                    Text(notes)
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .lineLimit(notesExpanded ? nil : 2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
             }
         }
-        .sensoryFeedback(.success, trigger: !items.isEmpty && eatenCount == items.count) { _, new in new }
     }
 }
 
-/// "Ajustado por el Coach": what changed today and why, and a way back to the plan.
-private struct AdjustmentCard: View {
-    let adjustment: DayAdjustment
-    let onRevert: () -> Void
+/// The horizon's dates in one scrollable row: weekday, day number, and a mark
+/// for done days and cooking days. Dates first; the rotation label is secondary.
+private struct WeekStrip: View {
+    let horizon: DietHorizon
+    @Binding var selected: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .symbolEffect(.bounce, value: adjustment.createdAt)
-                Text("Ajustado por el Coach").font(.subheadline.weight(.semibold))
-                Spacer(minLength: 4)
-                Text(Date(timeIntervalSince1970: adjustment.createdAt / 1000), format: .dateTime.hour().minute())
-                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(horizon.days) { day in
+                    DayPill(day: day, cooking: !horizon.preps(cookingOn: day.date).isEmpty, selected: day.date == selected) {
+                        withAnimation(.snappy) { selected = day.date }
+                    }
+                }
             }
-            .foregroundStyle(Theme.training)
-            Text(adjustment.summary).font(.subheadline)
-            if let note = adjustment.note {
-                Text(note).font(.footnote).foregroundStyle(.secondary)
+            .padding(.vertical, 2)
+        }
+        .scrollIndicators(.hidden)
+        .scrollClipDisabled()
+        .sensoryFeedback(.selection, trigger: selected)
+    }
+}
+
+private struct DayPill: View {
+    let day: DietDay
+    let cooking: Bool
+    let selected: Bool
+    let action: () -> Void
+
+    private var date: Date { day.day ?? .now }
+    private var isToday: Bool { Calendar.current.isDateInToday(date) }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Text(isToday ? "Hoy" : date.formatted(.dateTime.weekday(.abbreviated)).capitalized)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(selected ? Theme.body : .secondary)
+                Text(date, format: .dateTime.day())
+                    .font(.title3.weight(.bold)).fontDesign(.rounded)
+                mark.font(.caption2).frame(height: 12)
             }
-            Button("Volver al plan", systemImage: "arrow.uturn.backward", action: onRevert)
+            .lineLimit(1)
+            .frame(minWidth: 48)
+            .padding(.horizontal, 6).padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(selected ? AnyShapeStyle(Theme.body.opacity(0.18)) : AnyShapeStyle(.background.secondary))
+            }
+            .overlay {
+                if selected { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.body.opacity(0.5), lineWidth: 1) }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(date.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+        .accessibilityValue(cooking ? "Día de cocinar" : day.pending == 0 && !day.slots.isEmpty ? "Hecho" : "")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var mark: some View {
+        if cooking {
+            Image(systemName: "frying.pan.fill").foregroundStyle(Theme.energy)
+        } else if !day.slots.isEmpty && day.pending == 0 {
+            Image(systemName: "checkmark").foregroundStyle(Theme.body)
+        } else {
+            Circle().fill(.quaternary).frame(width: 5, height: 5)
+        }
+    }
+}
+
+/// The selected date as the title, its planned kcal against the goal as the number.
+private struct DayHero: View {
+    let day: DietDay
+
+    private var title: String {
+        guard let date = day.day else { return day.date }
+        let text = date.formatted(.dateTime.weekday(.wide).day().month(.wide))
+        return Calendar.current.isDateInToday(date) ? "Hoy · \(text)" : text
+    }
+
+    private var caption: String {
+        var parts = ["de \(Int(day.goalKcal).formatted()) kcal"]
+        if day.shiftKcal != 0 { parts.append(day.shiftKcal > 0 ? "+\(Int(day.shiftKcal)) compensado" : "\(Int(day.shiftKcal)) compensado") }
+        parts.append(day.label)
+        return parts.joined(separator: " · ")
+    }
+
+    private var progress: Double { day.slots.isEmpty ? 0 : Double(day.done) / Double(day.slots.count) }
+
+    var body: some View {
+        HeroCard(title: title, systemImage: "calendar", value: Int(day.planned.kcal).formatted(), unit: "kcal",
+                 caption: caption, tint: Theme.body) {
+            if !day.slots.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: progress).tint(Theme.body)
+                    Text(day.pending == 0 ? "Día resuelto" : "\(day.done) de \(day.slots.count) comidas resueltas")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
+                .animation(.snappy, value: progress)
+            }
+        }
+    }
+}
+
+/// "Cocinar: Pollo con arroz ×4" on its day, and "Ya lo cociné" once it's done.
+struct PrepSessionCard: View {
+    let batch: PrepBatch
+    let onCooked: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: batch.cooked ? "checkmark.seal.fill" : "frying.pan.fill")
+                    .foregroundStyle(batch.cooked ? Theme.body : Theme.energy)
+                    .contentTransition(.symbolEffect(.replace))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cocinar: \(batch.recipeName) ×\(batch.portions)").font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            AdaptiveStack(horizontalAlignment: .leading, spacing: 8) {
+                if batch.cooked {
+                    Button("No lo cociné", systemImage: "arrow.uturn.backward") { onCooked(false) }
+                        .buttonStyle(.glass)
+                } else {
+                    Button("Ya lo cociné", systemImage: "checkmark") { onCooked(true) }
+                        .buttonStyle(.glassProminent)
+                        .tint(Theme.energy)
+                }
+                NavigationLink { RecipeDetailView(recipeId: batch.recipeId) } label: {
+                    Label("Receta", systemImage: "book")
+                }
                 .buttonStyle(.glass)
-                .controlSize(.small)
+            }
+            .controlSize(.small)
+            .lineLimit(1)
         }
         .padding(Theme.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular.tint(Theme.training.opacity(0.12)), in: .rect(cornerRadius: Theme.corner))
+        .glassEffect(.regular.tint((batch.cooked ? Theme.body : Theme.energy).opacity(0.12)), in: .rect(cornerRadius: Theme.corner))
+        .sensoryFeedback(.success, trigger: batch.cooked) { _, new in new }
+    }
+
+    private var detail: String {
+        let used = batch.portions - batch.leftover
+        var parts = ["\(used) de \(batch.portions) porciones con día"]
+        if batch.leftover > 0 { parts.append("\(batch.leftover) libres") }
+        if batch.cooked { parts.insert("Cocinado", at: 0) }
+        return parts.joined(separator: " · ")
     }
 }
 
-/// One meal of the plan: its items with a "comido" tap, and a badge when the Coach changed it.
-private struct PlanMealCard: View {
-    let meal: DietPlanForDay.Meal
+/// The latest change, undoable in place, and the way to every change.
+private struct ChangesCard: View {
     let store: NutritionStore
-
-    private var kcal: Double { meal.items.reduce(0) { $0 + $1.kcal } }
-    private var done: Bool { meal.items.allSatisfy { store.isEaten($0) } }
+    let last: PlanRevision?
+    let onUndo: (PlanRevision) -> Void
 
     var body: some View {
         Card {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label {
-                    Text(meal.name ?? meal.slot.title).font(.headline).lineLimit(2)
-                } icon: {
-                    Image(systemName: done ? "checkmark.circle.fill" : meal.slot.systemImage)
-                        .foregroundStyle(done ? Theme.body : .secondary)
-                        .contentTransition(.symbolEffect(.replace))
+            NavigationLink { PlanChangesView(store: store) } label: {
+                HStack {
+                    CardTitle(text: "Cambios", systemImage: "clock.arrow.circlepath")
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
                 }
-                Spacer(minLength: 6)
-                Text("\(Int(kcal)) kcal")
-                    .font(.subheadline.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText(value: kcal))
-                    .layoutPriority(1)
+                .contentShape(.rect)
             }
-            if meal.name != nil || meal.adjusted {
-                HStack(spacing: 6) {
-                    if meal.name != nil {
-                        Text(meal.slot.title).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if meal.adjusted {
-                        GlassChip(meal.change == "swapped" ? "Cambiado por el Coach" : "Ajustado por el Coach",
-                                  systemImage: "sparkles", tint: Theme.training)
-                    }
+            .buttonStyle(.plain)
+            if let last, last.isLive {
+                Text(last.summary).font(.subheadline)
+                HStack {
+                    Text(last.created, format: .relative(presentation: .named))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Deshacer", systemImage: "arrow.uturn.backward") { onUndo(last) }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
                 }
-            }
-            ForEach(meal.items) { item in
-                PlanItemRow(item: item, eaten: store.isEaten(item)) {
-                    Task { await store.eat(item) }
-                }
-                if item.id != meal.items.last?.id { Divider() }
+            } else {
+                Text("Lo que cambies con el Coach queda aquí, y se puede deshacer.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
-        .opacity(done ? 0.75 : 1)
-        .animation(.snappy, value: done)
     }
 }
 
-struct PlanItemRow: View {
-    let item: DietPlanItem
-    let eaten: Bool
-    let onEat: () -> Void
+/// The quiet bar under Plan: adjustments are mostly a conversation.
+struct CoachPlanBar: View {
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.name).strikethrough(eaten, color: .secondary).foregroundStyle(eaten ? .secondary : .primary)
-                // "1,5 porciones · 1.250 kcal" plus the macros is wider than a 375 pt card: macros go below.
-                AdaptiveStack(horizontalAlignment: .leading, spacing: 6) {
-                    Text("\(foodQuantityText(item.quantity, item.unit)) · \(Int(item.kcal)) kcal")
-                    MacroLine(macros: item.macros)
-                }
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1)
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                    .foregroundStyle(Theme.training)
+                Text("Cuéntale al Coach qué cambió hoy")
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Theme.training)
             }
-            Spacer(minLength: 8)
-            Button(action: onEat) {
-                Image(systemName: eaten ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(eaten ? Theme.body : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: eaten)
-                    .frame(minWidth: 44, minHeight: 44)
-            }
-            .buttonStyle(.plain)
-            .disabled(eaten)
-            .accessibilityLabel(eaten ? "Comido" : "Marcar como comido")
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .contentShape(.capsule)
         }
-        .sensoryFeedback(.success, trigger: eaten) { _, new in new }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+        .accessibilityHint("Abre el Coach con el plan de hoy como contexto")
     }
 }
 
 // MARK: - Previews
 
-private let previewAdjustment = DayAdjustment(
-    date: "2026-10-01", factor: 1.5,
-    meals: [AdjustedMeal(slot: .cena, name: "Merluza con patata y brócoli", items: [], change: "swapped")],
-    projected: NutritionMacros(kcal: 1_755, protein: 97, carbs: 190, fat: 70, fiber: 20),
-    summary: "Merienda al 150 % y cena con cambios. Cierras el día en 1755 de 2200 kcal (faltan 445) y 97 de 160 g de proteína.",
-    note: "Comida más grasa de lo previsto: cena más ligera y rica en proteína.", createdAt: 1_790_849_000_000
-)
-
-#Preview("Plan · 375 pt · XXL") {
+#Preview("Plan · piezas · 375 pt · XXL") {
     NarrowPreview(dynamicType: .xxLarge) {
-        AdjustmentCard(adjustment: previewAdjustment) {}
-        Card {
-            PlanItemRow(item: DietPlanItem(id: "p1", name: "Avena con plátano, nueces y miel", quantity: 1.5, unit: .serving,
-                                           kcal: 1_250, protein: 32, carbs: 168, fat: 41, fiber: 12), eaten: false) {}
-        }
+        WeekStrip(horizon: previewHorizon, selected: .constant("2026-10-01"))
+        DayHero(day: previewHorizon.days[0])
+        PrepSessionCard(batch: previewHorizon.preps[0]) { _ in }
+        CoachPlanBar {}
     }
+}
+
+#Preview("Plan · piezas · claro") {
+    NarrowPreview {
+        WeekStrip(horizon: previewHorizon, selected: .constant("2026-10-02"))
+        DayHero(day: previewHorizon.days[1])
+        PrepSessionCard(batch: { var b = previewHorizon.preps[0]; b.status = .cooked; return b }()) { _ in }
+        CoachPlanBar {}
+    }
+    .preferredColorScheme(.light)
 }

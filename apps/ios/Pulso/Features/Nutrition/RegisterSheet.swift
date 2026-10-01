@@ -8,6 +8,8 @@ struct RegisterSheet: View {
     let foods: [FrequentFood]
     /// The next planned meal of today, for "Comí lo del plan".
     let nextMeal: DietPlanForDay.Meal?
+    /// "Lo cambié por…": the planned meal what is logged here replaces.
+    var replacing: PlanSlot? = nil
     let onLog: (MealInput) async -> Bool
     let onEatPlan: (DietPlanForDay.Meal) async -> Bool
     let onRoute: (Route) -> Void
@@ -21,6 +23,7 @@ struct RegisterSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var slot = MealSlot.forHour(Calendar.current.component(.hour, from: .now))
+    @State private var didPreset = false
     @State private var logged: Set<String> = []
     @State private var busy = false
     @State private var planEaten = false
@@ -38,7 +41,7 @@ struct RegisterSheet: View {
                         HStack(spacing: 8) {
                             chip("Escanear", "barcode.viewfinder") { onRoute(.scan) }
                             chip("Snack o bebida", "cup.and.saucer.fill") { onRoute(.snack) }
-                            chip("Del plan", "list.bullet.clipboard") { onRoute(.plan) }
+                            if replacing == nil { chip("Del plan", "list.bullet.clipboard") { onRoute(.plan) } }
                             chip("A mano", "square.and.pencil") { onRoute(.manual(trimmed)) }
                         }
                         .padding(.horizontal, 2)
@@ -50,7 +53,21 @@ struct RegisterSheet: View {
                     }
                 }
 
-                if trimmed.isEmpty, let nextMeal, !planEaten {
+                if let replacing {
+                    Section {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("En lugar de \(replacing.slot.title.lowercased())")
+                                    .font(.subheadline.weight(.semibold))
+                                Text(replacing.what).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                        } icon: {
+                            Image(systemName: "arrow.left.arrow.right").foregroundStyle(Theme.carbs)
+                        }
+                    } footer: {
+                        Text("Registra lo que comiste; al cerrar, queda en lugar de lo planeado.")
+                    }
+                } else if trimmed.isEmpty, let nextMeal, !planEaten {
                     planSection(nextMeal)
                 }
 
@@ -76,12 +93,17 @@ struct RegisterSheet: View {
                 }
             }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Buscar o escribir un alimento")
-            .navigationTitle("Registrar")
+            .navigationTitle(replacing == nil ? "Registrar" : "Lo cambié por…")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(logged.isEmpty && !planEaten ? "Cerrar" : "Listo") { dismiss() }
                 }
+            }
+            .onAppear {
+                guard !didPreset, let replacing else { return }
+                slot = replacing.slot
+                didPreset = true
             }
             .sensoryFeedback(.success, trigger: logged.count) { old, new in new > old }
             .sensoryFeedback(.success, trigger: planEaten) { _, new in new }
@@ -189,6 +211,11 @@ private let previewFoods = [
         ]),
         onLog: { _ in true }, onEatPlan: { _ in true }, onRoute: { _ in }
     )
+}
+
+#Preview("Lo cambié por… · XXL") {
+    RegisterSheet(foods: previewFoods, nextMeal: nil, replacing: previewSlots[1], onLog: { _ in true }, onEatPlan: { _ in true }, onRoute: { _ in })
+        .dynamicTypeSize(.xxLarge)
 }
 
 #Preview("Registrar · vacío · XXL") {
