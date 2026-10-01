@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentAttachment, AgentMessage, AgentMessageStatus, AgentThread, AgentToolUse } from "@pulso/contract";
+import type { AgentAttachment, AgentMessage, AgentMessageStatus, AgentProduct, AgentThread, AgentToolUse, FoodProduct } from "@pulso/contract";
 import { db } from "../db";
 
 export const DEFAULT_TITLE = "Nueva conversación";
@@ -26,12 +26,13 @@ const toThread = (row: ThreadRow): AgentThread => ({
 
 type AttachmentRow = { id: string; message_id: string; width: number; height: number };
 
-const toMessage = (row: MessageRow, attachments: AgentAttachment[] = []): AgentMessage => ({
+const toMessage = (row: MessageRow, attachments: AgentAttachment[] = [], products: AgentProduct[] = []): AgentMessage => ({
   id: row.id,
   threadId: row.thread_id,
   role: row.role,
   text: row.text,
   attachments,
+  products,
   tools: JSON.parse(row.tools) as AgentToolUse[],
   status: row.status,
   error: row.error,
@@ -89,7 +90,28 @@ export function listMessages(threadId: string, limit?: number): AgentMessage[] {
     )
     .all(threadId, limit ?? -1);
   const photos = attachmentsOf({ threadId });
-  return rows.map((row) => toMessage(row, photos.get(row.id)));
+  const products = productsOf({ threadId });
+  return rows.map((row) => toMessage(row, photos.get(row.id), products.get(row.id)));
+}
+
+type ProductRow = { message_id: string; barcode: string; product_json: string | null };
+
+/** Scanned products by message id, in the order they were added. */
+function productsOf(where: { threadId: string } | { messageId: string }): Map<string, AgentProduct[]> {
+  const rows =
+    "threadId" in where
+      ? db()
+          .query<ProductRow, [string]>(
+            "SELECT p.* FROM agent_message_products p JOIN agent_messages m ON m.id = p.message_id WHERE m.thread_id = ? ORDER BY p.position",
+          )
+          .all(where.threadId)
+      : db().query<ProductRow, [string]>("SELECT * FROM agent_message_products WHERE message_id = ? ORDER BY position").all(where.messageId);
+  const byMessage = new Map<string, AgentProduct[]>();
+  for (const row of rows) {
+    const product = row.product_json ? (JSON.parse(row.product_json) as FoodProduct) : null;
+    byMessage.set(row.message_id, [...(byMessage.get(row.message_id) ?? []), { barcode: row.barcode, product }]);
+  }
+  return byMessage;
 }
 
 /** Photos by message id, in the order they were sent: those of one thread, or of one message. */
@@ -118,10 +140,17 @@ export function hasAttachment(threadId: string, id: string): boolean {
 
 export function getMessage(id: string): AgentMessage | undefined {
   const row = db().query<MessageRow, [string]>("SELECT * FROM agent_messages WHERE id = ?").get(id);
-  return row ? toMessage(row, attachmentsOf({ messageId: id }).get(id)) : undefined;
+  return row ? toMessage(row, attachmentsOf({ messageId: id }).get(id), productsOf({ messageId: id }).get(id)) : undefined;
 }
 
-export function addMessage(threadId: string, role: AgentMessage["role"], text: string, status: AgentMessageStatus, attachments: AgentAttachment[] = []): AgentMessage {
+export function addMessage(
+  threadId: string,
+  role: AgentMessage["role"],
+  text: string,
+  status: AgentMessageStatus,
+  attachments: AgentAttachment[] = [],
+  products: AgentProduct[] = [],
+): AgentMessage {
   const now = Date.now();
   const id = randomUUID();
   db().transaction(() => {
@@ -129,9 +158,25 @@ export function addMessage(threadId: string, role: AgentMessage["role"], text: s
     attachments.forEach((a, position) => {
       db().query("INSERT INTO agent_attachments (id, message_id, position, width, height) VALUES (?, ?, ?, ?, ?)").run(a.id, id, position, a.width, a.height);
     });
+    products.forEach((p, position) => {
+      db()
+        .query("INSERT INTO agent_message_products (message_id, position, barcode, product_json) VALUES (?, ?, ?, ?)")
+        .run(id, position, p.barcode, p.product && JSON.stringify(p.product));
+    });
     db().query("UPDATE agent_threads SET updated_at = ? WHERE id = ?").run(now, threadId);
     if (role === "user") {
-      const title = text.trim() ? titleFrom(text) : attachments.length > 1 ? "Fotos" : attachments.length ? "Foto" : DEFAULT_TITLE;
+      const scanned = products[0]?.product?.name;
+      const title = text.trim()
+        ? titleFrom(text)
+        : scanned
+          ? titleFrom(scanned)
+          : attachments.length > 1
+            ? "Fotos"
+            : attachments.length
+              ? "Foto"
+              : products.length
+                ? "Producto"
+                : DEFAULT_TITLE;
       db().query("UPDATE agent_threads SET title = ? WHERE id = ? AND title = ?").run(title, threadId, DEFAULT_TITLE);
     }
   })();

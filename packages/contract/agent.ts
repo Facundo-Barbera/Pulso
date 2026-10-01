@@ -1,3 +1,5 @@
+import type { FoodProduct } from "./nutrition";
+
 /** A conversation with the Coach. Times are epoch ms. */
 export type AgentThread = {
   id: string;
@@ -41,6 +43,15 @@ export type AgentAttachment = { id: string; mime: "image/jpeg"; width: number; h
 /** At most this many photos per message. */
 export const MAX_AGENT_ATTACHMENTS = 4;
 
+/**
+ * A packaged product the person scanned into a message: the code and what Open
+ * Food Facts said about it when it was sent (null when unknown or unreachable).
+ */
+export type AgentProduct = { barcode: string; product: FoodProduct | null };
+
+/** At most this many scanned products per message. */
+export const MAX_AGENT_PRODUCTS = 4;
+
 export type AgentMessage = {
   id: string;
   threadId: string;
@@ -49,6 +60,8 @@ export type AgentMessage = {
   text: string;
   /** Photos on a user message, in the order they were sent. */
   attachments: AgentAttachment[];
+  /** Scanned products on a user message, in the order they were added. */
+  products: AgentProduct[];
   tools: AgentToolUse[];
   status: AgentMessageStatus;
   error: string | null;
@@ -70,10 +83,11 @@ export type AgentStreamEvent =
   | { type: "error"; message: string };
 
 /**
- * JSON `{ text }`, or multipart/form-data with a `text` field and up to
- * `MAX_AGENT_ATTACHMENTS` `image` files (JPEG, PNG or HEIC). With photos the text may be empty.
+ * JSON `{ text, barcodes? }`, or multipart/form-data with a `text` field, up to
+ * `MAX_AGENT_ATTACHMENTS` `image` files (JPEG, PNG or HEIC) and up to
+ * `MAX_AGENT_PRODUCTS` `barcode` fields. With photos or products the text may be empty.
  */
-export type SendAgentMessage = { text: string };
+export type SendAgentMessage = { text: string; barcodes?: string[] };
 
 /** What the Coach knows about the person. Every field is optional; the agent fills it in over time. */
 export type Profile = {

@@ -1,5 +1,6 @@
 import { createSdkMcpServer, query, type HookCallback, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentAttachment, AgentMessage, AgentStreamEvent } from "@pulso/contract";
+import type { AgentAttachment, AgentMessage, AgentProduct, AgentStreamEvent } from "@pulso/contract";
+import { describeProduct } from "../nutrition/portion";
 import { readImageBase64 } from "./attachments";
 import { hasOutput, newTurnState, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
@@ -128,10 +129,11 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
 /** The prompt for a fresh SDK session when the old one could not be resumed. */
 export function recapPrompt(history: AgentMessage[], text: string): string {
   const photos = (m: AgentMessage) => (m.attachments.length ? `[${m.attachments.length > 1 ? `${m.attachments.length} fotos` : "foto"}] ` : "");
+  const scanned = (m: AgentMessage) => (m.products ?? []).map((p) => `[producto ${p.barcode}${p.product ? `: ${p.product.name}` : ""}] `).join("");
   const lines = history
-    .filter((m) => m.text.trim() || m.attachments.length)
+    .filter((m) => m.text.trim() || m.attachments.length || m.products?.length)
     .slice(-RECAP_MESSAGES)
-    .map((m) => `${m.role === "user" ? "Persona" : "Coach"}: ${photos(m)}${m.text.length > RECAP_CHARS ? `${m.text.slice(0, RECAP_CHARS)}…` : m.text}`);
+    .map((m) => `${m.role === "user" ? "Persona" : "Coach"}: ${photos(m)}${scanned(m)}${m.text.length > RECAP_CHARS ? `${m.text.slice(0, RECAP_CHARS)}…` : m.text}`);
   if (!lines.length) return text;
   return [
     "(Context: this conversation continues from an earlier session whose memory was lost. These are its most recent messages, oldest first. Do not mention this recap.)",
@@ -142,6 +144,21 @@ export function recapPrompt(history: AgentMessage[], text: string): string {
     "The person's new message:",
     text,
   ].join("\n");
+}
+
+/**
+ * Scanned products go before the person's words as structured text, so the
+ * model reads the label values instead of guessing them.
+ */
+export function withProducts(text: string, products: AgentProduct[]): string {
+  if (!products.length) return text;
+  const blocks = products.map((p) => `<scanned_product>\n${describeProduct(p.barcode, p.product)}\n</scanned_product>`);
+  const said = text.trim() ? `The person's message:\n${text}` : "The person sent only the scan: ask what they want to do with it (e.g. how much they ate).";
+  return [
+    "(The person scanned this product with the app and attached it to the message. To log a part of it, use estimate_portion with its barcode and their words for the amount, then log_meal with the returned logItem.)",
+    ...blocks,
+    said,
+  ].join("\n\n");
 }
 
 /**
@@ -166,15 +183,21 @@ export function userPrompt(threadId: string, text: string, attachments: AgentAtt
  * Starts a turn and returns at once; the turn runs to the end and is saved
  * whether or not anyone is listening. Throws `busy` if the thread already has one.
  */
-export function startTurn(threadId: string, text: string, run: QueryFn = query, attachments: AgentAttachment[] = []): { turn: Turn; done: Promise<void> } {
+export function startTurn(
+  threadId: string,
+  text: string,
+  run: QueryFn = query,
+  attachments: AgentAttachment[] = [],
+  products: AgentProduct[] = [],
+): { turn: Turn; done: Promise<void> } {
   if (turns().has(threadId)) throw new Error("busy");
   const history = listMessages(threadId);
-  const user = addMessage(threadId, "user", text, "done", attachments);
+  const user = addMessage(threadId, "user", text, "done", attachments, products);
   const assistant = addMessage(threadId, "assistant", "", "streaming");
   const turn: Turn = { threadId, messageId: assistant.id, events: [], listeners: new Set(), abortController: new AbortController(), stopped: false };
   turns().set(threadId, turn);
   emit(turn, { type: "start", messageId: assistant.id, userMessageId: user.id });
-  const done = runTurn(turn, history, text, attachments, run).finally(() => turns().delete(threadId));
+  const done = runTurn(turn, history, withProducts(text, products), attachments, run).finally(() => turns().delete(threadId));
   return { turn, done };
 }
 

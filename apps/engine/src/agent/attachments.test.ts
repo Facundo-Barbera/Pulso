@@ -133,7 +133,7 @@ test("text without photos still goes as a plain prompt", async () => {
 
 test("a recap marks the photos a message carried", () => {
   const photo = { id: "a", mime: "image/jpeg" as const, width: 1, height: 1 };
-  const base = { threadId: "t", tools: [], status: "done" as const, error: null, createdAt: 0 };
+  const base = { threadId: "t", tools: [], products: [], status: "done" as const, error: null, createdAt: 0 };
   const recap = recapPrompt(
     [
       { ...base, id: "1", role: "user", text: "", attachments: [photo, photo] },
