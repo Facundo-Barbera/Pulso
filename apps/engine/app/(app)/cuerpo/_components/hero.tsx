@@ -24,7 +24,7 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
           <span className="first-letter:uppercase">{date}</span>
           <span className="bg-muted text-foreground ml-auto rounded-full px-2.5 py-1 text-[12px]">{sourceLabel(scan)}</span>
         </div>
-        <div className="mt-5 flex flex-col gap-8 lg:flex-row lg:items-end">
+        <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-end lg:gap-8">
           <div className="min-w-0 lg:w-[38%]">
             <p className="text-muted-foreground text-[14px] font-medium">Peso</p>
             <p className="mt-1 flex items-baseline gap-2">
@@ -33,15 +33,15 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
             </p>
             <Change metric="weight" reading={readings.weight} latestAt={scan.measuredAt} goal={goals.get("weight")} className="mt-3" />
           </div>
-          <ul className="grid flex-1 gap-3 sm:grid-cols-3">
+          <ul className="grid flex-1 grid-cols-3 gap-2 sm:gap-3">
             {tiles.map((metric) => (
-              <li key={metric} className="bg-muted/60 rounded-2xl p-4">
-                <p className="text-muted-foreground flex items-center gap-1.5 text-[12px] font-medium">
-                  <span className="size-1.5 rounded-full" style={{ background: METRIC[metric].color }} />
+              <li key={metric} className="bg-muted/60 min-w-0 rounded-2xl p-3 sm:p-4">
+                <p className="text-muted-foreground flex items-center gap-1.5 truncate text-[12px] font-medium">
+                  <span className="size-1.5 shrink-0 rounded-full" style={{ background: METRIC[metric].color }} />
                   {METRIC[metric].label}
                 </p>
                 <p className="mt-1.5 flex items-baseline gap-1">
-                  <span className="tabular text-[28px] leading-none font-semibold tracking-tight">{readings[metric] ? kg(readings[metric].value) : "—"}</span>
+                  <span className="tabular text-[22px] leading-none font-semibold tracking-tight sm:text-[28px]">{readings[metric] ? kg(readings[metric].value) : "—"}</span>
                   <span className="text-muted-foreground text-[13px]">{METRIC[metric].unit}</span>
                 </p>
                 <Change metric={metric} reading={readings[metric]} latestAt={scan.measuredAt} goal={goals.get(metric)} compact className="mt-2" />

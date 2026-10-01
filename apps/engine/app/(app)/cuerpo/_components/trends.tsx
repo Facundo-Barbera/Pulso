@@ -29,14 +29,14 @@ export function TrendsCard({ trends, delay, className }: { trends: TrendView[]; 
     <Card delay={delay} className={className}>
       <div className="flex flex-wrap items-start justify-between gap-x-3">
         <CardTitle icon={LineChart} color="var(--domain-body)" title="Tendencia y proyección" />
-        <div role="tablist" aria-label="Métrica" className="bg-muted mb-4 flex rounded-xl p-1">
+        <div role="tablist" aria-label="Métrica" className="bg-muted mb-4 flex max-w-full overflow-x-auto rounded-xl p-1">
           {METRIC_ORDER.map((m) => (
             <button
               key={m}
               role="tab"
               aria-selected={m === metric}
               onClick={() => setMetric(m)}
-              className={cn("focus-visible:ring-ring min-h-8 rounded-lg px-3 text-[13px] font-medium outline-none focus-visible:ring-2", m === metric ? "bg-card shadow-1" : "text-muted-foreground hover:text-foreground")}
+              className={cn("focus-visible:ring-ring min-h-8 shrink-0 rounded-lg px-3 text-[13px] whitespace-nowrap font-medium outline-none focus-visible:ring-2", m === metric ? "bg-card shadow-1" : "text-muted-foreground hover:text-foreground")}
             >
               {METRIC[m].label}
             </button>

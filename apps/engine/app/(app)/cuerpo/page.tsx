@@ -58,7 +58,7 @@ export default function Cuerpo() {
       {latest ? (
         <>
           <BodyHero scan={latest} readings={body.readings} goals={goals} date={fmtLongDate(latest.measuredAt)} />
-          <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
             <TrendsCard trends={trends} delay={60} className="md:col-span-2" />
             <CompositionCard breakdown={breakdown} sheet={sheet} delay={110} />
             {segments && <SegmentalCard lean={segments.scan.segmentalLean} fat={segments.scan.segmentalFat} date={segments.date} delay={160} />}
@@ -75,7 +75,7 @@ export default function Cuerpo() {
           </div>
         </>
       ) : (
-        <div className="grid gap-5 lg:grid-cols-5">
+        <div className="grid gap-5 lg:grid-cols-5 [&>*]:min-w-0">
           <Card className="lg:col-span-3">
             <EmptyState icon={ScanLine} color="var(--domain-body)" title="Tu composición corporal" line="Importa el CSV o el QR de tu InBody para ver músculo, grasa y hacia dónde vas. También puedes cargar el peso a mano." />
             <div id="anadir" className="mx-auto max-w-lg">
