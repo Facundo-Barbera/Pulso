@@ -1,6 +1,6 @@
 import type { LiveSession } from "@pulso/contract";
 import { liveSessionInput } from "@/src/training/inputs";
-import { clearLive, getLive, putLive } from "@/src/training/live";
+import { endLive, getLive, putLive } from "@/src/training/live";
 import { deviceOf, NO_STORE, unpaired } from "../../auth";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +24,13 @@ export async function PUT(request: Request): Promise<Response> {
   return Response.json({ session: result.session }, { headers: NO_STORE });
 }
 
-/** Forgets the session in progress (finished or discarded). */
+/**
+ * Ends the session in progress. `?discard=1` just forgets it; otherwise done
+ * work not saved yet is saved as the finished session (same id, so the phone's
+ * `POST /sessions` upserts over it). → `{ ok, saved }`.
+ */
 export function DELETE(request: Request): Response {
   if (!deviceOf(request)) return unpaired();
-  clearLive();
-  return Response.json({ ok: true }, { headers: NO_STORE });
+  const discard = new URL(request.url).searchParams.get("discard") === "1";
+  return Response.json({ ok: true, saved: endLive(discard).saved != null }, { headers: NO_STORE });
 }

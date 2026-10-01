@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { CardioTarget, Exercise, LiveCardioClock, LiveExercise, LiveSession, LiveSet } from "@pulso/contract";
+import type { CardioLog, CardioTarget, Exercise, LiveCardioClock, LiveExercise, LiveSession, LiveSet, SessionInput, TrainingSession } from "@pulso/contract";
 import { db } from "../db";
-import { getExercise, listSessions, suggestLoad, TrainingError, unitOf } from "./store";
+import { getExercise, getSession, listSessions, saveSession, suggestLoad, TrainingError, unitOf } from "./store";
 import { withSupersets } from "./superset";
 import { formatBoth, formatWeight, snapKg } from "./units";
 
@@ -55,6 +55,45 @@ export function putLive(session: LiveSession, baseVersion: number, now = Date.no
 
 export function clearLive(id?: string): boolean {
   return (id ? db().run("DELETE FROM live_sessions WHERE id = ?", [id]) : db().run("DELETE FROM live_sessions")).changes > 0;
+}
+
+/** The work done in a live session, as the finished session the phone would post: done sets and logged cardio, in the order done. */
+export function sessionFromLive(live: LiveSession, endedAt: number): SessionInput {
+  const finite = (n: number | null | undefined) => (n != null && Number.isFinite(n) ? n : null);
+  const sets = live.exercises
+    .filter((ex) => ex.kind !== "cardio")
+    .flatMap((ex) => ex.sets.filter((s) => s.doneAt != null && Number.isFinite(s.weightKg) && Number.isFinite(s.reps)).map((s) => ({ exerciseId: ex.exerciseId, weightKg: s.weightKg, reps: s.reps, rpe: finite(s.rpe), doneAt: s.doneAt! })))
+    .sort((a, b) => a.doneAt - b.doneAt)
+    .map((s, setIndex) => ({ ...s, setIndex }));
+  const cardio: CardioLog[] = live.exercises
+    .flatMap((ex) => (ex.cardioLog ? [ex.cardioLog] : []))
+    .filter((c) => Number.isFinite(c.durationSeconds))
+    .map((c) => ({ ...c, distanceKm: finite(c.distanceKm), level: finite(c.level), inclinePercent: finite(c.inclinePercent), avgHr: finite(c.avgHr), kcal: finite(c.kcal) }))
+    .sort((a, b) => a.doneAt - b.doneAt);
+  return { id: live.id, programId: live.programId, dayId: live.dayId, name: live.name, startedAt: live.startedAt, endedAt: Math.max(endedAt, live.startedAt), notes: null, sets, cardio };
+}
+
+/**
+ * Ends the session in progress. Unless it is a discard, work done in it that
+ * the phone hasn't saved yet is saved now (same id, so the phone's own post
+ * later just replaces it): Terminar must never lose a workout, even when the
+ * phone's save never arrives. A save the store refuses keeps the live copy.
+ */
+export function endLive(discard: boolean, now = Date.now()): { saved: TrainingSession | null } {
+  const live = getLive();
+  if (live && !discard && !getSession(live.id)) {
+    const input = sessionFromLive(live, now);
+    if (input.sets.length > 0 || (input.cardio?.length ?? 0) > 0) {
+      try {
+        return { saved: saveSession(input).session };
+      } catch (error) {
+        if (error instanceof TrainingError) return { saved: null };
+        throw error;
+      }
+    }
+  }
+  clearLive();
+  return { saved: null };
 }
 
 /** Binds a Coach thread to the session in progress (kept across the phone's writes). */

@@ -10,13 +10,14 @@ import { POST as liveCoachPOST } from "@/app/api/mobile/training/live/coach/rout
 import { DELETE as liveDELETE, GET as liveGET, PUT as livePUT } from "@/app/api/mobile/training/live/route";
 import { DELETE as dayDELETE, PUT as dayPUT } from "@/app/api/mobile/training/program/days/[dayId]/route";
 import { GET as programGET } from "@/app/api/mobile/training/program/route";
+import { POST as sessionsPOST } from "@/app/api/mobile/training/sessions/route";
 import { GET as settingsGET, PUT as settingsPUT } from "@/app/api/mobile/training/settings/route";
 import { PUT as unitPUT } from "@/app/api/mobile/training/exercises/[id]/unit/route";
 import { createPairingCode, redeemPairing } from "../devices";
 import { EDB_ATTRIBUTION } from "./exercisedb";
 import { editLive } from "./live";
 import { clearMediaCache, proposeMedia, reviewMedia } from "./media";
-import { createProgram, saveSession } from "./store";
+import { createProgram, getSession, saveSession } from "./store";
 
 let token = "";
 beforeAll(() => {
@@ -141,6 +142,47 @@ test("the live session syncs both ways and binds a Coach thread", async () => {
 
   expect(((await liveGET(req()).json()) as { session: LiveSession }).session.version).toBe(2);
   expect(liveDELETE(req({ method: "DELETE" })).status).toBe(200);
+  expect(await liveGET(req()).json()).toEqual({ session: null });
+});
+
+test("Terminar never loses a workout: ending the live session saves its done work when the phone's save never came", async () => {
+  const at = (path: string, method: string, body?: unknown) => new Request(`http://pulso.test${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } });
+  const live = (id: string) => ({
+    id,
+    name: "Torso A",
+    startedAt: 5_000_000,
+    focus: 1,
+    exercises: [
+      { id: "r", exerciseId: "remo-maquina", name: "Remo en máquina", equipment: "machine", kind: "compound", repMin: 8, repMax: 10, restSeconds: 150, sets: [{ id: "r1", weightKg: 31.75146590, reps: 10, rpe: 0, doneAt: 5_060_000 }, { id: "r2", weightKg: 31.75146590, reps: 9, doneAt: 5_200_000 }, { id: "r3", weightKg: 31.75146590, reps: 8, doneAt: null }] },
+      { id: "c", exerciseId: "caminadora", name: "Cinta", equipment: "machine", kind: "cardio", repMin: 1, repMax: 1, restSeconds: 0, sets: [], cardio: { durationMinutes: 20 }, cutShort: { at: 6_000_000, reason: null }, cardioLog: { exerciseId: "caminadora", durationSeconds: 720.4, distanceKm: null, avgHr: 0, inclinePercent: 60, doneAt: 6_000_000 } },
+      { id: "s", exerciseId: "press-banca", name: "Press de banca", equipment: "barbell", kind: "compound", repMin: 6, repMax: 8, restSeconds: 120, skipped: true, sets: [{ id: "s1", weightKg: 60, reps: 8, doneAt: null }] },
+    ],
+    cardioClock: { exerciseId: "c", runningSince: null, accumulatedSeconds: 720.4 },
+  });
+
+  // The phone's copy keeps the synced clock and the cut-short mark; an impossible reading is dropped, not refused.
+  const put = (await (await livePUT(at("/api/mobile/training/live", "PUT", { session: live("end-1"), baseVersion: 0 }))).json()) as { session: LiveSession };
+  expect(put.session.cardioClock).toEqual({ exerciseId: "c", runningSince: null, accumulatedSeconds: 720.4 });
+  expect(put.session.exercises[1]).toMatchObject({ cutShort: { at: 6_000_000, reason: null }, cardioLog: { avgHr: null, inclinePercent: null } });
+  expect(put.session.exercises[0]!.sets[0]!.rpe).toBeNull();
+
+  const ended = (await liveDELETE(at("/api/mobile/training/live", "DELETE")).json()) as { saved: boolean };
+  expect(ended.saved).toBe(true);
+  expect(await liveGET(req()).json()).toEqual({ session: null });
+  const saved = getSession("end-1")!;
+  expect(saved.sets.map((s) => [s.exerciseId, s.setIndex, s.reps])).toEqual([["remo-maquina", 0, 10], ["remo-maquina", 1, 9]]);
+  expect(saved.cardio).toMatchObject([{ exerciseId: "caminadora", durationSeconds: 720 }]);
+  expect(saved.dayId).toBeNull();
+
+  // The phone's own save arriving later replaces it (same id), not duplicates it.
+  const post = await sessionsPOST(at("/api/mobile/training/sessions", "POST", { id: "end-1", name: "Torso A", startedAt: 5_000_000, endedAt: 7_000_000, sets: [{ exerciseId: "remo-maquina", setIndex: 0, weightKg: 31.75, reps: 10, rpe: 0, doneAt: 5_060_000 }], cardio: [{ exerciseId: "caminadora", durationSeconds: 720, avgHr: 0, doneAt: 6_000_000 }] }));
+  expect(post.status).toBe(200);
+  expect(getSession("end-1")!.sets).toHaveLength(1);
+
+  // A discard forgets it; nothing is saved.
+  await livePUT(at("/api/mobile/training/live", "PUT", { session: live("end-2"), baseVersion: 0 }));
+  expect(((await liveDELETE(at("/api/mobile/training/live?discard=1", "DELETE")).json()) as { saved: boolean }).saved).toBe(false);
+  expect(getSession("end-2")).toBeUndefined();
   expect(await liveGET(req()).json()).toEqual({ session: null });
 });
 
