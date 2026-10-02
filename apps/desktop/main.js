@@ -5,11 +5,9 @@
  */
 const { app, BrowserWindow, shell } = require("electron");
 
-const URL = process.env.PULSO_DESKTOP_URL;
-if (!URL) {
-  console.error("PULSO_DESKTOP_URL is not set. Start with `bun run dev` from the repo root.");
-  process.exit(1);
-}
+// The dev runner passes the URL; the installed app (scripts/install-desktop.sh) uses the engine's fixed port.
+const URL = process.env.PULSO_DESKTOP_URL || "http://127.0.0.1:3230";
+const fromRunner = Boolean(process.env.PULSO_DESKTOP_URL);
 
 app.setName("Pulso");
 
@@ -55,8 +53,23 @@ function createWindow() {
     }
   });
 
+  // The engine down (restarting, or its disk unplugged): a quiet local page that
+  // retries with backoff, instead of a renderer hammering a dead server.
+  let retry = 0;
+  win.webContents.on("did-fail-load", (_event, _code, _description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || !win || failedUrl.startsWith("data:")) return;
+    win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(OFFLINE)}`);
+    const delay = Math.min(30_000, 2_000 * 2 ** retry++);
+    setTimeout(() => win?.loadURL(URL), delay);
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (!win?.webContents.getURL().startsWith("data:")) retry = 0;
+  });
+
   win.loadURL(URL);
 }
+
+const OFFLINE = `<!doctype html><html lang="es"><meta name="color-scheme" content="dark light"><body style="margin:0;height:100vh;display:grid;place-items:center;font:15px -apple-system,system-ui;color:#9a9aa0;background:transparent;-webkit-app-region:drag"><div style="text-align:center"><p style="font-size:17px;color:inherit;margin:0 0 6px;font-weight:600">Esperando a Pulso…</p><p style="margin:0">El motor no responde. Se reconecta solo.</p></div></body></html>`;
 
 app.on("second-instance", () => {
   if (!win) return createWindow();
@@ -71,8 +84,9 @@ app.on("activate", () => {
 app.on("window-all-closed", () => app.quit());
 
 // Quit with the runner: if it is killed, nothing would stop this process otherwise.
+// The installed app has no runner (its parent is launchd), so this is runner-only.
 const parent = process.ppid;
-setInterval(() => {
+if (fromRunner) setInterval(() => {
   try {
     process.kill(parent, 0);
   } catch {
