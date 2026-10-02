@@ -106,6 +106,7 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   substance_summary: "read",
   delete_substance_use: "write",
   set_substance_goal: "write",
+  consult_knowledge: "read",
 };
 
 /** Tools touching the profile, medications or Sustancias: their descriptions say so to outside agents. */
