@@ -125,4 +125,24 @@ final class CoachTests: XCTestCase {
         launcher.photo("Registra esto")
         XCTAssertEqual(launcher.take()?.request, .photo("Registra esto"))
     }
+
+    private func message(_ id: String, _ role: AgentMessage.Role, _ text: String = "") -> AgentMessage {
+        AgentMessage(id: id, threadId: "t1", role: role, text: text, tools: [], status: .done, error: nil, createdAt: 0)
+    }
+
+    /// Re-reading a thread after a send must not re-key the rows on screen (the chat went blank).
+    func testReloadKeepsTheLocalIdsOfRowsOnScreen() {
+        let shown = [message("m1", .user), message("m2", .assistant), message("local-a-user", .user, "hola"), message("local-a", .assistant)]
+        let saved = [message("m1", .user), message("m2", .assistant), message("m3", .user, "hola"), message("m4", .assistant, "¡Hola!")]
+        let kept = AgentMessage.keepingIds(of: shown, in: saved)
+        XCTAssertEqual(kept.map(\.id), ["m1", "m2", "local-a-user", "local-a"])
+        XCTAssertEqual(kept.last?.text, "¡Hola!")
+    }
+
+    func testReloadTakesServerIdsWhereRowsDoNotLineUp() {
+        // A send the Mac never saved: nothing to keep.
+        XCTAssertEqual(AgentMessage.keepingIds(of: [message("m1", .user), message("local-a", .assistant)], in: [message("m1", .user)]).map(\.id), ["m1"])
+        XCTAssertEqual(AgentMessage.keepingIds(of: [message("local-a", .assistant)], in: [message("m1", .user), message("m2", .assistant)]).map(\.id), ["m1", "m2"])
+        XCTAssertEqual(AgentMessage.keepingIds(of: [], in: [message("m1", .user)]).map(\.id), ["m1"])
+    }
 }

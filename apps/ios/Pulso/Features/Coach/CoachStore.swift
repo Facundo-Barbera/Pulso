@@ -93,7 +93,7 @@ final class ChatStore {
             let detail = try await api.agentThread(threadId)
             title = detail.thread.title
             guard followTask == nil else { return }
-            messages = detail.messages
+            messages = AgentMessage.keepingIds(of: messages, in: detail.messages)
             if detail.running, let last = messages.indices.last, messages[last].status == .streaming {
                 // The re-attached stream replays the turn from its start.
                 messages[last].text = ""
@@ -174,7 +174,7 @@ final class ChatStore {
                 continue
             }
             title = detail.thread.title
-            messages = detail.messages
+            messages = AgentMessage.keepingIds(of: messages, in: detail.messages)
             guard detail.running, let last = messages.indices.last, messages[last].status == .streaming else {
                 finished = true
                 break
@@ -211,7 +211,7 @@ final class ChatStore {
         guard let index = messages.indices.last, messages[index].role == .assistant else { return }
         switch event {
         case .start:
-            // Ids stay local so rows keep their identity; a reload brings the server's.
+            // Ids stay local so rows keep their identity, on reloads too (`keepingIds`).
             break
         case let .text(delta):
             messages[index].text += delta
@@ -241,6 +241,21 @@ final class ChatStore {
             messages[index].error = message
         } else {
             error = message
+        }
+    }
+}
+
+extension AgentMessage {
+    /// The saved conversation, keeping the ids of rows already on screen. A local
+    /// placeholder and the message the Mac saved for it are the same row, matched by
+    /// position and role: re-keyed rows are rebuilt, and a lazy stack rebuilt under a
+    /// bottom-pinned scroll view shows nothing until the next drag.
+    static func keepingIds(of shown: [AgentMessage], in saved: [AgentMessage]) -> [AgentMessage] {
+        saved.enumerated().map { index, message in
+            guard shown.indices.contains(index), shown[index].role == message.role, shown[index].id.hasPrefix("local-") else { return message }
+            var kept = message
+            kept.id = shown[index].id
+            return kept
         }
     }
 }
