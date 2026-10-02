@@ -408,6 +408,24 @@ struct AdherenceReport: Codable, Equatable {
     var days: [AdherenceDay]
 }
 
+/// `GET /medication/nudges`: an as-needed med that looks scheduled (logged at
+/// about the same time daily, about weekly, or a drug usually taken so).
+/// Accepting opens the editor prefilled; nothing changes until it is saved.
+struct ScheduleNudge: Codable, Identifiable, Equatable {
+    enum Cadence: String, Codable { case daily, weekly }
+    var medicationId: String
+    var name: String
+    var cadence: Cadence
+    /// "Levotiroxina parece diaria. ¿Ponerle horario?"
+    var title: String
+    /// "En ayunas al despertar · 09:50"
+    var detail: String
+    var schedule: MedicationSchedule
+    /// Prefilled indications when the med has none ("en ayunas").
+    var instructions: String?
+    var id: String { medicationId }
+}
+
 /// The engine speaks local "yyyy-MM-dd" / "HH:mm"; these convert both ways in the phone's calendar.
 enum LocalClock {
     private static func formatter(_ format: String) -> DateFormatter {

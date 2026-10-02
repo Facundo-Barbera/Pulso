@@ -209,6 +209,45 @@ final class MedicationTests: XCTestCase {
         let slots = (0..<80).map { i in slot("m\(i)", "23:00", date: "2026-10-02", time: "23:00") }
         XCTAssertEqual(MedicationNotifications.plan(slots: slots, now: at("2026-10-01", "00:00"), calendar: calendar).count, MedicationNotifications.maxPending)
     }
+
+    // MARK: Today's timeline
+
+    private func item(_ name: String, _ schedule: MedicationSchedule, kind: MedicationKind = .medicamento) -> Medication {
+        Medication(id: name, name: name, kind: kind, dose: 1, unit: "comprimido", form: nil, instructions: nil, schedule: schedule,
+                   startDate: "2026-09-01", endDate: nil, stock: nil, lowStockThreshold: nil, lowStock: false, active: true, notes: nil)
+    }
+
+    func testTimelineGivesEveryMedOneStateForToday() {
+        let today = "2026-10-01" // jueves
+        let now = at(today, "12:00")
+        let fixed = { (time: String, days: [Int]) in MedicationSchedule(asNeeded: false, times: [time], days: days) }
+        let meds = [
+            item("Levotiroxina", .asNeededOnly),
+            item("Semaglutida", .asNeededOnly),
+            item("Creatina", MedicationSchedule(asNeeded: false, times: [], days: [], training: TrainingRule(restDayTime: nil)), kind: .suplemento),
+            item("Magnesio", fixed("08:00", [])),
+            item("Omega 3", fixed("11:30", [])),
+            item("Hierro", fixed("10:00", [7])),
+            item("Zinc", fixed("15:00", [])),
+        ]
+        let slot = { (id: String, time: String) in
+            DoseSlot(medicationId: id, name: id, kind: .medicamento, dose: 1, unit: "comprimido", date: today, slot: time, time: time, status: .pendiente)
+        }
+        let day = MedicationDay(date: today, slots: [slot("Magnesio", "08:00"), slot("Omega 3", "11:30"), slot("Zinc", "15:00")], asNeeded: [], next: nil)
+        let ms = { (date: Date) in date.timeIntervalSince1970 * 1000 }
+        let history = [
+            DoseEvent(id: "e1", medicationId: "Levotiroxina", date: today, scheduledTime: nil, status: .tomada, takenAt: ms(at(today, "09:56"))),
+            DoseEvent(id: "e2", medicationId: "Semaglutida", date: "2026-09-27", scheduledTime: nil, status: .tomada, takenAt: ms(at("2026-09-27", "10:20"))),
+        ]
+
+        let items = TodayItem.build(medications: meds, day: day, history: history, now: now, calendar: calendar)
+        XCTAssertEqual(items.map(\.medication.name), ["Magnesio", "Levotiroxina", "Omega 3", "Zinc", "Semaglutida", "Creatina", "Hierro"])
+        XCTAssertEqual(items.map(\.state), [.atrasada, .aDemanda, .ahora, .pendiente, .aDemanda, .noToca, .noToca])
+        XCTAssertEqual(items.map(\.line)[2...], ["Toca ahora", "En 3 h", "Última el domingo", "Hoy descansas · solo los días de entreno", "Toca el domingo"])
+        XCTAssertEqual(items[0].line, "Se pasó hace 4 h")
+        XCTAssertEqual(items[1].at, "09:56")
+        XCTAssertEqual(items.filter(\.isLeft).map(\.medication.name), ["Magnesio", "Omega 3", "Zinc"])
+    }
 }
 
 private extension MedicationSchedule {

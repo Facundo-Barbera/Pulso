@@ -163,3 +163,15 @@ test("every tool states the medical-advice boundary", () => {
   expect(medicationTools.map((t) => t.name).sort()).toEqual(["add_medication", "get_adherence", "list_medications", "log_dose", "update_medication"]);
   for (const t of medicationTools) expect(t.description).toContain("doctor or pharmacist");
 });
+
+test("giving an as-needed med a schedule moves today's intakes onto today's open slots", () => {
+  const { date: today } = localNow();
+  const levo = addMedication({ name: "Levotiroxina", dose: 1, unit: "comprimido" }, today);
+  logDose({ medicationId: levo.id, date: today, status: "tomada", takenAt: Date.now() });
+  logDose({ medicationId: levo.id, date: "2026-01-01", status: "tomada", takenAt: Date.now() });
+  updateMedication(levo.id, { schedule: { asNeeded: false, times: ["07:30"], days: [], training: null, meals: [], bedtime: false }, startDate: today }, today);
+  expect(medicationDay(today, "23:59").slots.map((s) => [s.slot, s.status])).toEqual([["07:30", "tomada"]]);
+  expect(medicationDay(today, "23:59").asNeeded).toEqual([]);
+  // Other days keep their intakes as they were.
+  expect(dosesBetween("2026-01-01", "2026-01-01")[0]!.scheduledTime).toBeNull();
+});

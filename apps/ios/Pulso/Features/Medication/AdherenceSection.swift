@@ -1,24 +1,41 @@
 import Charts
 import SwiftUI
 
-/// Adherence: 7/30-day rates, a 30-day calendar heatmap and per-med streaks.
+/// Constancia: 7/30-day rates and the streak in one card; the 30-day heatmap
+/// once there is a week of scheduled doses to read, and each med's rate when
+/// there is more than one.
 struct AdherenceSection: View {
     let report: AdherenceReport
 
+    /// Days with scheduled doses the heatmap needs before it says anything.
+    static let heatmapMinDays = 7
+
     var body: some View {
         Card {
-            CardTitle(text: "Adherencia", systemImage: "chart.bar.xaxis")
-            HStack(spacing: 0) {
-                RateStat(label: "7 días", window: report.overall.last7)
-                RateStat(label: "30 días", window: report.overall.last30)
-                StreakStat(current: report.overall.currentStreak, best: report.overall.bestStreak)
+            CardTitle(text: "Constancia", systemImage: "chart.line.uptrend.xyaxis")
+            if report.overall.last30.due == 0 {
+                Text("Cuando pase la hora de alguna toma con horario verás aquí cuántas cumples y tu racha.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 0) {
+                    RateStat(label: "7 días", window: report.overall.last7)
+                    RateStat(label: "30 días", window: report.overall.last30)
+                    StreakStat(current: report.overall.currentStreak, best: report.overall.bestStreak)
+                }
+                if report.days.count(where: { $0.due > 0 }) >= Self.heatmapMinDays {
+                    AdherenceHeatmap(days: report.days)
+                        .padding(.top, 4)
+                } else {
+                    Text("\(report.overall.last30.taken) de \(report.overall.last30.due) tomas cumplidas. El mapa del mes aparece tras \(Self.heatmapMinDays) días con tomas.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if report.medications.count > 1 {
+                    Divider()
+                    PerMedicationBars(medications: report.medications)
+                }
             }
-            AdherenceHeatmap(days: report.days)
-                .padding(.top, 4)
-        }
-        Card {
-            CardTitle(text: "Por medicamento", systemImage: "flame")
-            PerMedicationBars(medications: report.medications)
         }
     }
 }

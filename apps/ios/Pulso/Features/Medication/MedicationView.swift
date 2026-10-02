@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Full medication screen, pushed from `MedicationTodayCard`: today's ring as
-/// the hero, today's doses, as-needed quick log, adherence and the list.
+/// Full medication screen, pushed from `MedicationTodayCard`: what is left
+/// today as the hero, schedule suggestions, one timeline of today, constancy,
+/// what you take and the history.
 struct MedicationView: View {
     let model: PulsoModel
     @State private var store = MedicationStore.shared
@@ -11,29 +12,47 @@ struct MedicationView: View {
     private enum EditTarget: Identifiable {
         case new(MedicationKind)
         case existing(Medication)
+        case suggested(Medication, ScheduleNudge)
         var id: String {
             switch self {
             case let .new(kind): "new-\(kind.rawValue)"
             case let .existing(med): med.id
+            case let .suggested(med, _): "suggested-\(med.id)"
             }
         }
     }
 
     var body: some View {
-        ScrollView {
-            if store.loaded && store.medications.isEmpty {
-                emptyState
-            } else {
-                VStack(spacing: 16) {
-                    hero
-                    if let day = store.day, !day.slots.isEmpty { todayCard(day) }
-                    if !store.asNeeded.isEmpty { asNeededCard }
-                    if let report = store.adherence, !report.medications.isEmpty { AdherenceSection(report: report) }
-                    medicationsCard
-                    MedicationHistoryCard(store: store)
+        // Rebuilt each minute so «Toca ahora» / «Se pasó» follow the clock.
+        TimelineView(.everyMinute) { context in
+            let items = TodayItem.build(medications: store.medications, day: store.day, history: store.history, now: context.date)
+            ScrollView {
+                if store.loaded && store.medications.isEmpty {
+                    emptyState
+                } else {
+                    VStack(spacing: 16) {
+                        MedicationHero(items: items, streak: store.adherence?.overall.currentStreak ?? 0)
+                        if !store.nudges.isEmpty {
+                            ScheduleNudgesCard(nudges: store.nudges, store: store) { nudge in
+                                if let med = store.medications.first(where: { $0.id == nudge.medicationId }) { editing = .suggested(med, nudge) }
+                            }
+                        }
+                        if !items.isEmpty {
+                            Card {
+                                CardTitle(text: "Hoy", systemImage: "calendar")
+                                TodayTimeline(items: items, store: store, now: context.date)
+                                Text("Mantén pulsada una toma para omitirla o deshacerla.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        if let report = store.adherence, !report.medications.isEmpty { AdherenceSection(report: report) }
+                        medicationsCard
+                        MedicationHistoryCard(store: store)
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 24)
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -64,10 +83,12 @@ struct MedicationView: View {
         }
         .animation(.snappy, value: store.day)
         .animation(.snappy, value: store.medications)
+        .animation(.snappy, value: store.nudges)
         .sheet(item: $editing) { target in
             switch target {
             case let .new(kind): MedicationEditor(store: store, medication: nil, kind: kind)
             case let .existing(med): MedicationEditor(store: store, medication: med)
+            case let .suggested(med, nudge): MedicationEditor(store: store, medication: med, suggestion: nudge)
             }
         }
         .sheet(isPresented: $importing) { HealthMedicationImport(store: store) }
@@ -75,105 +96,18 @@ struct MedicationView: View {
 
     // MARK: Sections
 
-    private var hero: some View {
-        let taken = store.takenToday
-        let total = store.day?.slots.count ?? 0
-        // Without a schedule there is no target: the ring fills once something is taken.
-        let progress = total > 0 ? min(1, Double(store.day?.taken ?? 0) / Double(total)) : (taken > 0 ? 1 : 0)
-        return VStack(spacing: 14) {
-            ZStack {
-                Circle().stroke(Color.accentColor.opacity(0.15), lineWidth: 18)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(
-                        AngularGradient(colors: [Color.accentColor, Theme.body], center: .center),
-                        style: StrokeStyle(lineWidth: 18, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                VStack(spacing: 2) {
-                    let shown = total > 0 ? (store.day?.taken ?? 0) : taken
-                    Text("\(shown)")
-                        .font(.system(size: 54, weight: .bold, design: .rounded))
-                        .contentTransition(.numericText(value: Double(shown)))
-                    Text(total > 0 ? "de \(total) tomas" : taken == 0 ? "sin tomas hoy" : taken == 1 ? "toma hoy" : "tomas hoy")
-                        .font(.subheadline)
+    /// What you take, medicines then supplements, in one card; a row opens its editor.
+    private var medicationsCard: some View {
+        Card {
+            CardTitle(text: "Lo que tomas", systemImage: "list.bullet")
+            LowStockNote(medications: store.lowStock)
+            ForEach(MedicationKind.allCases) { kind in
+                let meds = store.medications.filter { $0.kind == kind }
+                if !meds.isEmpty {
+                    Text(kind == .medicamento ? "MEDICAMENTOS" : "SUPLEMENTOS")
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .padding(.horizontal, 24)
-            }
-            .frame(width: 190, height: 190)
-            .animation(.snappy, value: taken)
-
-            if let next = store.day?.next, let time = next.time {
-                Label("Próxima: \(next.name) · \(LocalClock.display(time))", systemImage: "bell.badge")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .glassEffect(.regular, in: .capsule)
-                    .padding(.horizontal)
-            } else if total > 0 && taken == total {
-                Label("Todo tomado por hoy", systemImage: "checkmark.seal.fill")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.body)
-                    .symbolEffect(.bounce, value: taken)
-            }
-            if let streak = store.adherence?.overall.currentStreak, streak > 1 {
-                Label("\(streak) días seguidos sin fallar", systemImage: "flame.fill")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.energy)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-    }
-
-    private func todayCard(_ day: MedicationDay) -> some View {
-        Card {
-            CardTitle(text: "Hoy", systemImage: "calendar")
-            DoseGroupsView(slots: day.slots, store: store)
-            Text("Mantén pulsado una toma para omitirla o deshacerla.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-    }
-
-    private var asNeededCard: some View {
-        Card {
-            CardTitle(text: "Cuando haga falta", systemImage: "hand.tap")
-            ForEach(store.asNeeded) { med in
-                let count = store.day?.asNeeded.count { $0.medicationId == med.id } ?? 0
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(med.name).font(.body.weight(.medium))
-                        Text(count == 0 ? med.doseText : "\(med.doseText) · \(count) hoy")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .contentTransition(.numericText())
-                    }
-                    Spacer(minLength: 8)
-                    Button("Tomé una", systemImage: "plus") { Task { await store.takeNow(med) } }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                        .sensoryFeedback(.success, trigger: count)
-                }
-            }
-        }
-    }
-
-    /// "Medicamentos" and "Suplementos", each in its own card.
-    @ViewBuilder private var medicationsCard: some View {
-        ForEach(MedicationKind.allCases) { kind in
-            let meds = store.medications.filter { $0.kind == kind }
-            if !meds.isEmpty {
-                Card {
-                    CardTitle(text: kind == .medicamento ? "Medicamentos" : "Suplementos", systemImage: kind.symbol)
-                    LowStockNote(medications: store.lowStock.filter { $0.kind == kind })
+                        .padding(.top, 4)
                     ForEach(meds) { med in
                         Button { editing = .existing(med) } label: { MedicationRow(medication: med) }
                             .buttonStyle(.plain)
@@ -219,6 +153,139 @@ struct MedicationView: View {
         }
         .padding(32)
         .padding(.top, 60)
+    }
+}
+
+/// What is left today, never a ratio mixing scheduled and as-needed doses: the
+/// ring is today's scheduled doses settled; the middle, how many are left.
+private struct MedicationHero: View {
+    let items: [TodayItem]
+    let streak: Int
+
+    private var left: [TodayItem] { items.filter(\.isLeft) }
+    private var slots: [TodayItem] { items.filter { $0.slot != nil } }
+    /// Taken today by the clock: "Levotiroxina 9:56".
+    private var taken: [(name: String, at: String)] {
+        items.flatMap { item -> [(name: String, at: String)] in
+            if item.state == .tomada { return [(item.medication.name, item.at ?? "")] }
+            if item.state == .aDemanda {
+                return item.intakes.map { (item.medication.name, $0.takenAt.map { LocalClock.time(Date(timeIntervalSince1970: $0 / 1000)) } ?? "") }
+            }
+            return []
+        }
+        .sorted { $0.at < $1.at }
+    }
+    private var free: Bool { slots.isEmpty && taken.isEmpty }
+    private var done: Bool { left.isEmpty && !free }
+
+    private var progress: Double {
+        if slots.isEmpty { return taken.isEmpty ? 0 : 1 }
+        return Double(slots.count { $0.state == .tomada || $0.state == .omitida }) / Double(slots.count)
+    }
+
+    private var headline: String {
+        if !left.isEmpty {
+            var seen = Set<String>()
+            let names = left.map(\.medication.name).filter { seen.insert($0).inserted }
+            return "Te falta: \(names.formatted(.list(type: .and)))"
+        }
+        return free ? "Hoy no te toca nada" : "Todo listo por hoy"
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle().stroke((done ? Theme.body : Color.accentColor).opacity(0.15), lineWidth: 18)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        done ? AnyShapeStyle(Theme.body.gradient) : AnyShapeStyle(AngularGradient(colors: [Color.accentColor, Theme.body], center: .center)),
+                        style: StrokeStyle(lineWidth: 18, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                VStack(spacing: 2) {
+                    if left.isEmpty {
+                        Image(systemName: free ? "moon.zzz.fill" : "checkmark")
+                            .font(.system(size: 48, weight: .bold))
+                            .foregroundStyle(free ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.body))
+                            .symbolEffect(.bounce, value: done)
+                        Text(free ? "Libre" : "Listo").font(.subheadline).foregroundStyle(.secondary)
+                    } else {
+                        Text("\(left.count)")
+                            .font(.system(size: 58, weight: .bold, design: .rounded))
+                            .contentTransition(.numericText(value: Double(left.count)))
+                        Text("por tomar").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            }
+            .frame(width: 184, height: 184)
+            .animation(.snappy, value: progress)
+            .sensoryFeedback(.success, trigger: done) { _, now in now }
+
+            Text(headline)
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(done ? AnyShapeStyle(Theme.body) : AnyShapeStyle(.primary))
+                .contentTransition(.opacity)
+
+            if !left.isEmpty {
+                // One capsule per dose still to take, with when.
+                FlowChips(items: left)
+            }
+            if !taken.isEmpty {
+                Text("Tomado hoy: " + taken.map { "\($0.name) \(LocalClock.display($0.at))" }.joined(separator: " · "))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if streak > 1 && !left.contains(where: { $0.state == .atrasada }) {
+                Label("\(streak) días seguidos sin fallar", systemImage: "flame.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.energy)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .padding(.horizontal)
+    }
+}
+
+/// The doses still to take as glass capsules: "Omega 3 · era a las 17:30".
+private struct FlowChips: View {
+    let items: [TodayItem]
+
+    var body: some View {
+        // Up to three side by side when they fit, else stacked.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { chips }
+            VStack(spacing: 8) { chips }
+        }
+    }
+
+    private var chips: some View {
+        ForEach(items) { item in
+            HStack(spacing: 5) {
+                if item.state == .entreno { Image(systemName: "figure.strengthtraining.traditional").foregroundStyle(Theme.training) }
+                Text(item.medication.name).fontWeight(.semibold)
+                Text("· \(when(item))").foregroundStyle(item.state == .atrasada ? AnyShapeStyle(Theme.energy) : AnyShapeStyle(.secondary))
+            }
+            .font(.footnote)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .glassEffect(.regular.tint(item.state == .atrasada ? Theme.energy.opacity(0.18) : nil), in: .capsule)
+        }
+    }
+
+    private func when(_ item: TodayItem) -> String {
+        switch item.state {
+        case .entreno: "al terminar de entrenar"
+        case .atrasada: "era a las \(item.at.map(LocalClock.display) ?? "")"
+        case .ahora: "ahora"
+        default: "a las \(item.at.map(LocalClock.display) ?? "")"
+        }
     }
 }
 

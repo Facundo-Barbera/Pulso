@@ -1,16 +1,18 @@
-import type { AdherenceReport, AdherenceWindow, DoseSlot, Medication, MedicationKind } from "@pulso/contract";
-import { BellRing, CalendarCheck, ChartColumn, CircleCheckBig, Dumbbell, Flame, Hand, History, List, Pill, Tablets, TriangleAlert, type LucideIcon } from "lucide-react";
+import type { AdherenceReport, AdherenceWindow, Medication, MedicationKind } from "@pulso/contract";
+import { CalendarCheck, Check, CircleCheckBig, Dumbbell, Flame, History, List, Pill, Tablets, TrendingUp, TriangleAlert, type LucideIcon } from "lucide-react";
+import { cookies } from "next/headers";
 import { TIME } from "@/src/medication/schedule";
-import { medicationPage, scheduleLine, slotLabel, unitFor, type MedicationPage } from "@/src/web/medication";
+import { isLeft, medicationPage, scheduleLine, slotLabel, unitFor, type MedicationPage, type TodayItem, type TodayState } from "@/src/web/medication";
 import { Card, CardTitle } from "../../_ui/card";
 import { cn } from "../../_ui/cn";
 import { EmptyState } from "../../_ui/empty-state";
 import { fmtDayLabel, fmtLongDate, fmtNumber, fmtTime } from "../../_ui/format";
 import { Page, PageHeader } from "../../_ui/page-header";
 import { Ring } from "../../_ui/ring";
+import { NUDGES_COOKIE } from "./_components/cookies";
 import { DeleteEntryButton, DoseActions, TakeOneButton } from "./_components/doses";
 import { AddMedicationButton, EditMedicationRow, MedicationEditorProvider } from "./_components/editor";
-import { MOMENT_ICON } from "./_components/moment-icons";
+import { ScheduleNudges } from "./_components/nudges";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Medicación y suplementos" };
@@ -19,22 +21,24 @@ const MED = "var(--domain-medication)";
 
 const pct = (w: AdherenceWindow) => (w.rate === null ? null : Math.round(w.rate * 100));
 const amount = (dose: number, unit: string) => `${fmtNumber(dose, 2)} ${unitFor(dose, unit)}`;
+const names = (items: TodayItem[]) => new Intl.ListFormat("es").format([...new Set(items.map((i) => i.medication.name))]);
 
 const KIND: Record<MedicationKind, { title: string; icon: LucideIcon }> = { medicamento: { title: "Medicamentos", icon: Pill }, suplemento: { title: "Suplementos", icon: Tablets } };
 
-/** "a las 09:00", or the moment with its time: "con el desayuno (08:00)". */
-const when = (slot: DoseSlot) => (slot.moment === "hora" || slot.moment === "entreno" ? `a las ${slot.time}` : `${slotLabel(slot.slot)} (${slot.time})`);
+/** The heatmap needs this many days with scheduled doses in the last 30 to say anything. */
+const HEATMAP_MIN_DAYS = 7;
 
-/** Medicación y suplementos: today's progress as the hero, the doses to tick, as-needed meds, adherence, what you take and the history. */
-export default function Medicacion() {
+/** Medicación y suplementos: what is left today as the hero, one timeline of today, schedule suggestions, constancy, what you take and the history. */
+export default async function Medicacion() {
   const page = medicationPage();
+  const off = (await cookies()).get(NUDGES_COOKIE)?.value.split(".") ?? [];
+  const nudges = page.nudges.filter((n) => !off.includes(n.medicationId));
   const empty = page.medications.length === 0;
-  // With only as-needed meds there is nothing to schedule or score: lead with what was taken.
   const scheduled = page.medications.some((m) => m.active && !m.schedule.asNeeded);
   return (
     <MedicationEditorProvider today={page.date}>
       <Page>
-        <PageHeader eyebrow={fmtLongDate(new Date(`${page.date}T12:00:00`))} title="Medicación y suplementos" subtitle={empty ? undefined : "Marca cada toma y lleva la cuenta sin pensar."} actions={!empty && <AddMedicationButton />} />
+        <PageHeader eyebrow={fmtLongDate(new Date(`${page.date}T12:00:00`))} title="Medicación y suplementos" actions={!empty && <AddMedicationButton />} />
         {empty ? (
           <Card>
             <EmptyState icon={Pill} color={MED} title="Anota tus medicamentos y suplementos" line="A una hora, con una comida o después de entrenar: Pulso te recuerda cada toma en el iPhone y lleva tu adherencia." />
@@ -46,13 +50,18 @@ export default function Medicacion() {
         ) : (
           <>
             <Hero page={page} />
-            <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {scheduled && <TodayCard page={page} delay={60} />}
-              {page.asNeeded.length > 0 && <AsNeededCard page={page} delay={110} />}
-              {!scheduled && <HistoryCard page={page} delay={160} />}
-              {scheduled && <AdherenceCard report={page.adherence} delay={160} />}
-              <MedicationsCard medications={page.medications} delay={210} />
-              {scheduled && <HistoryCard page={page} delay={260} />}
+            {nudges.length > 0 && (
+              <div className="mt-5">
+                <ScheduleNudges nudges={nudges} medications={page.medications} delay={40} />
+              </div>
+            )}
+            <div className="mt-5 grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+              <TodayCard page={page} delay={60} />
+              <div className="grid min-w-0 gap-5 md:col-span-2 md:grid-cols-2 xl:col-span-1 xl:grid-cols-1">
+                {scheduled && <ConstancyCard report={page.adherence} delay={110} />}
+                <MedicationsCard medications={page.medications} delay={160} />
+              </div>
+              <HistoryCard page={page} delay={210} />
             </div>
           </>
         )}
@@ -61,71 +70,66 @@ export default function Medicacion() {
   );
 }
 
+/** What is left today, never a ratio mixing scheduled and as-needed doses. */
 function Hero({ page }: { page: MedicationPage }) {
-  if (!page.medications.some((m) => m.active && !m.schedule.asNeeded)) return <AsNeededHero page={page} />;
-  const { slots, next } = page.day;
-  const taken = slots.filter((s) => s.status === "tomada").length;
-  // Everything taken today, scheduled or not, newest first — as-needed doses count here too.
-  const takenToday = page.history.find((d) => d.date === page.date)?.entries.filter((e) => e.status === "tomada") ?? [];
+  const left = page.today.filter(isLeft);
+  const taken = page.today
+    .flatMap((i) => (i.state === "tomada" ? [{ name: i.medication.name, at: i.at }] : i.state === "a-demanda" ? i.intakes.map((e) => ({ name: e.name, at: e.takenAt ? fmtTime(e.takenAt) : null })) : []))
+    .sort((a, b) => (a.at ?? "").localeCompare(b.at ?? ""));
+  // The ring is the scheduled doses alone: settled (taken or skipped) out of today's.
+  const slots = page.today.filter((i) => i.slot);
+  const settled = slots.filter((i) => i.state === "tomada" || i.state === "omitida").length;
+  const late = left.some((i) => i.state === "atrasada");
   const streak = page.adherence.overall.currentStreak;
   const low = page.medications.filter((m) => m.active && m.lowStock);
-  // Just trained: what goes now leads, ahead of the next clock time.
-  const afterWorkout = slots.filter((s) => s.status === "pendiente" && s.training?.state === "trained" && page.time <= s.training.until!);
-  // Nothing left with a time, but something waits for today's workout.
-  const waiting = slots.find((s) => s.status === "pendiente" && s.time === null);
-  const headline =
-    slots.length === 0
-      ? "Hoy no hay tomas programadas"
-      : taken === slots.length
-        ? "Todo tomado por hoy"
-        : afterWorkout.length
-          ? `Ahora: ${new Intl.ListFormat("es").format(afterWorkout.map((s) => s.name))}, antes de las ${afterWorkout.map((s) => s.training!.until!).sort()[0]}`
-          : next
-          ? `Próxima: ${next.name} ${when(next)}`
-          : waiting
-            ? `${waiting.name}, al terminar de entrenar`
-            : `${slots.length - taken} ${slots.length - taken === 1 ? "toma pendiente" : "tomas pendientes"}`;
+  const free = slots.length === 0 && taken.length === 0;
+  const done = !left.length && !free;
+
+  const headline = left.length ? `Te falta: ${names(left)}` : free ? "Hoy no te toca nada" : "Todo listo por hoy";
   return (
     <Card className="relative overflow-hidden !p-6 md:!p-8">
-      <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: MED }} aria-hidden />
+      <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: done ? "var(--success)" : MED }} aria-hidden />
       <div className="relative flex flex-col items-center gap-7 md:flex-row md:gap-10">
-        <Ring value={slots.length ? (taken / slots.length) * 100 : null} color={MED} glow={slots.length > 0} size={184} stroke={15} label={`${takenToday.length} tomas hoy; ${taken} de ${slots.length} programadas`}>
-          <div>
-            <p className="tabular text-[52px] leading-none font-semibold tracking-tight">
-              {takenToday.length}
-            </p>
-            <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">{takenToday.length === 1 ? "Toma hoy" : "Tomas hoy"}</p>
-            {slots.length > 0 && <p className="tabular text-muted-foreground mt-0.5 text-[12px]">{taken} de {slots.length} programadas</p>}
-          </div>
+        <Ring value={slots.length ? (settled / slots.length) * 100 : taken.length ? 100 : null} color={done ? "var(--success)" : MED} glow={!free} size={176} stroke={14} label={left.length ? `Te faltan ${left.length}` : headline}>
+          {left.length ? (
+            <div>
+              <p className="tabular text-[56px] leading-none font-semibold tracking-tight">{left.length}</p>
+              <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">Por tomar</p>
+            </div>
+          ) : (
+            <div className="grid place-items-center gap-1.5">
+              <Check className="size-12" strokeWidth={2.4} style={{ color: free ? "var(--muted-foreground)" : "var(--success)" }} />
+              <p className="text-muted-foreground text-[12px] font-medium tracking-wide uppercase">{free ? "Libre" : "Listo"}</p>
+            </div>
+          )}
         </Ring>
-        <div className="w-full min-w-0 flex-1">
-          <p className="flex items-center justify-center gap-2 text-[22px] font-semibold tracking-tight md:justify-start" style={slots.length && taken === slots.length ? { color: "var(--success)" } : undefined}>
-            {slots.length > 0 && taken === slots.length ? <CircleCheckBig className="size-6" /> : afterWorkout.length ? <Dumbbell className="size-5" style={{ color: MED }} /> : next ? <BellRing className="size-5" style={{ color: MED }} /> : waiting ? <Dumbbell className="size-5" style={{ color: MED }} /> : null}
+        <div className="w-full min-w-0 flex-1 text-center md:text-left">
+          <p className="flex items-center justify-center gap-2 text-[24px] leading-tight font-semibold tracking-tight md:justify-start" style={done ? { color: "var(--success)" } : undefined}>
+            {done && <CircleCheckBig className="size-6 shrink-0" />}
             {headline}
           </p>
-          {takenToday.length > 0 && (
-            <p className="text-muted-foreground mt-1.5 text-center text-[15px] md:text-left">
-              Hoy: {takenToday.map((e) => `${e.name}${e.takenAt ? ` ${fmtTime(e.takenAt)}` : ""}`).join(" · ")}
-            </p>
+          {left.length > 0 && (
+            <ul className="mt-3 flex flex-wrap justify-center gap-2 md:justify-start">
+              {left.map((i) => (
+                <li key={i.key} className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium", i.state === "atrasada" ? "bg-warning/12 text-warning" : "bg-muted/80")}>
+                  {i.state === "entreno" && <Dumbbell className="size-3.5" style={{ color: MED }} />}
+                  {i.medication.name}
+                  <span className={cn("font-normal", i.state !== "atrasada" && "text-muted-foreground")}>
+                    · {i.state === "entreno" ? "al terminar de entrenar" : i.state === "atrasada" ? `era a las ${i.at}` : i.state === "ahora" ? "ahora" : `a las ${i.at}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
-          {streak > 1 && (
+          {taken.length > 0 && <p className="text-muted-foreground mt-3 text-[15px]">Tomado hoy: {taken.map((t) => `${t.name}${t.at ? ` ${t.at}` : ""}`).join(" · ")}</p>}
+          {!late && streak > 1 && (
             <p className="text-muted-foreground mt-1.5 flex items-center justify-center gap-1.5 text-[15px] md:justify-start">
               <Flame className="size-4" style={{ color: "var(--domain-energy)" }} />
               {streak} días seguidos sin fallar
             </p>
           )}
-          <ul className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <HeroTile label="Últimos 7 días" value={pct(page.adherence.overall.last7)} />
-            <HeroTile label="Últimos 30 días" value={pct(page.adherence.overall.last30)} />
-            <li className="bg-muted/60 col-span-2 rounded-2xl p-3.5 sm:col-span-1">
-              <p className="text-muted-foreground text-[12px] font-medium">Mejor racha</p>
-              <p className="tabular mt-1 text-[22px] leading-none font-semibold">
-                {page.adherence.overall.bestStreak} <span className="text-muted-foreground text-[13px] font-normal">días</span>
-              </p>
-            </li>
-          </ul>
           {low.length > 0 && (
-            <p className="text-warning mt-4 flex items-center gap-1.5 text-[13px]">
+            <p className="text-warning mt-3 flex items-center justify-center gap-1.5 text-[13px] md:justify-start">
               <TriangleAlert className="size-4 shrink-0" />
               Quedan pocas: {low.map((m) => `${m.name} (${m.stock})`).join(", ")}.
             </p>
@@ -136,112 +140,121 @@ function Hero({ page }: { page: MedicationPage }) {
   );
 }
 
-/** No schedules: today's count of doses taken, and the last one. */
-function AsNeededHero({ page }: { page: MedicationPage }) {
-  const takenToday = page.asNeeded.reduce((n, a) => n + a.today, 0);
-  const today = page.history.find((d) => d.date === page.date)?.entries.filter((e) => e.status === "tomada") ?? [];
-  const last = today[0];
-  return (
-    <Card className="relative overflow-hidden !p-6 md:!p-8">
-      <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: MED }} aria-hidden />
-      <div className="relative flex flex-col items-center gap-7 md:flex-row md:gap-10">
-        <Ring value={takenToday > 0 ? 100 : null} color={MED} glow={takenToday > 0} size={184} stroke={15} label={`${takenToday} tomas hoy`}>
-          <div>
-            <p className="tabular text-[52px] leading-none font-semibold tracking-tight">{takenToday}</p>
-            <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">{takenToday === 1 ? "Toma hoy" : "Tomas hoy"}</p>
-          </div>
-        </Ring>
-        <div className="w-full min-w-0 flex-1 text-center md:text-left">
-          <p className="text-[22px] font-semibold tracking-tight">{last ? `Última: ${last.name}${last.takenAt ? ` a las ${fmtTime(last.takenAt)}` : ""}` : "Nada tomado hoy"}</p>
-          <p className="text-muted-foreground mt-1.5 text-[15px]">
-            {today.length > 1 ? today.map((e) => `${e.name}${e.takenAt ? ` ${fmtTime(e.takenAt)}` : ""}`).join(" · ") : "Marca «Tomé una» cada vez que tomes algo; queda en el historial."}
-          </p>
-        </div>
-      </div>
-    </Card>
-  );
+const MARKER: Record<Exclude<TodayState, "tomada" | "entreno" | "ahora">, string> = {
+  omitida: "border-muted-foreground/40 bg-muted",
+  atrasada: "border-warning bg-warning/25",
+  pendiente: "border-muted-foreground/50 bg-card",
+  "a-demanda": "border-muted-foreground/40 border-dashed bg-card",
+  "no-toca": "border-muted-foreground/25 bg-muted",
+};
+
+/** The dot on the timeline's rail, by state. */
+function Marker({ state }: { state: TodayState }) {
+  if (state === "tomada")
+    return (
+      <span className="bg-success grid size-5 place-items-center rounded-full text-white">
+        <Check className="size-3" strokeWidth={3.2} />
+      </span>
+    );
+  if (state === "entreno")
+    return (
+      <span className="grid size-5 place-items-center rounded-full" style={{ background: `color-mix(in oklab, ${MED} 18%, var(--card))`, color: MED }}>
+        <Dumbbell className="size-3" strokeWidth={2.4} />
+      </span>
+    );
+  if (state === "ahora") return <span className="size-5 rounded-full" style={{ background: MED, boxShadow: `0 0 0 4px color-mix(in oklab, ${MED} 22%, transparent)` }} />;
+  return <span className={cn("size-5 rounded-full border-2", MARKER[state])} />;
 }
 
-function HeroTile({ label, value }: { label: string; value: number | null }) {
+const LINE_TONE: Partial<Record<TodayState, string>> = { atrasada: "text-warning", ahora: "text-foreground font-medium" };
+
+const takenChip = "text-success bg-success/12 tabular rounded-full px-2.5 py-1 text-[12px] font-medium";
+
+function TimelineRow({ item, page }: { item: TodayItem; page: MedicationPage }) {
+  const m = item.medication;
+  const quiet = item.state === "no-toca";
+  const takenAsNeeded = item.state === "a-demanda" && item.intakes.length > 0;
   return (
-    <li className="bg-muted/60 rounded-2xl p-3.5">
-      <p className="text-muted-foreground text-[12px] font-medium">{label}</p>
-      <p className="tabular mt-1 text-[22px] leading-none font-semibold">
-        {value ?? "—"}
-        {value !== null && <span className="text-muted-foreground text-[13px] font-normal"> %</span>}
-      </p>
+    <li className="flex min-h-16 items-center gap-3 py-1.5">
+      <span className={cn("tabular w-11 shrink-0 text-right text-[13px]", item.state === "atrasada" ? "text-warning font-medium" : "text-muted-foreground")}>{item.at ?? ""}</span>
+      <span className="relative z-[1] grid w-5 shrink-0 place-items-center">
+        <Marker state={takenAsNeeded ? "tomada" : item.state} />
+      </span>
+      <span className={cn("min-w-0 flex-1", quiet && "opacity-60")}>
+        <span className="block truncate text-[15px] font-medium">
+          {m.name} <span className="text-muted-foreground hidden text-[13px] font-normal sm:inline">· {amount(m.dose, m.unit)}</span>
+        </span>
+        <span className="text-muted-foreground line-clamp-2 block text-[13px] sm:truncate">
+          {item.when}
+          {item.state !== "tomada" && item.state !== "omitida" && !takenAsNeeded && (
+            <>
+              {" · "}
+              <span className={LINE_TONE[item.state]}>{item.line}</span>
+            </>
+          )}
+          {m.instructions && !quiet && <> · {m.instructions}</>}
+        </span>
+      </span>
+      {item.slot ? (
+        <DoseActions slot={item.slot} takenLabel={null} />
+      ) : item.state === "a-demanda" ? (
+        <span className="flex shrink-0 items-center gap-1.5">
+          {takenAsNeeded && <span className={cn(takenChip, "hidden sm:inline")}>{item.line}</span>}
+          <TakeOneButton medicationId={m.id} date={page.date} name={m.name} label={takenAsNeeded ? "Otra" : "Tomé una"} />
+        </span>
+      ) : item.state === "tomada" && item.intakes[0] ? (
+        <span className="group flex shrink-0 items-center gap-1">
+          <span className={takenChip}>Tomada</span>
+          <DeleteEntryButton eventId={item.intakes[0].id} label={m.name} />
+        </span>
+      ) : null}
     </li>
   );
 }
 
+/** Today as one timeline: by the clock with a «now» mark, then what can wait and what isn't due. */
 function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
-  const { next } = page.day;
-  // Doses with no slot (as needed) taken today: they belong to today too.
-  const extra = page.history.find((d) => d.date === page.date)?.entries.filter((e) => e.status === "tomada" && !e.scheduledTime) ?? [];
+  const clock = page.today.filter((i) => i.at !== null || i.state === "entreno");
+  const whenNeeded = page.today.filter((i) => i.state === "a-demanda" && i.at === null);
+  const off = page.today.filter((i) => i.state === "no-toca");
+  // «Now» sits before the first thing still ahead (a workout counts as ahead).
+  const ahead = clock.findIndex((i) => i.state === "entreno" || (i.at !== null && i.at > page.time));
+  const nowAt = ahead === -1 ? clock.length : ahead;
   return (
-    <Card delay={delay} className="md:col-span-2">
+    <Card delay={delay} className="min-w-0 md:col-span-2 xl:row-span-2">
       <CardTitle icon={CalendarCheck} color={MED} title="Hoy" />
-      {page.groups.length === 0 && extra.length === 0 ? (
-        <EmptyState compact icon={CalendarCheck} color={MED} title="Nada programado hoy" line="Las tomas de hoy aparecerán aquí, por momento del día, para marcarlas." />
+      {page.today.length === 0 ? (
+        <EmptyState compact icon={CalendarCheck} color={MED} title="Nada activo" line="Activa o añade un medicamento para verlo aquí, con lo que toca y cuándo." />
       ) : (
-        <div className="space-y-4">
-          {page.groups.map((group) => {
-            const Icon = MOMENT_ICON[group.moment];
-            return (
-              <section key={group.key}>
-                <h3 className="text-muted-foreground mb-1 flex items-center gap-1.5 text-[12px] font-semibold tracking-wide uppercase">
-                  <Icon className="size-3.5" style={{ color: MED }} />
-                  <span className={cn(group.moment === "hora" && "tabular")}>{group.title}</span>
-                  {group.time && <span className="tabular font-medium normal-case">· {group.time}</span>}
-                </h3>
-                <ul className="-mx-2 space-y-0.5">
-                  {group.slots.map((slot) => {
-                    const isNext = next?.medicationId === slot.medicationId && next.slot === slot.slot;
-                    const late = slot.status === "pendiente" && slot.time !== null && slot.time < page.time && slot.training?.state !== "trained";
-                    return (
-                      <li key={`${slot.medicationId}-${slot.slot}`} className={cn("flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", isNext && "bg-muted/60")}>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[15px] font-medium">{slot.name}</span>
-                          <span className="text-muted-foreground block truncate text-[12px]">
-                            {amount(slot.dose, slot.unit)}
-                            {slot.instructions && ` · ${slot.instructions}`}
-                            {isNext && " · siguiente"}
-                          </span>
-                          {(slot.line || late) && (
-                            <span className={cn("block truncate text-[12px]", late ? "text-warning" : "text-foreground/80")}>
-                              {slot.line}
-                              {slot.line && late && " · "}
-                              {late && "se pasó la hora"}
-                            </span>
-                          )}
-                        </span>
-                        <DoseActions slot={slot} takenLabel={slot.takenAt ? fmtTime(slot.takenAt) : null} />
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            );
-          })}
-          {extra.length > 0 && (
+        <div className="space-y-5">
+          {clock.length > 0 && (
+            <ol className="relative">
+              <span className="bg-border absolute top-5 bottom-5 left-[65px] w-px" aria-hidden />
+              {clock.slice(0, nowAt).map((item) => (
+                <TimelineRow key={item.key} item={item} page={page} />
+              ))}
+              <NowMark time={page.time} />
+              {clock.slice(nowAt).map((item) => (
+                <TimelineRow key={item.key} item={item} page={page} />
+              ))}
+            </ol>
+          )}
+          {whenNeeded.length > 0 && (
             <section>
-              <h3 className="text-muted-foreground mb-1 flex items-center gap-1.5 text-[12px] font-semibold tracking-wide uppercase">
-                <Hand className="size-3.5" style={{ color: MED }} />
-                Cuando haga falta
-              </h3>
-              <ul className="-mx-2 space-y-0.5">
-                {extra.map((e) => (
-                  <li key={e.id} className="flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[15px] font-medium">{e.name}</span>
-                      <span className="text-muted-foreground block truncate text-[12px]">{amount(e.dose, e.unit)}</span>
-                    </span>
-                    <span className="bg-success/12 text-success tabular inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium">
-                      <CircleCheckBig className="size-3.5" />
-                      Tomada{e.takenAt ? ` · ${fmtTime(e.takenAt)}` : ""}
-                    </span>
-                    <DeleteEntryButton eventId={e.id} label={e.name} />
-                  </li>
+              <h3 className="text-muted-foreground text-[12px] font-semibold tracking-wide uppercase">Cuando haga falta</h3>
+              <ul>
+                {whenNeeded.map((item) => (
+                  <TimelineRow key={item.key} item={item} page={page} />
+                ))}
+              </ul>
+            </section>
+          )}
+          {off.length > 0 && (
+            <section>
+              <h3 className="text-muted-foreground text-[12px] font-semibold tracking-wide uppercase">Hoy no toca</h3>
+              <ul>
+                {off.map((item) => (
+                  <TimelineRow key={item.key} item={item} page={page} />
                 ))}
               </ul>
             </section>
@@ -252,73 +265,67 @@ function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
   );
 }
 
-function AsNeededCard({ page, delay }: { page: MedicationPage; delay: number }) {
+function NowMark({ time }: { time: string }) {
   return (
-    <Card delay={delay}>
-      <CardTitle icon={Hand} color={MED} title="Cuando haga falta" />
-      <ul className="-mx-2 space-y-0.5">
-        {page.asNeeded.map(({ medication: m, today }) => (
-          <li key={m.id} className="flex min-h-14 items-center gap-3 rounded-xl px-2">
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-medium">{m.name}</span>
-              <span className="text-muted-foreground block text-[12px]">
-                {amount(m.dose, m.unit)} · {today === 0 ? "ninguna hoy" : `${today} hoy`}
-              </span>
-            </span>
-            <TakeOneButton medicationId={m.id} date={page.date} name={m.name} />
-          </li>
-        ))}
-      </ul>
-    </Card>
+    <li className="flex h-7 items-center gap-3" aria-label={`Ahora, ${time}`}>
+      <span className="tabular w-11 shrink-0 text-right text-[11px] font-semibold" style={{ color: MED }}>
+        Ahora
+      </span>
+      <span className="relative z-[1] grid w-5 place-items-center">
+        <span className="size-2.5 rounded-full" style={{ background: MED }} />
+      </span>
+      <span className="h-px flex-1" style={{ background: `linear-gradient(to right, ${MED}, transparent)` }} />
+    </li>
   );
 }
 
-function AdherenceCard({ report, delay }: { report: AdherenceReport; delay: number }) {
-  const rate30 = pct(report.overall.last30);
+/** Adherence and streak in one compact card; the heatmap once there is enough to read. */
+function ConstancyCard({ report, delay }: { report: AdherenceReport; delay: number }) {
+  const { overall } = report;
+  const daysWithDoses = report.days.filter((d) => d.due > 0).length;
   return (
     <Card delay={delay}>
-      <CardTitle icon={ChartColumn} color={MED} title="Adherencia" />
-      {report.overall.last30.due === 0 ? (
-        <EmptyState compact icon={ChartColumn} color={MED} title="Todavía sin tomas que contar" line="Cuando pase la hora de alguna toma programada verás aquí cuántas cumpliste." />
+      <CardTitle icon={TrendingUp} color={MED} title="Constancia" />
+      {overall.last30.due === 0 ? (
+        <p className="text-muted-foreground text-[13px] leading-relaxed">Cuando pase la hora de alguna toma con horario verás aquí cuántas cumples y tu racha.</p>
       ) : (
         <>
-          <div className="flex items-center gap-5">
-            <Ring value={rate30} color={MED} size={96} stroke={10} label={`Adherencia de 30 días: ${rate30} %`}>
-              <span className="tabular text-[22px] font-semibold">
-                {rate30}
-                <span className="text-muted-foreground text-[12px]">%</span>
-              </span>
-            </Ring>
-            <p className="text-muted-foreground text-[13px] leading-relaxed">
-              <span className="text-foreground tabular font-semibold">{report.overall.last30.taken}</span> de <span className="tabular">{report.overall.last30.due}</span> tomas en los últimos 30 días.
+          <ul className="grid grid-cols-3 gap-2">
+            <Tile label="7 días" value={pct(overall.last7)} unit="%" />
+            <Tile label="30 días" value={pct(overall.last30)} unit="%" />
+            <Tile label="Racha" value={overall.currentStreak} unit={overall.currentStreak === 1 ? "día" : "días"} caption={overall.bestStreak > overall.currentStreak ? `mejor ${overall.bestStreak}` : undefined} />
+          </ul>
+          {daysWithDoses >= HEATMAP_MIN_DAYS ? (
+            <>
+              <div className="mt-4 grid grid-cols-10 gap-1" role="img" aria-label="Últimos 30 días, de más antiguo a hoy">
+                {report.days.map((d) => {
+                  const rate = d.due ? d.taken / d.due : null;
+                  return (
+                    <span
+                      key={d.date}
+                      title={`${fmtDayLabel(d.date)} · ${d.due ? `${d.taken}/${d.due}` : "sin tomas"}`}
+                      className="aspect-square rounded-[5px]"
+                      style={{ background: rate === null ? "var(--muted)" : `color-mix(in oklab, ${MED} ${Math.round(18 + rate * 82)}%, var(--muted))` }}
+                    />
+                  );
+                })}
+              </div>
+              <p className="text-muted-foreground mt-2 text-[11px]">Últimos 30 días · más intenso, más tomas cumplidas.</p>
+            </>
+          ) : (
+            <p className="text-muted-foreground mt-3 text-[12px] leading-relaxed">
+              {overall.last30.taken} de {overall.last30.due} tomas cumplidas. El mapa del mes aparece tras {HEATMAP_MIN_DAYS} días con tomas.
             </p>
-          </div>
-          <div className="mt-5 grid grid-cols-10 gap-1" role="img" aria-label="Últimos 30 días, de más antiguo a hoy">
-            {report.days.map((d) => {
-              const rate = d.due ? d.taken / d.due : null;
-              return (
-                <span
-                  key={d.date}
-                  title={`${fmtDayLabel(d.date)} · ${d.due ? `${d.taken}/${d.due}` : "sin tomas"}`}
-                  className="aspect-square rounded-[5px]"
-                  style={{ background: rate === null ? "var(--muted)" : `color-mix(in oklab, ${MED} ${Math.round(18 + rate * 82)}%, var(--muted))` }}
-                />
-              );
-            })}
-          </div>
-          <p className="text-muted-foreground mt-2 text-[11px]">Últimos 30 días · más intenso, más tomas cumplidas.</p>
+          )}
           {report.medications.length > 1 && (
-            <ul className="border-border mt-4 space-y-3 border-t pt-4">
+            <ul className="border-border mt-4 space-y-2.5 border-t pt-3.5">
               {report.medications.map((m) => {
                 const r = pct(m.last30);
                 return (
                   <li key={m.medicationId}>
                     <div className="flex items-baseline justify-between gap-2 text-[13px]">
                       <span className="truncate font-medium">{m.name}</span>
-                      <span className="tabular text-muted-foreground shrink-0">
-                        {r === null ? "—" : `${r} %`}
-                        {m.currentStreak > 1 && ` · ${m.currentStreak} días`}
-                      </span>
+                      <span className="tabular text-muted-foreground shrink-0">{r === null ? "—" : `${r} %`}</span>
                     </div>
                     <div className="bg-muted mt-1 h-1.5 overflow-hidden rounded-full">
                       <div className="h-full rounded-full" style={{ width: `${r ?? 0}%`, background: MED }} />
@@ -331,6 +338,19 @@ function AdherenceCard({ report, delay }: { report: AdherenceReport; delay: numb
         </>
       )}
     </Card>
+  );
+}
+
+function Tile({ label, value, unit, caption }: { label: string; value: number | null; unit: string; caption?: string }) {
+  return (
+    <li className="bg-muted/60 rounded-2xl p-3">
+      <p className="text-muted-foreground text-[12px] font-medium">{label}</p>
+      <p className="tabular mt-1 text-[20px] leading-none font-semibold">
+        {value ?? "—"}
+        {value !== null && <span className="text-muted-foreground text-[12px] font-normal"> {unit}</span>}
+      </p>
+      {caption && <p className="text-muted-foreground mt-1 text-[11px]">{caption}</p>}
+    </li>
   );
 }
 
@@ -383,7 +403,7 @@ const STATUS: Record<string, string> = { tomada: "Tomada", omitida: "Omitida", p
 function HistoryCard({ page, delay }: { page: MedicationPage; delay: number }) {
   const taken = page.history.reduce((n, d) => n + d.entries.filter((e) => e.status === "tomada").length, 0);
   return (
-    <Card delay={delay} className="md:col-span-2 xl:col-span-3">
+    <Card delay={delay} className="min-w-0 md:col-span-2 xl:col-span-3">
       <CardTitle icon={History} color={MED} title="Historial" />
       {page.history.length > 0 && <p className="text-muted-foreground -mt-2 mb-3 text-[12px]">{taken} tomas en los últimos 60 días</p>}
       {page.history.length === 0 ? (

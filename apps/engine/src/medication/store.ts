@@ -11,10 +11,12 @@ import type {
   MedicationPatch,
   MedicationSchedule,
   MedicationUpcoming,
+  ScheduleNudge,
 } from "@pulso/contract";
 import { z } from "zod";
 import { db } from "../db";
 import { dayFacts } from "./facts";
+import { NUDGE_LOOKBACK_DAYS, scheduleNudges } from "./nudges";
 import { addDays, computeAdherence, DATE, HISTORY_DAYS, isSlotKey, localNow, resolveSlots, slotKey, TIME, type DayFacts, type StatusIndex } from "./schedule";
 
 // Validation shared by the phone routes and the agent tools.
@@ -201,9 +203,10 @@ export function addMedication(raw: MedicationInput, today = localNow().date): Me
   return getMedication(id);
 }
 
-export function updateMedication(id: string, raw: MedicationPatch): Medication {
+export function updateMedication(id: string, raw: MedicationPatch, today = localNow().date): Medication {
   const patch = medicationPatchSchema.parse(raw);
-  const merged = { ...getMedication(id), ...patch };
+  const before = getMedication(id);
+  const merged = { ...before, ...patch };
   if (patch.schedule) merged.schedule = normalizeSchedule(patch.schedule);
   if (merged.endDate && merged.endDate < merged.startDate) throw new MedicationError("invalid_request", "endDate is before startDate");
   db()
@@ -228,7 +231,23 @@ export function updateMedication(id: string, raw: MedicationPatch): Medication {
       Date.now(),
       id,
     );
+  if (before.schedule.asNeeded && !merged.schedule.asNeeded) adoptTodaysIntakes(getMedication(id), today);
   return getMedication(id);
+}
+
+/**
+ * An as-needed med just got a schedule: what was already taken today fills
+ * today's first open slots, so a dose taken before the change isn't asked
+ * for again (or counted as missed).
+ */
+function adoptTodaysIntakes(med: Medication, today: string) {
+  const intakes = db()
+    .query<DoseRow, [string, string]>("SELECT * FROM medication_doses WHERE medication_id = ? AND date = ? AND scheduled_time IS NULL AND status = 'tomada' ORDER BY taken_at")
+    .all(med.id, today);
+  if (intakes.length === 0) return;
+  const logged = new Set(dosesBetween(today, today, med.id).map((e) => e.scheduledTime));
+  const open = resolveSlots(med, today, dayFacts(today, today, today)(today), today, localNow().time).filter((s) => !logged.has(s.slot));
+  intakes.slice(0, open.length).forEach((e, i) => db().query("UPDATE medication_doses SET scheduled_time = ? WHERE id = ?").run(open[i]!.slot, e.id));
 }
 
 export function deleteMedication(id: string): void {
@@ -353,4 +372,9 @@ export function adherence(date: string, time: string): AdherenceReport {
   const events = dosesBetween(addDays(date, -HISTORY_DAYS), date);
   const facts = dayFacts(addDays(date, -HISTORY_DAYS), date, date);
   return { asOf: { date, time }, ...computeAdherence(meds, statusIndex(events), date, time, facts) };
+}
+
+/** Suggestions to schedule as-needed meds that are taken on a rhythm (see nudges.ts). */
+export function nudges(date: string): ScheduleNudge[] {
+  return scheduleNudges(listMedications(), dosesBetween(addDays(date, -NUDGE_LOOKBACK_DAYS), date), date);
 }

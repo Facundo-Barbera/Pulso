@@ -193,3 +193,24 @@ export type AdherenceReport = {
   /** Last 30 days, oldest first, for a heatmap. */
   days: AdherenceDay[];
 };
+
+/**
+ * A quiet suggestion to give an as-needed medication a schedule, because it is
+ * logged like a regular one (or is a drug usually taken on a fixed rhythm).
+ * Nothing changes until the person saves the prefilled editor.
+ */
+export type ScheduleNudge = {
+  medicationId: string;
+  name: string;
+  cadence: "daily" | "weekly";
+  /** `known`: a drug usually taken on this rhythm; `pattern`: logged that way lately. */
+  reason: "known" | "pattern";
+  /** Ready to show: "Levotiroxina parece diaria. ¿Ponerle horario?" */
+  title: string;
+  /** "En ayunas al despertar · 07:30", "Una vez por semana · los domingos a las 10:00". */
+  detail: string;
+  /** What the editor opens prefilled with. */
+  schedule: MedicationSchedule;
+  /** Prefilled «Cómo tomarlo» when the medication has none ("en ayunas"); null to leave it. */
+  instructions: string | null;
+};

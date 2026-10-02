@@ -34,7 +34,7 @@ src/web/                  view assemblers: one function per page that reads the 
 2. **Section components:** `app/(app)/<section>/_components/*.tsx` (the `_` keeps them out of routing). Client components only where there is interaction; everything else renders on the server.
 3. **Data:** read the feature stores directly from the server component — `src/<feature>/store.ts` — or, when a page needs several, add an assembler in `src/web/<section>.ts` that returns one typed object (see `src/web/today.ts`) and test it. **Never call `/api/mobile/*` from the web.**
 4. **Writes / client refresh:** add routes under `app/api/web/<section>/…`. Reads need the `view` scope and writes `edit`; the gate applies that by path, so there is nothing to register. Return JSON with `json()` from `app/api/web/http.ts`. Anything the Mac alone may do goes under `app/api/web/admin/` and also calls `loopbackOnly(request)`.
-5. **Navigation:** sections are listed once in `app/_ui/sections.ts` (sidebar order = ⌘1…⌘9, so nine at most; `tab: true` puts it in the phone's bottom bar, the rest go under «Más»).
+5. **Navigation:** sections are listed once in `app/_ui/sections.ts` (sidebar order = ⌘1…⌘9, so nine at most; `tab: true` puts it in the phone's bottom bar, the rest go under «Más»). `group` puts it under a sidebar heading (`GROUPS`: Tu día · Entrenar y comer · Salud); without one it sits at the foot by Buscar (Ajustes). `hidden: true` keeps a section routable but unlisted.
 
 ## Shared components (`app/_ui/`)
 
