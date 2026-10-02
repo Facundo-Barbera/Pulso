@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { briefPrompt } from "../coach/prompts";
+import { LIVE_PERSONA } from "../training/live-coach";
 import { PERSONA } from "./workspace";
 
 test("the persona writes for a phone screen", () => {
@@ -11,9 +13,27 @@ test("the persona writes for a phone screen", () => {
 });
 
 test("the persona summarizes what a tool created instead of repeating it", () => {
-  expect(PERSONA).toContain("Do NOT repeat it as text");
-  expect(PERSONA).toContain("2–4 line summary");
+  expect(PERSONA).toContain("do NOT repeat it as text");
   expect(PERSONA).toContain("Ya está en Entreno");
+});
+
+test("the persona answers briefly by default and lets the action card speak", () => {
+  expect(PERSONA).toContain("## Brevity");
+  expect(PERSONA).toContain("Lead with the answer in 1–3 sentences");
+  expect(PERSONA).toContain("under about 80 words");
+  expect(PERSONA).toContain("unless they ask for more or it is a plan or an explanation they asked for");
+  expect(PERSONA).toContain("Bullets only when listing");
+  expect(PERSONA).toContain("¿Te explico por qué?");
+  expect(PERSONA).toContain("Never restate what the card shows");
+  expect(PERSONA).toContain('"Listo." plus the card is enough');
+  // Brevity is the general style: it comes before the feature sections.
+  expect(PERSONA.indexOf("## Brevity")).toBeLessThan(PERSONA.indexOf("## How you coach"));
+});
+
+test("the in-workout Coach and the briefs stay short too", () => {
+  expect(LIVE_PERSONA).toContain("ONE or TWO short lines");
+  expect(briefPrompt("daily", "2026-10-02")).toContain("3 to 5 lines");
+  expect(briefPrompt("weekly", "2026-10-04")).toContain("5 to 7 lines");
 });
 
 test("the persona logs reported meals at their time, looks values up and adapts the day", () => {
