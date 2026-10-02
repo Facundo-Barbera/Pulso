@@ -90,12 +90,14 @@ const tick = (n: number) => n.toLocaleString("es", { maximumFractionDigits: 1 })
  * One bar. With `standard` the axis is % of it (value and ranges stay in kg);
  * without, the axis is the metric's own scale.
  */
-export function gauge(metric: BodyGauge["metric"], unit: BodyGauge["unit"], value: number, previous: number | null, axis: { normal: readonly number[]; ticks: readonly number[] }, standard?: number): BodyGauge {
+export function gauge(metric: BodyGauge["metric"], unit: BodyGauge["unit"], scan: BodyScan, previous: number | null, axis: { normal: readonly number[]; ticks: readonly number[] }, standard?: number): BodyGauge {
+  const value = scan[metric]!;
   const toAxis = (v: number) => (standard ? (v / standard) * 100 : v);
   const fromAxis = (v: number) => (standard ? (v * standard) / 100 : v);
   const [low, high] = axis.normal as [number, number];
   return {
     metric,
+    measuredAt: scan.measuredAt,
     value,
     previous,
     unit,
@@ -165,20 +167,20 @@ export function bodyAnalysis(scans: BodyScan[], profile: Profile): BodyAnalysis 
       ? {
           measuredAt: full.measuredAt,
           gauges: [
-            gauge("weight", "kg", full.weight!, previous("weight", full), AXES.weight, std.weight),
-            gauge("skeletalMuscleMass", "kg", full.skeletalMuscleMass!, previous("skeletalMuscleMass", full), AXES.skeletalMuscleMass, std.smm),
-            gauge("bodyFatMass", "kg", full.bodyFatMass!, previous("bodyFatMass", full), AXES.bodyFatMass, std.fat),
+            gauge("weight", "kg", full, previous("weight", full), AXES.weight, std.weight),
+            gauge("skeletalMuscleMass", "kg", full, previous("skeletalMuscleMass", full), AXES.skeletalMuscleMass, std.smm),
+            gauge("bodyFatMass", "kg", full, previous("bodyFatMass", full), AXES.bodyFatMass, std.fat),
           ],
         }
       : null;
 
   const obesity: BodyGauge[] = [];
   const bmi = newest("bmi");
-  if (bmi) obesity.push(gauge("bmi", "kg/m²", bmi.bmi!, previous("bmi", bmi), AXES.bmi));
+  if (bmi) obesity.push(gauge("bmi", "kg/m²", bmi, previous("bmi", bmi), AXES.bmi));
   const pbf = newest("percentBodyFat");
-  if (pbf) obesity.push(gauge("percentBodyFat", "%", pbf.percentBodyFat!, previous("percentBodyFat", pbf), { normal: c.pbf, ticks: c.pbfTicks }));
+  if (pbf) obesity.push(gauge("percentBodyFat", "%", pbf, previous("percentBodyFat", pbf), { normal: c.pbf, ticks: c.pbfTicks }));
   const visceral = newest("visceralFatLevel");
-  if (visceral) obesity.push(gauge("visceralFatLevel", "nivel", visceral.visceralFatLevel!, previous("visceralFatLevel", visceral), AXES.visceralFatLevel));
+  if (visceral) obesity.push(gauge("visceralFatLevel", "nivel", visceral, previous("visceralFatLevel", visceral), AXES.visceralFatLevel));
 
   const seg = scans.find((s) => s.segmentalLean || s.segmentalFat);
   let segments: BodyAnalysis["segments"] = null;

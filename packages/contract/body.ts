@@ -121,6 +121,8 @@ export type BodyBand = "low" | "normal" | "high";
 /** One horizontal bar of InBody's Muscle-Fat or Obesity analysis, laid out by the engine. */
 export type BodyGauge = {
   metric: "weight" | "skeletalMuscleMass" | "bodyFatMass" | "bmi" | "percentBodyFat" | "visceralFatLevel";
+  /** Epoch ms of the scan the value is from */
+  measuredAt: number;
   /** In `unit` */
   value: number;
   /** The scan before that measured it, in `unit` */
