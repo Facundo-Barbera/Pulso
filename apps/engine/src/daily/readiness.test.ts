@@ -1,7 +1,7 @@
 import type { DailyMetrics } from "@pulso/contract";
 import { expect, test } from "bun:test";
 import { addDays } from "./dates";
-import { computeReadiness, ESTIMATE_WEIGHT } from "./readiness";
+import { computeReadiness, ESTIMATE_WEIGHT, hoursMinutes } from "./readiness";
 
 const DATE = "2026-03-29";
 const blank: Omit<DailyMetrics, "date"> = {
@@ -89,4 +89,10 @@ test("no data at all is unknown, not zero", () => {
   expect(r.score).toBeNull();
   expect(r.level).toBe("unknown");
   expect(r.explanation).toContain("Todavía no hay datos");
+});
+
+test("durations round the total first, matching the apps' formatting", () => {
+  expect(hoursMinutes(379.6)).toBe("6 h 20 min");
+  expect(hoursMinutes(59.6)).toBe("1 h");
+  expect(hoursMinutes(480)).toBe("8 h");
 });

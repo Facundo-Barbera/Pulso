@@ -46,9 +46,11 @@ function restingFactor(value: number | null, history: number[], estimated: boole
   return { ...base, baseline, score: fromZ(z), detail: base.estimated ? `${detail} (estimado)` : detail };
 }
 
-const hoursMinutes = (minutes: number) => {
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
+/** Rounds the total first, like the apps do, so 379.6 reads "6 h 20 min" here too and 59.6 never becomes "0 h 60 min". */
+export const hoursMinutes = (minutes: number) => {
+  const total = Math.round(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   return m ? `${h} h ${m} min` : `${h} h`;
 };
 
