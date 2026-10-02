@@ -65,6 +65,8 @@ function Hero({ page }: { page: MedicationPage }) {
   if (!page.medications.some((m) => m.active && !m.schedule.asNeeded)) return <AsNeededHero page={page} />;
   const { slots, next } = page.day;
   const taken = slots.filter((s) => s.status === "tomada").length;
+  // Everything taken today, scheduled or not, newest first — as-needed doses count here too.
+  const takenToday = page.history.find((d) => d.date === page.date)?.entries.filter((e) => e.status === "tomada") ?? [];
   const streak = page.adherence.overall.currentStreak;
   const low = page.medications.filter((m) => m.active && m.lowStock);
   // Just trained: what goes now leads, ahead of the next clock time.
@@ -87,13 +89,13 @@ function Hero({ page }: { page: MedicationPage }) {
     <Card className="relative overflow-hidden !p-6 md:!p-8">
       <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: MED }} aria-hidden />
       <div className="relative flex flex-col items-center gap-7 md:flex-row md:gap-10">
-        <Ring value={slots.length ? (taken / slots.length) * 100 : null} color={MED} glow={slots.length > 0} size={184} stroke={15} label={`${taken} de ${slots.length} tomas de hoy`}>
+        <Ring value={slots.length ? (taken / slots.length) * 100 : null} color={MED} glow={slots.length > 0} size={184} stroke={15} label={`${takenToday.length} tomas hoy; ${taken} de ${slots.length} programadas`}>
           <div>
             <p className="tabular text-[52px] leading-none font-semibold tracking-tight">
-              {taken}
-              <span className="text-muted-foreground text-[28px]">/{slots.length}</span>
+              {takenToday.length}
             </p>
-            <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">Tomas hoy</p>
+            <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">{takenToday.length === 1 ? "Toma hoy" : "Tomas hoy"}</p>
+            {slots.length > 0 && <p className="tabular text-muted-foreground mt-0.5 text-[12px]">{taken} de {slots.length} programadas</p>}
           </div>
         </Ring>
         <div className="w-full min-w-0 flex-1">
@@ -101,6 +103,11 @@ function Hero({ page }: { page: MedicationPage }) {
             {slots.length > 0 && taken === slots.length ? <CircleCheckBig className="size-6" /> : afterWorkout.length ? <Dumbbell className="size-5" style={{ color: MED }} /> : next ? <BellRing className="size-5" style={{ color: MED }} /> : waiting ? <Dumbbell className="size-5" style={{ color: MED }} /> : null}
             {headline}
           </p>
+          {takenToday.length > 0 && (
+            <p className="text-muted-foreground mt-1.5 text-center text-[15px] md:text-left">
+              Hoy: {takenToday.map((e) => `${e.name}${e.takenAt ? ` ${fmtTime(e.takenAt)}` : ""}`).join(" · ")}
+            </p>
+          )}
           {streak > 1 && (
             <p className="text-muted-foreground mt-1.5 flex items-center justify-center gap-1.5 text-[15px] md:justify-start">
               <Flame className="size-4" style={{ color: "var(--domain-energy)" }} />
