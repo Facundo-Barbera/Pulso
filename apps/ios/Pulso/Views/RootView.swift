@@ -9,6 +9,7 @@ struct RootView: View {
     @State private var tab = "hoy"
     private var launcher = CoachLauncher.shared
     private var training = TrainingStore.shared
+    private var notifications = NotificationRouter.shared
 
     init(model: PulsoModel) { self.model = model }
 
@@ -41,6 +42,8 @@ struct RootView: View {
                 .onChange(of: launcher.tabRequest?.id) { _, id in if id != nil, let next = launcher.takeTab() { tab = next } }
                 // A session started from Siri, a widget or another tab shows where it lives.
                 .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
+                .onChange(of: notifications.pending) { openNotification() }
+                .onAppear { openNotification() }
                 .transition(.opacity)
             }
         }
@@ -59,7 +62,22 @@ struct RootView: View {
                 }
                 // Replies the Mac kept writing while Pulso was away pick up where they were.
                 ChatStore.resumeAll()
+                openNotification()
             }
+        }
+    }
+
+    /// Opens what a tapped notification points to. Waits for the scene to be active:
+    /// a notification that launches the app arrives before there is anything to show.
+    private func openNotification() {
+        guard scenePhase == .active, model.credentials != nil, let route = notifications.take() else { return }
+        switch route {
+        case .today:
+            tab = "hoy"
+        case .training:
+            tab = "entreno"
+        case let .coach(threadId):
+            Task { await launcher.open(threadId: threadId) }
         }
     }
 }

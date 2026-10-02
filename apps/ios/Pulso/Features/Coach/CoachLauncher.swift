@@ -39,6 +39,12 @@ final class CoachLauncher {
         pending = Launch(request: .thread(thread))
     }
 
+    /// A conversation by id, as a tapped reply notification names it.
+    func open(threadId: String) async {
+        guard let api = PulsoModel.shared.api else { return }
+        do { open(try await api.agentThread(threadId).thread) } catch { PulsoModel.shared.handle(error) }
+    }
+
     /// Hands the pending launch to the Coach tab, once.
     func take() -> Launch? {
         defer { pending = nil }
