@@ -69,7 +69,33 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(NutritionDate.string(date), "2026-03-29")
     }
 
-    func testOnTargetIsWithinTenPercent() {
+    func testDecodesZonesAndCountsTheDayInZone() throws {
+        let json = #"""
+        {"date":"2026-10-01","totals":{"kcal":1950,"protein":118,"carbs":175,"fat":82,"fiber":5},
+         "targets":{"kcal":2100,"protein":160,"carbs":210,"fat":70,"fiber":29,"updatedAt":1,
+          "zones":{"kcal":{"kind":"range","min":1890,"max":2210,"custom":false},"protein":{"kind":"min","min":150,"max":188,"custom":true},
+           "carbs":{"kind":"range","min":168,"max":231,"custom":false},"fat":{"kind":"range","min":56,"max":77,"custom":false},
+           "fiber":{"kind":"min","min":29,"max":36,"custom":false}}},
+         "remaining":null,"bySlot":{},"entries":2,"caffeineMg":0,"alcoholG":0,
+         "zones":{"kcal":{"kind":"range","min":1890,"max":2210,"custom":false,"value":1950,"target":2100,"status":"inZone"},
+          "protein":{"kind":"min","min":150,"max":188,"custom":true,"value":118,"target":160,"status":"below"},
+          "carbs":{"kind":"range","min":168,"max":231,"custom":false,"value":175,"target":210,"status":"inZone"},
+          "fat":{"kind":"range","min":56,"max":77,"custom":false,"value":82,"target":70,"status":"above"},
+          "fiber":{"kind":"min","min":29,"max":36,"custom":false,"value":5,"target":29,"status":"below"}},
+         "inZone":false}
+        """#
+        let day = try JSONDecoder().decode(NutritionSummary.self, from: Data(json.utf8))
+        XCTAssertEqual(day.targets?.zones?["protein"]?.kind, .min)
+        XCTAssertEqual(day.zones?["fat"]?.status, .above)
+        XCTAssertFalse(AdherenceChart.onTarget(day)) // kcal in zone, protein short: not a day in zone
+        XCTAssertEqual(day.zones?["protein"]?.line("g"), "Faltan 32 g")
+        XCTAssertEqual(day.zones?["fat"]?.line("g"), "Te pasaste 5 g")
+        XCTAssertEqual(day.zones?["kcal"]?.line("kcal"), "En tu zona")
+        XCTAssertEqual(day.zones?["protein"]?.range("g"), "mín. 150 g")
+        XCTAssertEqual(day.zones?["protein"].map { $0.fraction($0.max!) } ?? 0, 188 / 206.8, accuracy: 0.001)
+    }
+
+    func testOnTargetFallsBackToTenPercentOnOlderEngines() {
         let targets = NutritionTargets(kcal: 2000, protein: 0, carbs: 0, fat: 0, fiber: 0)
         func day(_ kcal: Double) -> NutritionSummary {
             NutritionSummary(date: "2026-10-01", totals: NutritionMacros(kcal: kcal, protein: 0, carbs: 0, fat: 0, fiber: 0),
