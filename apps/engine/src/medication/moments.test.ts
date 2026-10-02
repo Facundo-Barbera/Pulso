@@ -40,7 +40,7 @@ test("old schedules read as fixed times, untouched", () => {
        VALUES ('old', 'Vitamina D', 'suplemento', 1000, 'UI', '{"asNeeded":false,"times":["08:00"],"days":[]}', '2032-01-01', 1, 0, 0)`,
     )
     .run();
-  expect(getMedication("old").schedule).toEqual({ asNeeded: false, times: ["08:00"], days: [], training: null, meals: [], bedtime: false });
+  expect(getMedication("old").schedule).toEqual({ asNeeded: false, times: ["08:00"], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null });
   expect(getMedication("old").schedule).toEqual(getMedication("old").schedule); // reading twice changes nothing
   expect(medicationDay("2032-05-03", "07:00").slots.map((s) => [s.slot, s.moment, s.time])).toEqual([["08:00", "hora", "08:00"]]);
   db().query("DELETE FROM medications WHERE id = 'old'").run();
@@ -99,7 +99,7 @@ test("Coach tools take moments: 'creatina 5 g después de entrenar, y los días 
   const added = parse(
     await handler("add_medication")({ name: "Creatina", kind: "suplemento", dose: 5, unit: "g", schedule: { asNeeded: false, training: { restDayTime: "09:00" } } }, {}),
   );
-  expect(added.schedule).toEqual({ asNeeded: false, times: [], days: [], training: { withinMinutes: 60, restDayTime: "09:00" }, meals: [], bedtime: false });
+  expect(added.schedule).toMatchObject({ asNeeded: false, times: [], days: [], training: { withinMinutes: 60, restDayTime: "09:00" }, meals: [], bedtime: false, windows: [], anyTime: false });
 
   const updated = parse(await handler("update_medication")({ id: added.id, schedule: { asNeeded: false, training: { withinMinutes: 30, restDayTime: null }, meals: ["desayuno"] } }, {}));
   expect(updated.schedule.training).toEqual({ withinMinutes: 30, restDayTime: null });

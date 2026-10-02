@@ -13,7 +13,7 @@ const med = (name: string, over: Partial<Medication> = {}): Medication => ({
   unit: "comprimido",
   form: null,
   instructions: null,
-  schedule: { asNeeded: true, times: [], days: [], training: null, meals: [], bedtime: false },
+  schedule: { asNeeded: true, times: [], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null },
   startDate: "2033-01-01",
   endDate: null,
   stock: null,
@@ -48,9 +48,16 @@ test("known drugs: levotiroxina daily en ayunas at the usual time; injectable se
     ["Semaglutida", "weekly", "known"],
   ]);
   expect(nudges[0]).toMatchObject({ title: "Levotiroxina parece diaria. ¿Ponerle horario?", detail: "En ayunas al despertar · 09:50", instructions: "en ayunas" });
-  expect(nudges[0]!.schedule).toEqual({ asNeeded: false, times: ["09:50"], days: [], training: null, meals: [], bedtime: false });
+  expect(nudges[0]!.schedule).toEqual({ asNeeded: false, times: ["09:50"], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null });
   expect(isoWeekday(addDays(TODAY, -4))).toBe(7);
-  expect(nudges[1]).toMatchObject({ detail: "Una vez por semana · los domingos a las 10:10", schedule: { times: ["10:10"], days: [7] } });
+  expect(nudges[1]).toMatchObject({ detail: "Semanal · domingo · cualquier hora", schedule: { times: [], days: [7], anyTime: true, reminder: "19:00" } });
+});
+
+test("semaglutide logged on Thursdays is proposed as weekly on Thursday, any time", () => {
+  const thursdays = [0, -7, -14].map((d, i) => taken("Semaglutida", addDays(TODAY, d), ["08:10", "21:40", "13:00"][i]!));
+  const [nudge] = scheduleNudges([med("Semaglutida", { unit: "mg", form: "pluma" })], thursdays, TODAY);
+  expect(nudge).toMatchObject({ cadence: "weekly", title: "Semaglutida parece semanal. ¿Ponerle horario?", detail: "Semanal · jueves · cualquier hora" });
+  expect(nudge!.schedule).toEqual({ asNeeded: false, times: [], days: [4], interval: null, monthDay: null, training: null, meals: [], bedtime: false, windows: [], anyTime: true, reminder: "19:00" });
 });
 
 test("known drugs with nothing logged fall back to a sensible time and today's weekday; existing instructions stay", () => {
@@ -72,6 +79,6 @@ test("patterns: daily when logged most days near the same time, weekly when a we
 });
 
 test("only active as-needed meds are nudged", () => {
-  const scheduled = med("Levotiroxina", { schedule: { asNeeded: false, times: ["07:30"], days: [], training: null, meals: [], bedtime: false } });
+  const scheduled = med("Levotiroxina", { schedule: { asNeeded: false, times: ["07:30"], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null } });
   expect(scheduleNudges([scheduled, med("Ozempic", { active: false })], [], TODAY)).toEqual([]);
 });

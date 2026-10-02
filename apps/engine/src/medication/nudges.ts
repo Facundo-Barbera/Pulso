@@ -4,7 +4,7 @@
  * week, or a drug usually taken that way. Pure: reads meds and logged events,
  * never changes anything — the person decides in the editor.
  */
-import type { DoseEvent, Medication, MedicationSchedule, ScheduleNudge } from "@pulso/contract";
+import { DEFAULT_ANY_TIME_REMINDER, type DoseEvent, type Medication, type MedicationSchedule, type ScheduleNudge } from "@pulso/contract";
 import { addDays, fromMinutes, isoWeekday, localNow, toMinutes } from "./schedule";
 
 /** How far back the patterns look. */
@@ -17,9 +17,11 @@ const DAILY_SPREAD = 90;
 /** Weekly: at least this many intakes, each 6–8 days after the one before. */
 const WEEKLY_MIN = 3;
 
-type Known = { cadence: "daily" | "weekly"; time: string; instructions: string | null; detail: (time: string, day: number) => string };
+/** `anyTime`: the drug is taken some time on its day, not at an hour (weekly injections). */
+type Known = { cadence: "daily" | "weekly"; time: string; anyTime?: boolean; instructions: string | null; detail: (time: string, day: number) => string };
 
 const WEEKDAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábados", "domingos"];
+const WEEKDAY = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
 const weekly = (time: string, day: number) => `Una vez por semana · los ${WEEKDAYS[day - 1]} a las ${time}`;
 
 /** Drugs whose usual rhythm is well known, matched on the name (brand or generic). */
@@ -32,7 +34,7 @@ const KNOWN: { match: RegExp; unless?: RegExp; rule: Known }[] = [
     // Oral semaglutide (Rybelsus) is daily: leave it to the pattern.
     match: /semaglut|ozempic|wegovy|tirzepat|mounjaro|zepbound|dulaglut|trulicity/i,
     unless: /rybelsus|comprimido|oral/i,
-    rule: { cadence: "weekly", time: "10:00", instructions: null, detail: weekly },
+    rule: { cadence: "weekly", time: "10:00", anyTime: true, instructions: null, detail: (_, day) => `Semanal · ${WEEKDAY[day - 1]} · cualquier hora` },
   },
 ];
 
@@ -72,7 +74,10 @@ function weeklyPattern(intakes: Intake[]): { day: number; time: string } | null 
   return { day: usualWeekday(days), time: fromMinutes(roundTo5(median(intakes.map((i) => i.minutes)))) };
 }
 
-const scheduleFor = (time: string, days: number[]): MedicationSchedule => ({ asNeeded: false, times: [time], days, training: null, meals: [], bedtime: false });
+const NONE: MedicationSchedule = { asNeeded: false, times: [], days: [], interval: null, monthDay: null, training: null, meals: [], bedtime: false, windows: [], anyTime: false, reminder: null };
+const scheduleFor = (time: string, days: number[]): MedicationSchedule => ({ ...NONE, times: [time], days });
+/** Due all day on its days, with the gentle evening reminder. */
+const anyTimeOn = (days: number[]): MedicationSchedule => ({ ...NONE, days, anyTime: true, reminder: DEFAULT_ANY_TIME_REMINDER });
 
 /**
  * One nudge per active as-needed medication that looks scheduled. `events` are
@@ -100,7 +105,7 @@ export function scheduleNudges(meds: Medication[], events: DoseEvent[], today: s
         reason: "known",
         title: `${med.name} ${known.cadence === "daily" ? "parece diaria" : "parece semanal"}. ¿Ponerle horario?`,
         detail: known.detail(time, day),
-        schedule: scheduleFor(time, known.cadence === "weekly" ? [day] : []),
+        schedule: known.anyTime ? anyTimeOn([day]) : scheduleFor(time, known.cadence === "weekly" ? [day] : []),
         instructions: med.instructions ? null : known.instructions,
       });
       continue;

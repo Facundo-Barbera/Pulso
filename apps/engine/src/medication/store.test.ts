@@ -36,7 +36,7 @@ const metformina = () =>
 test("add normalizes and defaults; update patches only given fields", () => {
   const med = metformina();
   expect(med.kind).toBe("medicamento");
-  expect(med.schedule).toEqual({ asNeeded: false, times: ["08:00", "20:00"], days: [], training: null, meals: [], bedtime: false });
+  expect(med.schedule).toEqual({ asNeeded: false, times: ["08:00", "20:00"], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null });
   expect(med.active).toBe(true);
   expect(med.lowStock).toBe(false);
 

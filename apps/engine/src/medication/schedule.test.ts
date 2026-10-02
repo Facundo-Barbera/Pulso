@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Medication } from "@pulso/contract";
 import { addDays, computeAdherence, type DayFacts, isoWeekday, NO_FACTS, resolveSlots, slotKey, type StatusIndex } from "./schedule";
 
-const sched = (over: Partial<Medication["schedule"]> = {}): Medication["schedule"] => ({ asNeeded: false, times: [], days: [], training: null, meals: [], bedtime: false, ...over });
+const sched = (over: Partial<Medication["schedule"]> = {}): Medication["schedule"] => ({ asNeeded: false, times: [], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null, ...over });
 const slotTimes = (m: Medication, date: string) => resolveSlots(m, date).map((s) => s.time);
 
 const med = (over: Partial<Medication> = {}): Medication => ({
@@ -95,7 +95,7 @@ const training = (m: Medication, date: string, f: DayFacts, today = date, now = 
 
 test("a workout that ended makes it due at its end, within the window", () => {
   const slot = training(creatina(), "2026-10-01", facts({ workoutEnds: ["19:10", "07:40"], planned: [{ start: "18:00", end: "19:00" }] }));
-  expect(slot).toEqual({ slot: "entreno", moment: "entreno", time: "07:40", training: { state: "trained", workoutEnd: "07:40", until: "08:40", plannedAt: null, fallback: null } });
+  expect(slot).toEqual({ slot: "entreno", moment: "entreno", time: "07:40", training: { state: "trained", workoutEnd: "07:40", until: "08:40", plannedAt: null, fallback: null }, window: null, remindAt: "07:40" });
   // the window never runs past the day
   expect(training(creatina(), "2026-10-01", facts({ workoutEnds: ["23:30"] }))?.training?.until).toBe("23:59");
 });

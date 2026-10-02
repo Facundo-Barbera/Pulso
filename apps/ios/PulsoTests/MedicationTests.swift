@@ -248,6 +248,99 @@ final class MedicationTests: XCTestCase {
         XCTAssertEqual(items[1].at, "09:56")
         XCTAssertEqual(items.filter(\.isLeft).map(\.medication.name), ["Magnesio", "Omega 3", "Zinc"])
     }
+
+    // MARK: Flexible schedules
+
+    func testFlexibleScheduleDecodesEncodesAndReads() throws {
+        let body = #"{"asNeeded":false,"times":[],"days":[4],"interval":null,"monthDay":null,"training":null,"meals":[],"bedtime":false,"windows":[{"part":"manana","start":"07:00","end":"12:00"}],"anyTime":true,"reminder":"19:00"}"#
+        let sema = try JSONDecoder().decode(MedicationSchedule.self, from: Data(body.utf8))
+        XCTAssertTrue(sema.anyTime)
+        XCTAssertEqual(sema.reminder, "19:00")
+        XCTAssertEqual(sema.windows, [DoseWindow(part: .manana)])
+        XCTAssertEqual(sema.frequency, .someDays)
+
+        var quiet = MedicationSchedule(asNeeded: false, times: [], days: [4], anyTime: true)
+        XCTAssertEqual(quiet.line, "Semanal · jueves · cualquier hora")
+        quiet.reminder = nil
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(quiet)) as! [String: Any]
+        XCTAssertTrue(json["reminder"] is NSNull, "Sin aviso must reach the engine as null")
+        XCTAssertEqual(json["anyTime"] as? Bool, true)
+        XCTAssertTrue(json["interval"] is NSNull)
+
+        let slot = try JSONDecoder().decode(DoseSlot.self, from: Data(#"{"medicationId":"s","name":"Semaglutida","kind":"medicamento","dose":1,"unit":"mg","instructions":null,"date":"2026-10-01","slot":"dia","moment":"dia","time":null,"training":null,"window":null,"remindAt":"19:00","status":"pendiente","eventId":null,"takenAt":null}"#.utf8))
+        XCTAssertEqual(slot.moment, .dia)
+        XCTAssertEqual(slot.remindAt, "19:00")
+        XCTAssertEqual(DoseMoment.label(slotKey: "dia"), "cualquier hora")
+    }
+
+    func testFrequencyMatchesTheEngine() {
+        let every3 = MedicationSchedule(asNeeded: false, times: ["08:00"], days: [], interval: ScheduleInterval(every: 3, unit: .day, start: "2026-10-01"))
+        XCTAssertEqual(["2026-09-28", "2026-10-01", "2026-10-02", "2026-10-04"].map(every3.isDue), [false, true, false, true])
+        // From Saturday 2026-09-26: that week counts, its Thursday came before the start.
+        let fortnight = MedicationSchedule(asNeeded: false, times: [], days: [4], interval: ScheduleInterval(every: 2, unit: .week, start: "2026-09-26"), anyTime: true)
+        XCTAssertEqual(["2026-09-24", "2026-10-01", "2026-10-08", "2026-10-15"].map(fortnight.isDue), [false, false, true, false])
+        let on31 = MedicationSchedule(asNeeded: false, times: [], days: [], monthDay: 31, anyTime: true)
+        XCTAssertEqual(["2026-10-31", "2026-11-30", "2026-11-29", "2026-02-28"].map(on31.isDue), [true, true, false, true])
+        XCTAssertEqual(on31.line, "Cada mes · día 31 · cualquier hora")
+    }
+
+    func testEditorStepsKeepTheOtherHalf() {
+        var schedule = MedicationSchedule(asNeeded: false, times: ["08:00"], days: [])
+        schedule.become(.anyTime)
+        XCTAssertEqual(schedule, MedicationSchedule(asNeeded: false, times: [], days: [], anyTime: true, reminder: "19:00"))
+        schedule.adopt(.someDays, today: "2026-10-01")
+        XCTAssertEqual(schedule.days, [4])
+        XCTAssertTrue(schedule.anyTime)
+        schedule.adopt(.everyN, today: "2026-10-01")
+        XCTAssertEqual(schedule.interval, ScheduleInterval(every: 2, unit: .week, start: "2026-10-01"))
+        schedule.become(.window)
+        XCTAssertEqual(schedule.windows, [DoseWindow(part: .manana)])
+        XCTAssertNotNil(schedule.interval)
+        schedule.adopt(.asNeeded, today: "2026-10-01")
+        schedule.adopt(.monthly, today: "2026-10-01")
+        XCTAssertEqual(schedule.monthDay, 1)
+        XCTAssertNil(schedule.interval)
+        XCTAssertEqual(schedule.type, .window)
+    }
+
+    func testAnyTimeAndWindowRemindersUseRemindAt() {
+        let now = at("2026-10-01", "12:00")
+        let any = DoseSlot(medicationId: "s", name: "Semaglutida", kind: .medicamento, dose: 1, unit: "mg", date: "2026-10-01", slot: "dia",
+                           moment: .dia, time: nil, remindAt: "19:00", status: .pendiente)
+        var silent = any
+        silent.medicationId = "q"
+        silent.remindAt = nil
+        let evening = DoseSlot(medicationId: "z", name: "Zinc", kind: .suplemento, dose: 1, unit: "cápsula", date: "2026-10-01", slot: "noche",
+                               moment: .noche, time: "20:00", window: DoseWindow(part: .noche, start: "20:00", end: "23:00"), remindAt: "20:00", status: .pendiente)
+        let plan = MedicationNotifications.plan(slots: [any, silent, evening], now: now, calendar: calendar)
+        XCTAssertEqual(plan.map(\.slot), ["dia", "noche"])
+        XCTAssertEqual(plan.first?.fireAt, at("2026-10-01", "19:00"))
+        XCTAssertEqual(plan.first?.body, "1 mg · hoy, cuando puedas")
+        XCTAssertEqual(plan.last?.body, "1 cápsula · en la noche")
+    }
+
+    func testTimelineShowsAnyTimeUntilTaken() {
+        let today = "2026-10-01"
+        let sema = item("Semaglutida", MedicationSchedule(asNeeded: false, times: [], days: [4], anyTime: true, reminder: "19:00"))
+        let zinc = item("Zinc", MedicationSchedule(asNeeded: false, times: [], days: [], windows: [DoseWindow(part: .manana, start: "08:00", end: "13:00")]))
+        let slots = [
+            DoseSlot(medicationId: "Zinc", name: "Zinc", kind: .medicamento, dose: 1, unit: "comprimido", date: today, slot: "manana", moment: .manana,
+                     time: "08:00", window: DoseWindow(part: .manana, start: "08:00", end: "13:00"), remindAt: "08:00", status: .pendiente),
+            DoseSlot(medicationId: "Semaglutida", name: "Semaglutida", kind: .medicamento, dose: 1, unit: "comprimido", date: today, slot: "dia",
+                     moment: .dia, time: nil, remindAt: "19:00", status: .pendiente),
+        ]
+        let items = TodayItem.build(medications: [sema, zinc], day: MedicationDay(date: today, slots: slots, asNeeded: [], next: nil), history: [],
+                                    now: at(today, "12:00"), calendar: calendar)
+        XCTAssertEqual(items.map(\.medication.name), ["Zinc", "Semaglutida"])
+        XCTAssertEqual(items.map(\.state), [.ahora, .dia])
+        XCTAssertEqual(items[1].line, "Hoy toca · cuando quieras")
+        XCTAssertTrue(items[1].isLeft)
+        XCTAssertEqual(items[0].line, "Cuando quieras hasta las \(LocalClock.display("13:00"))")
+
+        let tomorrow = TodayItem.build(medications: [sema], day: MedicationDay(date: "2026-10-02", slots: [], asNeeded: [], next: nil), history: [],
+                                       now: at("2026-10-02", "09:00"), calendar: calendar)
+        XCTAssertEqual(tomorrow.first?.line, "Toca el jueves")
+    }
 }
 
 private extension MedicationSchedule {

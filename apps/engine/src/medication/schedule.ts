@@ -3,7 +3,7 @@
  * adherence and streaks. Everything works on local "YYYY-MM-DD" / "HH:MM"
  * strings that the phone sends, so the engine never guesses a time zone.
  */
-import type { AdherenceDay, AdherenceWindow, DoseMeal, DoseMoment, DoseStatus, Medication, MedicationAdherence, TrainingRule, TrainingSlot } from "@pulso/contract";
+import type { AdherenceDay, AdherenceWindow, DoseMeal, DoseMoment, DoseStatus, DoseWindow, Medication, MedicationAdherence, MedicationSchedule, TrainingRule, TrainingSlot } from "@pulso/contract";
 
 export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 export const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -20,6 +20,32 @@ export function addDays(date: string, days: number): string {
 /** 1 = lunes … 7 = domingo. */
 export function isoWeekday(date: string): number {
   return new Date(toUTC(date)).getUTCDay() || 7;
+}
+
+/** Whole days from `from` to `to` (negative when `to` is earlier). */
+export const daysBetween = (from: string, to: string) => Math.round((toUTC(to) - toUTC(from)) / 86_400_000);
+
+/** The last day of the month of `date`, 28–31. */
+const daysInMonth = (date: string) => new Date(Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)), 0)).getUTCDate();
+
+/**
+ * Whether a schedule's frequency falls on `date` (ignoring start/end dates):
+ * every N days from the interval's start, every N weeks (counted Monday to
+ * Monday from the start's week) on `days`, a day of the month (clamped to the
+ * month's last day), or the weekdays in `days` (all when empty).
+ */
+export function isDueOn(schedule: Pick<MedicationSchedule, "days" | "interval" | "monthDay">, date: string): boolean {
+  const { interval, monthDay, days } = schedule;
+  if (monthDay) return Number(date.slice(8, 10)) === Math.min(monthDay, daysInMonth(date));
+  if (interval) {
+    if (date < interval.start) return false;
+    if (interval.unit === "day") return daysBetween(interval.start, date) % interval.every === 0;
+    const weeks = daysBetween(addDays(interval.start, 1 - isoWeekday(interval.start)), date) / 7;
+    if (Math.floor(weeks) % interval.every !== 0) return false;
+    // Weeks with no days given fall on the start's weekday.
+    return (days.length ? days : [isoWeekday(interval.start)]).includes(isoWeekday(date));
+  }
+  return days.length === 0 || days.includes(isoWeekday(date));
 }
 
 /** The local date and "HH:MM" of an instant, in this process's time zone. */
@@ -60,8 +86,14 @@ export type DayFacts = {
 
 export const NO_FACTS: DayFacts = { workoutEnds: [], live: false, planned: [], meals: {}, sleepTime: "23:00" };
 
-/** One slot of one med on one date, before its logged status is attached. */
-export type ResolvedSlot = { slot: string; moment: DoseMoment; time: string | null; training: TrainingSlot | null };
+/**
+ * One slot of one med on one date, before its logged status is attached.
+ * `remindAt`: when to remind while pending (see DoseSlot).
+ */
+export type ResolvedSlot = { slot: string; moment: DoseMoment; time: string | null; training: TrainingSlot | null; window: DoseWindow | null; remindAt: string | null };
+
+/** Moments whose dose is due over a stretch of the day, so they only count as missed once that day is over. */
+export const isFlexible = (moment: DoseMoment) => moment === "dia" || moment === "manana" || moment === "tarde" || moment === "noche";
 
 type Schedulable = Pick<Medication, "schedule" | "startDate" | "endDate" | "active">;
 
@@ -89,34 +121,35 @@ export function resolveTraining(rule: TrainingRule, date: string, facts: DayFact
   return fallback ? { ...none, state: "rest", fallback } : null;
 }
 
-/** Every slot of one med on one date, sorted by time (waiting ones last); none for as-needed, inactive or out-of-range meds. */
+/** Every slot of one med on one date, sorted by time (any-time and waiting ones last); none for as-needed, inactive, out-of-range or off days. */
 export function resolveSlots(med: Schedulable, date: string, facts: DayFacts = NO_FACTS, today = date, now = "00:00"): ResolvedSlot[] {
   const { schedule } = med;
   if (!med.active || schedule.asNeeded) return [];
   if (date < med.startDate || (med.endDate && date > med.endDate)) return [];
-  if (schedule.days.length > 0 && !schedule.days.includes(isoWeekday(date))) return [];
+  if (!isDueOn(schedule, date)) return [];
 
-  const slots: ResolvedSlot[] = [...new Set(schedule.times)].map((t) => ({ slot: t, moment: "hora", time: t, training: null }));
-  for (const meal of new Set(schedule.meals)) {
-    slots.push({ slot: meal, moment: meal, time: facts.meals[meal] ?? DEFAULT_MEAL_TIMES[meal], training: null });
-  }
+  const at = (slot: string, moment: DoseMoment, time: string | null): ResolvedSlot => ({ slot, moment, time, training: null, window: null, remindAt: time });
+  const slots: ResolvedSlot[] = [...new Set(schedule.times)].map((t) => at(t, "hora", t));
+  for (const meal of new Set(schedule.meals)) slots.push(at(meal, meal, facts.meals[meal] ?? DEFAULT_MEAL_TIMES[meal]));
   if (schedule.bedtime) {
     // A sleep time past midnight belongs to the night before; remind before midnight instead.
     const sleep = facts.sleepTime < "12:00" ? "24:00" : facts.sleepTime;
-    slots.push({ slot: "dormir", moment: "dormir", time: fromMinutes(toMinutes(sleep) - BEDTIME_LEAD_MINUTES), training: null });
+    slots.push(at("dormir", "dormir", fromMinutes(toMinutes(sleep) - BEDTIME_LEAD_MINUTES)));
   }
+  for (const window of schedule.windows) slots.push({ ...at(window.part, window.part, window.start), window });
+  if (schedule.anyTime) slots.push({ ...at("dia", "dia", null), remindAt: schedule.reminder });
   if (schedule.training) {
     const training = resolveTraining(schedule.training, date, facts, today, now);
     if (training) {
       const time = training.state === "trained" ? training.workoutEnd : training.state === "rest" ? training.fallback : null;
-      slots.push({ slot: "entreno", moment: "entreno", time, training });
+      slots.push({ ...at("entreno", "entreno", time), training, remindAt: time ?? training.fallback });
     }
   }
   return slots.sort((a, b) => (a.time ?? "99").localeCompare(b.time ?? "99") || a.slot.localeCompare(b.slot));
 }
 
 /** Slot keys: "HH:MM" or a moment. */
-export const SLOT_MOMENTS = ["entreno", "desayuno", "comida", "cena", "dormir"] as const;
+export const SLOT_MOMENTS = ["entreno", "desayuno", "comida", "cena", "dormir", "manana", "tarde", "noche", "dia"] as const;
 export const isSlotKey = (key: string) => TIME.test(key) || (SLOT_MOMENTS as readonly string[]).includes(key);
 
 /** `medicationId|date|slot` → status, for the events of scheduled slots. */
@@ -130,12 +163,13 @@ function countDay(med: Medication, date: string, statuses: StatusIndex, today: s
   let due = 0;
   let taken = 0;
   let allTaken = true;
-  for (const { slot, time } of slots) {
+  for (const { slot, moment, time } of slots) {
     const isTaken = statuses.get(slotKey(med.id, date, slot)) === "tomada";
     if (!isTaken) allTaken = false;
     // A dose taken early counts as soon as it's taken; otherwise only once its time has come
-    // (a slot still waiting for a workout isn't due yet).
-    if (date < today || (time !== null && time <= now) || isTaken) {
+    // (a slot still waiting for a workout isn't due yet). Any-time and day-part slots count by
+    // day: missed only once the day is over.
+    if (date < today || isTaken || (!isFlexible(moment) && time !== null && time <= now)) {
       due += 1;
       if (isTaken) taken += 1;
     }

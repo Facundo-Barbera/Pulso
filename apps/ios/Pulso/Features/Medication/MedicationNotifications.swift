@@ -58,6 +58,8 @@ final class MedicationNotifications {
 
     /// Reminders from the engine's resolved slots, soonest first, capped to what iOS keeps.
     /// - A slot with a time fires then.
+    /// - An any-time or day-part slot fires at its `remindAt` (an any-time dose's chosen hour,
+    ///   a window's start), or not at all without one.
     /// - A slot waiting for a workout fires at its rest-day `fallback`; a workout replans it.
     /// - A workout that already ended with the dose pending fires in a few seconds while
     ///   still within its window, unless it already did (`nudged` holds `DoseSlot.id`s).
@@ -67,7 +69,11 @@ final class MedicationNotifications {
             let training = slot.training
             var fireAt: Date?
             var catchUp = false
-            if let time = slot.time, let at = LocalClock.instant(date: slot.date, time: time, calendar: calendar) {
+            if slot.moment.isFlexible {
+                if let remindAt = slot.remindAt, let at = LocalClock.instant(date: slot.date, time: remindAt, calendar: calendar), at > now {
+                    fireAt = at
+                }
+            } else if let time = slot.time, let at = LocalClock.instant(date: slot.date, time: time, calendar: calendar) {
                 if at > now {
                     fireAt = at
                 } else if training?.state == .trained, !nudged.contains(slot.id),
@@ -100,8 +106,10 @@ final class MedicationNotifications {
             } else if slot.time == nil {
                 parts.append("hoy sin entreno")
             }
-        case .desayuno, .comida, .cena, .dormir:
+        case .desayuno, .comida, .cena, .dormir, .manana, .tarde, .noche:
             parts.append(slot.moment.title.lowercased())
+        case .dia:
+            parts.append("hoy, cuando puedas")
         case .hora:
             break
         }
@@ -117,11 +125,10 @@ final class MedicationNotifications {
         for offset in 0..<days {
             guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
             let date = LocalClock.date(day)
-            let weekday = LocalClock.isoWeekday(day, calendar: calendar)
             for med in medications where med.active && !med.schedule.asNeeded {
                 if date < med.startDate { continue }
                 if let end = med.endDate, date > end { continue }
-                if !med.schedule.days.isEmpty && !med.schedule.days.contains(weekday) { continue }
+                if !med.schedule.isDue(on: date) { continue }
                 for time in med.schedule.times {
                     guard !handled.contains("\(med.id)|\(date)|\(time)"),
                           let fireAt = LocalClock.instant(date: date, time: time, calendar: calendar), fireAt > now

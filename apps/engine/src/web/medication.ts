@@ -6,8 +6,8 @@
  * Read-only, from the medication store, on the Mac's clock. Also the Spanish
  * wording of schedules and slots, which Hoy shares.
  */
-import type { AdherenceReport, DoseEvent, DoseMoment, DoseSlot, Medication, MedicationDay, MedicationSchedule, ScheduleNudge, TrainingSlot } from "@pulso/contract";
-import { addDays, isoWeekday, localNow, TIME, toMinutes } from "../medication/schedule";
+import type { AdherenceReport, DayPart, DoseEvent, DoseMoment, DoseSlot, Medication, MedicationDay, MedicationSchedule, ScheduleNudge, TrainingSlot } from "@pulso/contract";
+import { addDays, isDueOn, isoWeekday, localNow, TIME, toMinutes } from "../medication/schedule";
 import { adherence, dosesBetween, listMedications, medicationDay, nudges } from "../medication/store";
 
 export type HistoryEntry = DoseEvent & { name: string; dose: number; unit: string };
@@ -56,10 +56,10 @@ export function medicationPage(now = new Date()): MedicationPage {
 
 /**
  * Where a dose stands today. `ahora`: due within the last hour (or a workout's window is open);
- * `atrasada`: due longer ago; `entreno`: waiting for a workout; `no-toca`: scheduled, not today;
- * `a-demanda`: as-needed, taken or not.
+ * `atrasada`: due longer ago; `entreno`: waiting for a workout; `dia`: due today at any time;
+ * `no-toca`: scheduled, not today; `a-demanda`: as-needed, taken or not.
  */
-export type TodayState = "tomada" | "omitida" | "ahora" | "atrasada" | "pendiente" | "entreno" | "a-demanda" | "no-toca";
+export type TodayState = "tomada" | "omitida" | "ahora" | "atrasada" | "pendiente" | "entreno" | "dia" | "a-demanda" | "no-toca";
 
 export type TodayItem = {
   key: string;
@@ -78,7 +78,17 @@ export type TodayItem = {
 };
 
 /** Still to take today. */
-export const isLeft = (item: TodayItem) => item.state === "ahora" || item.state === "atrasada" || item.state === "pendiente" || item.state === "entreno";
+export const isLeft = (item: TodayItem) => item.state === "ahora" || item.state === "atrasada" || item.state === "pendiente" || item.state === "entreno" || item.state === "dia";
+
+/** A dose still to take, in a few words for a chip: "ahora", "a las 21:00", "era a las 09:00", "al terminar de entrenar", "cuando quieras", "en la tarde". */
+export function leftLabel(item: TodayItem): string {
+  const window = item.slot?.window;
+  if (item.state === "dia") return "cuando quieras";
+  if (window) return item.state === "ahora" ? `hasta las ${window.end}` : lower(MOMENT_TITLE[window.part]);
+  if (item.state === "entreno") return "al terminar de entrenar";
+  if (item.state === "atrasada") return `era a las ${item.at}`;
+  return item.state === "ahora" ? "ahora" : `a las ${item.at}`;
+}
 
 const DUE_NOW_MINUTES = 60;
 const WEEKDAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
@@ -86,6 +96,8 @@ const clock = (ms: number) => localNow(new Date(ms)).time;
 
 function slotWhen(slot: DoseSlot): string {
   if (slot.moment === "hora") return `A las ${slot.slot}`;
+  if (slot.moment === "dia") return "Cualquier hora";
+  if (slot.window) return `${MOMENT_TITLE[slot.moment as DayPart]} · ${range(slot.window)}`;
   if (slot.moment === "entreno") return slot.training?.state === "rest" ? `Hoy descansas · ${slot.time}` : MOMENT_TITLE.entreno;
   return `${MOMENT_TITLE[slot.moment]} · ${slot.time}`;
 }
@@ -93,6 +105,12 @@ function slotWhen(slot: DoseSlot): string {
 function slotState(slot: DoseSlot, now: string): { state: TodayState; line: string } {
   if (slot.status === "tomada") return { state: "tomada", line: slot.takenAt ? `Tomada a las ${clock(slot.takenAt)}` : "Tomada" };
   if (slot.status === "omitida") return { state: "omitida", line: "Omitida" };
+  if (slot.moment === "dia") return { state: "dia", line: slot.status === "pospuesta" ? "Pospuesta · hoy, cuando quieras" : ANY_TIME_LINE };
+  if (slot.window) {
+    const { start, end } = slot.window;
+    if (now < start) return { state: "pendiente", line: slot.status === "pospuesta" ? "Pospuesta" : `Desde las ${start}` };
+    return now <= end ? { state: "ahora", line: `Cuando quieras hasta las ${end}` } : { state: "atrasada", line: `Era ${lower(MOMENT_TITLE[slot.moment as DayPart])} · aún estás a tiempo hoy` };
+  }
   const t = slot.training;
   if (slot.time === null) return { state: "entreno", line: t ? trainingLine(t, now) : "Esperando" };
   if (t?.state === "trained") return { state: now <= t.until! ? "ahora" : "atrasada", line: trainingLine(t, now) };
@@ -101,15 +119,23 @@ function slotState(slot: DoseSlot, now: string): { state: TodayState; line: stri
   return late <= DUE_NOW_MINUTES ? { state: "ahora", line: "Toca ahora" } : { state: "atrasada", line: `Se pasó hace ${fmtGap(late)}` };
 }
 
+/** What an any-time dose says until it is taken. */
+export const ANY_TIME_LINE = "Hoy toca · cuando quieras";
+
+const range = (w: { start: string; end: string }) => `${w.start}–${w.end}`;
+
 const fmtGap = (minutes: number) => (minutes < 60 ? `${minutes} min` : minutes % 60 === 0 || minutes >= 180 ? `${Math.round(minutes / 60)} h` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`);
 
 /** Why a scheduled med has nothing today, and when it does next. */
 function offLine(med: Medication, date: string): string {
   const { schedule } = med;
   if (date < med.startDate) return `Empieza el ${fmtDate(med.startDate)}`;
-  if (schedule.days.length > 0 && !schedule.days.includes(isoWeekday(date))) {
-    const next = Array.from({ length: 7 }, (_, i) => addDays(date, i + 1)).find((d) => schedule.days.includes(isoWeekday(d)))!;
-    return next === addDays(date, 1) ? "Toca mañana" : `Toca el ${WEEKDAY_NAMES[isoWeekday(next) - 1]}`;
+  if (!isDueOn(schedule, date)) {
+    // Monthly and every-N schedules can be weeks away; a year covers every frequency.
+    const next = Array.from({ length: 366 }, (_, i) => addDays(date, i + 1)).find((d) => isDueOn(schedule, d) && !(med.endDate && d > med.endDate));
+    if (!next) return "Hoy no toca";
+    if (next === addDays(date, 1)) return "Toca mañana";
+    return next < addDays(date, 7) ? `Toca el ${WEEKDAY_NAMES[isoWeekday(next) - 1]}` : `Toca el ${fmtDate(next)}`;
   }
   if (schedule.training && schedule.training.restDayTime === null) return "Hoy descansas · solo los días de entreno";
   return "Hoy no toca";
@@ -124,13 +150,14 @@ function lastLabel(last: string, today: string): string {
 
 const fmtDate = (date: string) => new Intl.DateTimeFormat("es", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
 
-const ORDER: Record<TodayState, number> = { tomada: 0, omitida: 0, ahora: 0, atrasada: 0, pendiente: 0, entreno: 1, "a-demanda": 2, "no-toca": 3 };
+const ORDER: Record<TodayState, number> = { tomada: 0, omitida: 0, ahora: 0, atrasada: 0, pendiente: 0, entreno: 1, dia: 1, "a-demanda": 2, "no-toca": 3 };
 
 /**
  * Today as one list: every slot of every active med, intakes logged outside a
  * slot, each as-needed med once, and scheduled meds with nothing today. Timed
  * items go by the clock (taken ones at when they were taken); then what waits
- * for a workout, the as-needed meds not taken yet and what isn't due today.
+ * for a workout or is due any time today, the as-needed meds not taken yet and
+ * what isn't due today.
  */
 export function todayItems(medications: Medication[], day: MedicationDay, history: MedicationPage["history"], date: string, now: string): TodayItem[] {
   const items: TodayItem[] = [];
@@ -172,6 +199,10 @@ const MOMENT_TITLE: Record<Exclude<DoseMoment, "hora">, string> = {
   comida: "Con la comida",
   cena: "Con la cena",
   dormir: "Antes de dormir",
+  manana: "En la mañana",
+  tarde: "En la tarde",
+  noche: "En la noche",
+  dia: "Cualquier hora",
 };
 
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -185,15 +216,31 @@ export function slotLabel(key: string): string {
 
 const DAY_LETTERS = ["L", "M", "X", "J", "V", "S", "D"];
 
-/** A schedule in one line: "Después de entrenar · días sin entreno 09:00", "Con la comida", "L X V · 08:00 y 20:00". */
+/** Which days, in words: "Semanal · jueves", "L X V", "Cada 3 días", "Cada 2 semanas · lunes", "Cada mes · día 5"; null for every day. */
+export function frequencyLine(s: Pick<MedicationSchedule, "days" | "interval" | "monthDay">): string | null {
+  const days = s.days.length === 1 ? WEEKDAY_NAMES[s.days[0]! - 1]! : s.days.map((d) => DAY_LETTERS[d - 1]).join(" ");
+  if (s.monthDay) return `Cada mes · día ${s.monthDay}`;
+  if (s.interval?.unit === "day") return `Cada ${s.interval.every} días`;
+  if (s.interval) return `Cada ${s.interval.every} semanas · ${days}`;
+  if (s.days.length === 1) return `Semanal · ${days}`;
+  return s.days.length ? days : null;
+}
+
+/**
+ * A schedule in one line: "Después de entrenar · días sin entreno 09:00", "Con la comida",
+ * "L X V · 08:00 y 20:00", "Semanal · jueves · cualquier hora".
+ */
 export function scheduleLine(s: MedicationSchedule): string {
   if (s.asNeeded) return "Cuando haga falta";
   const parts: string[] = [];
   if (s.training) parts.push(`después de entrenar · ${s.training.restDayTime ? `días sin entreno ${s.training.restDayTime}` : "solo días de entreno"}`);
   if (s.meals.length) parts.push(`con ${list(s.meals.map((m) => ({ desayuno: "el desayuno", comida: "la comida", cena: "la cena" })[m]))}`);
   if (s.times.length) parts.push(list(s.times));
+  if (s.windows.length) parts.push(list(s.windows.map((w) => lower(MOMENT_TITLE[w.part]))));
   if (s.bedtime) parts.push("antes de dormir");
-  if (s.days.length) parts.unshift(s.days.map((d) => DAY_LETTERS[d - 1]).join(" "));
+  if (s.anyTime) parts.push("cualquier hora");
+  const frequency = frequencyLine(s);
+  if (frequency) parts.unshift(frequency);
   return upper(parts.join(" · "));
 }
 
@@ -221,7 +268,7 @@ export function trainingLine(t: TrainingSlot, now: string): string {
 }
 
 export type GroupedSlot = DoseSlot & {
-  /** What to say under the name while it is pending (training slots); null otherwise. */
+  /** What to say under the name while it is pending (training and any-time slots); null otherwise. */
   line: string | null;
 };
 
@@ -231,7 +278,7 @@ export type DoseGroup = {
   moment: DoseMoment;
   /** "08:00", "Con el desayuno", "Después de entrenar"… */
   title: string;
-  /** The shared due time, shown next to a moment's title; null for fixed times (the title is the time) and training. */
+  /** The shared due time (a window's range), shown next to a moment's title; null for fixed times (the title is the time), training and any time. */
   time: string | null;
   slots: GroupedSlot[];
 };
@@ -247,11 +294,13 @@ export function groupSlots(slots: DoseSlot[], now: string): DoseGroup[] {
     const key = slot.moment === "hora" ? slot.slot : slot.moment;
     let group = groups.get(key);
     if (!group) {
-      group = { key, moment: slot.moment, title: slot.moment === "hora" ? slot.slot : MOMENT_TITLE[slot.moment], time: slot.moment === "hora" || slot.moment === "entreno" ? null : slot.time, slots: [] };
+      const time = slot.window ? range(slot.window) : slot.moment === "hora" || slot.moment === "entreno" ? null : slot.time;
+      group = { key, moment: slot.moment, title: slot.moment === "hora" ? slot.slot : MOMENT_TITLE[slot.moment], time, slots: [] };
       groups.set(key, group);
     }
     const pending = slot.status === "pendiente" || slot.status === "pospuesta";
-    group.slots.push({ ...slot, line: slot.training && pending ? trainingLine(slot.training, now) : null });
+    const line = !pending ? null : slot.training ? trainingLine(slot.training, now) : slot.moment === "dia" ? ANY_TIME_LINE : null;
+    group.slots.push({ ...slot, line });
   }
   return [...groups.values()];
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DAY_PART_RANGES, DEFAULT_ANY_TIME_REMINDER } from "@pulso/contract";
 import type {
   AdherenceReport,
   DoseEvent,
@@ -10,6 +11,7 @@ import type {
   MedicationInput,
   MedicationPatch,
   MedicationSchedule,
+  MedicationScheduleInput,
   MedicationUpcoming,
   ScheduleNudge,
 } from "@pulso/contract";
@@ -17,7 +19,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { dayFacts } from "./facts";
 import { NUDGE_LOOKBACK_DAYS, scheduleNudges } from "./nudges";
-import { addDays, computeAdherence, DATE, HISTORY_DAYS, isSlotKey, localNow, resolveSlots, slotKey, TIME, type DayFacts, type StatusIndex } from "./schedule";
+import { addDays, computeAdherence, DATE, HISTORY_DAYS, isoWeekday, isSlotKey, localNow, resolveSlots, slotKey, TIME, type DayFacts, type StatusIndex } from "./schedule";
 
 // Validation shared by the phone routes and the agent tools.
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -28,13 +30,28 @@ export const trainingRuleSchema = z.object({
   withinMinutes: z.number().int().min(5).max(240).default(60),
   restDayTime: timeSchema.nullable().default(null),
 });
+export const windowSchema = z
+  .object({ part: z.enum(["manana", "tarde", "noche"]), start: timeSchema.optional(), end: timeSchema.optional() })
+  .transform((w) => ({ part: w.part, start: w.start ?? DAY_PART_RANGES[w.part].start, end: w.end ?? DAY_PART_RANGES[w.part].end }))
+  .refine((w) => w.start < w.end, "a window's start must be before its end");
+export const intervalSchema = z.object({
+  every: z.number().int().min(1).max(52),
+  unit: z.enum(["day", "week"]),
+  start: dateSchema.optional(),
+});
 export const scheduleSchema = z.object({
   asNeeded: z.boolean().default(false),
   times: z.array(timeSchema).max(24).default([]),
   days: z.array(z.number().int().min(1).max(7)).max(7).default([]),
+  interval: intervalSchema.nullable().default(null),
+  monthDay: z.number().int().min(1).max(31).nullable().default(null),
   training: trainingRuleSchema.nullable().default(null),
   meals: z.array(z.enum(["desayuno", "comida", "cena"])).max(3).default([]),
   bedtime: z.boolean().default(false),
+  windows: z.array(windowSchema).max(3).default([]),
+  anyTime: z.boolean().default(false),
+  // Left out = the default evening reminder; null = none.
+  reminder: timeSchema.nullable().optional(),
 });
 const fields = {
   name: text(80),
@@ -59,13 +76,13 @@ export const medicationInputSchema = z.object({
   stock: fields.stock.optional(),
   lowStockThreshold: fields.lowStockThreshold.optional(),
   active: fields.active.default(true),
-  schedule: scheduleSchema.default({ asNeeded: true, times: [], days: [], training: null, meals: [], bedtime: false }),
+  schedule: scheduleSchema.default({ asNeeded: true, times: [], days: [], interval: null, monthDay: null, training: null, meals: [], bedtime: false, windows: [], anyTime: false }),
 });
 export const medicationPatchSchema = z.object(fields).partial();
 export const doseLogSchema = z.object({
   medicationId: z.string().min(1),
   date: dateSchema,
-  scheduledTime: z.string().refine(isSlotKey, "expected the slot: HH:MM or entreno/desayuno/comida/cena/dormir").nullish(),
+  scheduledTime: z.string().refine(isSlotKey, "expected the slot: HH:MM or entreno/desayuno/comida/cena/dormir/manana/tarde/noche/dia").nullish(),
   status: z.enum(["tomada", "omitida", "pospuesta"]),
   takenAt: z.number().positive().nullish(),
 });
@@ -138,27 +155,58 @@ const toDose = (row: DoseRow): DoseEvent => ({
   loggedAt: row.logged_at,
 });
 
-const AS_NEEDED: MedicationSchedule = { asNeeded: true, times: [], days: [], training: null, meals: [], bedtime: false };
+const EMPTY: Omit<MedicationSchedule, "asNeeded"> = { times: [], days: [], interval: null, monthDay: null, training: null, meals: [], bedtime: false, windows: [], anyTime: false, reminder: null };
+const AS_NEEDED: MedicationSchedule = { asNeeded: true, ...EMPTY };
 
 /**
- * Schedules stored before moments existed are just `{ asNeeded, times, days }`:
- * they read as fixed times with nothing tied to training, meals or bed. Nothing
- * is rewritten, so this holds on every read.
+ * The migration for schedules, done on every read: older ones are just
+ * `{ asNeeded, times, days }` (or add training, meals, bedtime), and read as
+ * exactly that with every newer part off — weekdays, fixed times, no windows,
+ * no any-time. Nothing is rewritten, so it is idempotent by construction.
  */
-function readSchedule(json: string): MedicationSchedule {
-  return { training: null, meals: [], bedtime: false, ...(JSON.parse(json) as Partial<MedicationSchedule>) } as MedicationSchedule;
+export function readSchedule(json: string): MedicationSchedule {
+  return { ...AS_NEEDED, ...(JSON.parse(json) as Partial<MedicationSchedule>) };
 }
 
-/** Times and meals sorted and deduped; as-needed drops everything else. */
-function normalizeSchedule(schedule: MedicationSchedule): MedicationSchedule {
+type ParsedSchedule = z.output<typeof scheduleSchema>;
+
+/**
+ * Sorted and deduped, with one frequency kept (month day, else interval, else
+ * weekdays) and defaults filled: an interval starts with the medication, weeks
+ * without days fall on the start's weekday, an any-time dose gets the evening
+ * reminder unless told otherwise. As-needed drops everything else.
+ */
+function normalizeSchedule(schedule: ParsedSchedule, startDate: string): MedicationSchedule {
   if (schedule.asNeeded) return AS_NEEDED;
-  if (schedule.times.length === 0 && schedule.meals.length === 0 && !schedule.bedtime && !schedule.training) {
-    throw new MedicationError("invalid_request", "a scheduled medication needs a time, a meal, bedtime or training (or asNeeded: true)");
+  if (schedule.times.length === 0 && schedule.meals.length === 0 && !schedule.bedtime && !schedule.training && schedule.windows.length === 0 && !schedule.anyTime) {
+    throw new MedicationError("invalid_request", "a scheduled medication needs a time, a window, anyTime, a meal, bedtime or training (or asNeeded: true)");
   }
-  const days = [...new Set(schedule.days)].sort();
-  const meals = (["desayuno", "comida", "cena"] as const).filter((m) => schedule.meals.includes(m));
-  return { asNeeded: false, times: [...new Set(schedule.times)].sort(), days: days.length === 7 ? [] : days, training: schedule.training, meals, bedtime: schedule.bedtime };
+  const parts = new Set(schedule.windows.map((w) => w.part));
+  if (parts.size < schedule.windows.length) throw new MedicationError("invalid_request", "each day part (manana, tarde, noche) can appear once");
+  const monthDay = schedule.monthDay;
+  const interval = monthDay || !schedule.interval ? null : { ...schedule.interval, start: schedule.interval.start ?? startDate };
+  let days = [...new Set(schedule.days)].sort();
+  if (monthDay || interval?.unit === "day" || (!interval && days.length === 7)) days = [];
+  if (interval?.unit === "week" && days.length === 0) days = [isoWeekday(interval.start)];
+  // Every 1 day is every day; every 1 week on some days is those weekdays.
+  const keepInterval = interval && interval.every > 1 ? interval : null;
+  return {
+    asNeeded: false,
+    times: [...new Set(schedule.times)].sort(),
+    days,
+    interval: keepInterval,
+    monthDay,
+    training: schedule.training,
+    meals: (["desayuno", "comida", "cena"] as const).filter((m) => schedule.meals.includes(m)),
+    bedtime: schedule.bedtime,
+    windows: (["manana", "tarde", "noche"] as const).flatMap((part) => schedule.windows.filter((w) => w.part === part)),
+    anyTime: schedule.anyTime,
+    reminder: schedule.anyTime ? (schedule.reminder === undefined ? DEFAULT_ANY_TIME_REMINDER : schedule.reminder) : null,
+  };
 }
+
+/** Parses and normalizes a schedule as callers send it (for nudges and tests). */
+export const parseSchedule = (raw: MedicationScheduleInput, startDate: string) => normalizeSchedule(scheduleSchema.parse(raw), startDate);
 
 export function listMedications(opts: { includeInactive?: boolean } = {}): Medication[] {
   const where = opts.includeInactive ? "" : "WHERE active = 1";
@@ -190,7 +238,7 @@ export function addMedication(raw: MedicationInput, today = localNow().date): Me
       input.unit,
       input.form,
       input.instructions,
-      JSON.stringify(normalizeSchedule(input.schedule)),
+      JSON.stringify(normalizeSchedule(input.schedule, startDate)),
       startDate,
       input.endDate ?? null,
       input.stock ?? null,
@@ -206,8 +254,9 @@ export function addMedication(raw: MedicationInput, today = localNow().date): Me
 export function updateMedication(id: string, raw: MedicationPatch, today = localNow().date): Medication {
   const patch = medicationPatchSchema.parse(raw);
   const before = getMedication(id);
-  const merged = { ...before, ...patch };
-  if (patch.schedule) merged.schedule = normalizeSchedule(patch.schedule);
+  const { schedule, ...rest } = patch;
+  const merged = { ...before, ...rest };
+  if (schedule) merged.schedule = normalizeSchedule(schedule, merged.startDate);
   if (merged.endDate && merged.endDate < merged.startDate) throw new MedicationError("invalid_request", "endDate is before startDate");
   db()
     .query(
@@ -355,7 +404,7 @@ function slotsOn(meds: Medication[], dates: string[], events: DoseEvent[], facts
 export function medicationDay(date: string, time: string): MedicationDay {
   const events = dosesBetween(date, date);
   const slots = slotsOn(listMedications(), [date], events, dayFacts(date, date, date), date, time);
-  const next = slots.find((s) => (s.status === "pendiente" || s.status === "pospuesta") && s.time !== null && s.time >= time) ?? null;
+  const next = slots.find((s) => (s.status === "pendiente" || s.status === "pospuesta") && s.time !== null && (s.window?.end ?? s.time) >= time) ?? null;
   return { date, slots, asNeeded: events.filter((e) => e.scheduledTime === null), next };
 }
 

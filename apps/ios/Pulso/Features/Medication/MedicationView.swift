@@ -334,8 +334,7 @@ private struct MedicationRow: View {
         } else if medication.schedule.asNeeded {
             parts.append("Cuando haga falta")
         } else {
-            parts.append(medication.schedule.summary)
-            if !medication.schedule.days.isEmpty { parts.append(WeekdayNames.short(medication.schedule.days)) }
+            parts.append(medication.schedule.line)
         }
         if let instructions = medication.instructions { parts.append(instructions) }
         return parts.joined(separator: " · ")
@@ -352,6 +351,9 @@ enum WeekdayNames {
         if days.sorted() == [6, 7] { return "Fines de semana" }
         return days.sorted().map { names[$0 - 1].prefix(3).capitalized }.joined(separator: ", ")
     }
+
+    /// "jueves"
+    static func long(_ day: Int) -> String { names[max(1, min(7, day)) - 1] }
 }
 
 #Preview("Medicación · 375 pt · XXL") {

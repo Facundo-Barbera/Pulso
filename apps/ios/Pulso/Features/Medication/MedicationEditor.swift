@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Add/edit sheet. The schedule picker speaks in moments of the day (fixed
-/// times, after training, with a meal, before bed) rather than raw times.
+/// Add/edit sheet. The schedule is two plain questions: «¿Cada cuándo?» (every
+/// day, some days, every N weeks, monthly, when needed) and «¿A qué hora?»
+/// (a time, a part of the day, any time, after training, with a meal, before bed).
 struct MedicationEditor: View {
     let store: MedicationStore
     let medication: Medication?
@@ -44,7 +45,8 @@ struct MedicationEditor: View {
                 }
                 if medication == nil && draft.kind == .suplemento { presets }
                 basics
-                schedule
+                frequency
+                if !draft.schedule.asNeeded { timing }
                 stock
                 details
                 if medication != nil {
@@ -84,7 +86,7 @@ struct MedicationEditor: View {
     private var valid: Bool {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && draft.dose > 0
             && !draft.unit.trimmingCharacters(in: .whitespaces).isEmpty
-            && (draft.schedule.asNeeded || draft.schedule.hasSlots)
+            && (draft.schedule.asNeeded || (draft.schedule.hasSlots && draft.schedule.windows.allSatisfy { $0.start < $0.end }))
     }
 
     // MARK: Sections
@@ -163,23 +165,109 @@ struct MedicationEditor: View {
         return list + [form]
     }
 
-    private var schedule: some View {
+    // MARK: ¿Cada cuándo?
+
+    private var frequency: some View {
         Section {
-            Picker("Cuándo", selection: Binding(get: { draft.schedule.type }, set: { draft.schedule.become($0) })) {
-                ForEach(ScheduleType.allCases) { Label($0.label, systemImage: $0.symbol).tag($0) }
+            Picker("Frecuencia", selection: Binding(get: { draft.schedule.frequency }, set: { draft.schedule.adopt($0, today: draft.startDate) })) {
+                ForEach(FrequencyType.allCases) { Label($0.label, systemImage: $0.symbol).tag($0) }
+            }
+            switch draft.schedule.frequency {
+            case .someDays:
+                WeekdayPicker(days: $draft.schedule.days)
+            case .everyN:
+                everyN
+            case .monthly:
+                Picker("El día", selection: Binding(get: { draft.schedule.monthDay ?? 1 }, set: { draft.schedule.monthDay = $0 })) {
+                    ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
+                }
+            case .daily, .asNeeded:
+                EmptyView()
+            }
+        } header: {
+            Text("¿Cada cuándo?")
+        } footer: {
+            switch draft.schedule.frequency {
+            case .asNeeded: Text("Sin recordatorios ni adherencia: anota cada toma con «Tomé una».")
+            case .monthly where (draft.schedule.monthDay ?? 1) > 28: Text("En los meses más cortos, el último día.")
+            case .everyN where draft.schedule.interval?.unit == .week: Text("Cuenta las semanas desde la fecha de inicio.")
+            default: EmptyView()
+            }
+        }
+    }
+
+    @ViewBuilder private var everyN: some View {
+        let interval = draft.schedule.interval ?? ScheduleInterval(every: 2, unit: .week, start: draft.startDate)
+        Stepper(value: intervalBinding(\.every), in: 1...52) {
+            LabeledContent("Cada", value: "\(interval.every) \(interval.unit == .week ? (interval.every == 1 ? "semana" : "semanas") : (interval.every == 1 ? "día" : "días"))")
+                .monospacedDigit()
+                .contentTransition(.numericText())
+        }
+        Picker("Unidad", selection: intervalBinding(\.unit)) {
+            Text("Semanas").tag(ScheduleInterval.Unit.week)
+            Text("Días").tag(ScheduleInterval.Unit.day)
+        }
+        .pickerStyle(.segmented)
+        DatePicker("A partir del", selection: Binding(
+            get: { LocalClock.day(interval.start) ?? .now },
+            set: { draft.schedule.interval?.start = LocalClock.date($0) }
+        ), displayedComponents: .date)
+        if interval.unit == .week { WeekdayPicker(days: $draft.schedule.days, emptyMeansEvery: false) }
+    }
+
+    // MARK: ¿A qué hora?
+
+    private var timing: some View {
+        Section {
+            Picker("Momento", selection: Binding(get: { draft.schedule.type }, set: { draft.schedule.become($0) })) {
+                ForEach(ScheduleType.timings) { Label($0.label, systemImage: $0.symbol).tag($0) }
             }
 
             switch draft.schedule.type {
             case .fixed: fixedTimes
+            case .window: windowPicker
+            case .anyTime: anyTimeReminder
             case .training: trainingRule
             case .meal: mealPicker
             case .bedtime, .asNeeded: EmptyView()
             }
-            if !draft.schedule.asNeeded { WeekdayPicker(days: $draft.schedule.days) }
         } header: {
-            Text("Horario")
+            Text("¿A qué hora?")
         } footer: {
             scheduleFooter
+        }
+    }
+
+    @ViewBuilder private var windowPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(DayPart.allCases) { part in
+                Chip(title: part.label, systemImage: part.symbol, on: draft.schedule.windows.contains { $0.part == part }) {
+                    withAnimation(.snappy) { toggleWindow(part) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        ForEach(draft.schedule.windows) { window in
+            HStack {
+                Label(window.part.label, systemImage: window.part.symbol)
+                Spacer()
+                DatePicker("Desde", selection: windowBinding(window.part, \.start), displayedComponents: .hourAndMinute).labelsHidden()
+                Text("–").foregroundStyle(.secondary)
+                DatePicker("Hasta", selection: windowBinding(window.part, \.end), displayedComponents: .hourAndMinute).labelsHidden()
+            }
+        }
+    }
+
+    @ViewBuilder private var anyTimeReminder: some View {
+        Toggle("Avisar si no la tomé", isOn: Binding(
+            get: { draft.schedule.reminder != nil },
+            set: { draft.schedule.reminder = $0 ? MedicationSchedule.defaultReminder : nil }
+        ))
+        if let reminder = draft.schedule.reminder {
+            DatePicker("A las", selection: Binding(
+                get: { LocalClock.instant(date: LocalClock.date(.now), time: reminder) ?? .now },
+                set: { draft.schedule.reminder = LocalClock.time($0) }
+            ), displayedComponents: .hourAndMinute)
         }
     }
 
@@ -246,6 +334,11 @@ struct MedicationEditor: View {
         switch draft.schedule.type {
         case .fixed:
             Text("Te avisamos en cada toma, con «Tomada» y «Posponer» en la notificación.")
+        case .window:
+            Text("Una toma cuando quieras dentro de la franja. Te avisamos al empezar, y solo cuenta como olvidada si se acaba el día.")
+        case .anyTime:
+            Text(draft.schedule.reminder.map { "Toca ese día, cuando quieras. Si a las \(LocalClock.display($0)) aún no la marcaste, un aviso suave." }
+                 ?? "Toca ese día, cuando quieras, sin avisos. Solo cuenta como olvidada si se acaba el día.")
         case .training:
             Text(draft.schedule.training?.restDayTime == nil
                  ? "Te avisamos al terminar tu entreno, en Pulso o en Salud. Los días sin entreno no cuenta."
@@ -255,10 +348,10 @@ struct MedicationEditor: View {
         case .bedtime:
             Text("Media hora antes de tu hora de dormir.")
         case .asNeeded:
-            Text("Sin recordatorios: anota cada toma con «Tomé una».")
+            EmptyView()
         }
         if draft.schedule.isMixed {
-            Text("Este horario combina varios momentos; cambiar «Cuándo» lo reemplaza.")
+            Text("Este horario combina varios momentos; cambiar el momento lo reemplaza.")
         }
     }
 
@@ -329,6 +422,36 @@ struct MedicationEditor: View {
             draft.schedule.times.append(time)
             draft.schedule.times.sort()
         }
+    }
+
+    /// At least one part of the day stays on; they stay in day order.
+    private func toggleWindow(_ part: DayPart) {
+        if draft.schedule.windows.contains(where: { $0.part == part }) {
+            if draft.schedule.windows.count > 1 { draft.schedule.windows.removeAll { $0.part == part } }
+        } else {
+            let all = draft.schedule.windows + [DoseWindow(part: part)]
+            draft.schedule.windows = DayPart.allCases.compactMap { p in all.first { $0.part == p } }
+        }
+    }
+
+    private func windowBinding(_ part: DayPart, _ keyPath: WritableKeyPath<DoseWindow, String>) -> Binding<Date> {
+        Binding(
+            get: {
+                let time = draft.schedule.windows.first { $0.part == part }?[keyPath: keyPath] ?? "08:00"
+                return LocalClock.instant(date: LocalClock.date(.now), time: time) ?? .now
+            },
+            set: { newValue in
+                guard let index = draft.schedule.windows.firstIndex(where: { $0.part == part }) else { return }
+                draft.schedule.windows[index][keyPath: keyPath] = LocalClock.time(newValue)
+            }
+        )
+    }
+
+    private func intervalBinding<Value>(_ keyPath: WritableKeyPath<ScheduleInterval, Value>) -> Binding<Value> {
+        Binding(
+            get: { (draft.schedule.interval ?? ScheduleInterval(every: 2, unit: .week, start: draft.startDate))[keyPath: keyPath] },
+            set: { draft.schedule.interval?[keyPath: keyPath] = $0 }
+        )
     }
 
     /// At least one meal stays on.
@@ -409,14 +532,45 @@ private struct Chip: View {
 
 // MARK: - Schedule types
 
-/// The editor's "Cuándo": which part of `MedicationSchedule` the person edits.
-enum ScheduleType: String, CaseIterable, Identifiable {
-    case fixed, training, meal, bedtime, asNeeded
+/// The editor's «¿Cada cuándo?».
+enum FrequencyType: String, CaseIterable, Identifiable {
+    case daily, someDays, everyN, monthly, asNeeded
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .fixed: "A horas fijas"
+        case .daily: "Diario"
+        case .someDays: "Algunos días"
+        case .everyN: "Cada N semanas"
+        case .monthly: "Cada mes"
+        case .asNeeded: "Cuando haga falta"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .daily: "calendar"
+        case .someDays: "calendar.day.timeline.left"
+        case .everyN: "repeat"
+        case .monthly: "calendar.circle"
+        case .asNeeded: "hand.tap"
+        }
+    }
+}
+
+/// The editor's «¿A qué hora?»: which part of `MedicationSchedule` the person edits.
+enum ScheduleType: String, CaseIterable, Identifiable {
+    case fixed, window, anyTime, training, meal, bedtime, asNeeded
+    var id: String { rawValue }
+
+    /// What «¿A qué hora?» offers (as-needed is a frequency).
+    static let timings: [ScheduleType] = [.fixed, .window, .anyTime, .training, .meal, .bedtime]
+
+    var label: String {
+        switch self {
+        case .fixed: "A una hora"
+        case .window: "En la mañana…"
+        case .anyTime: "Cualquier hora"
         case .training: "Después de entrenar"
         case .meal: "Con una comida"
         case .bedtime: "Antes de dormir"
@@ -427,6 +581,8 @@ enum ScheduleType: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .fixed: "clock"
+        case .window: "sun.max"
+        case .anyTime: "calendar.badge.checkmark"
         case .training: "figure.strengthtraining.traditional"
         case .meal: "fork.knife"
         case .bedtime: "bed.double.fill"
@@ -436,9 +592,40 @@ enum ScheduleType: String, CaseIterable, Identifiable {
 }
 
 extension MedicationSchedule {
+    var frequency: FrequencyType {
+        if asNeeded { return .asNeeded }
+        if monthDay != nil { return .monthly }
+        if interval != nil { return .everyN }
+        return days.isEmpty ? .daily : .someDays
+    }
+
+    /// Switches the frequency, keeping the timing (so «Cuando haga falta» and back loses nothing)
+    /// and starting the new one with a sensible default from `today`.
+    mutating func adopt(_ frequency: FrequencyType, today: String) {
+        guard frequency != self.frequency else { return }
+        let weekday = LocalClock.day(today).map { LocalClock.isoWeekday($0) } ?? 1
+        asNeeded = frequency == .asNeeded
+        if frequency != .everyN { interval = nil }
+        if frequency != .monthly { monthDay = nil }
+        switch frequency {
+        case .daily: days = []
+        case .someDays: if days.isEmpty { days = [weekday] }
+        case .everyN:
+            interval = ScheduleInterval(every: 2, unit: .week, start: today)
+            if days.isEmpty { days = [weekday] }
+        case .monthly:
+            days = []
+            monthDay = Int(today.suffix(2)) ?? 1
+        case .asNeeded: break
+        }
+        if !asNeeded && !hasSlots { times = ["08:00"] }
+    }
+
     /// The editor's view of it. A mixed schedule (from the Coach) shows its first part.
     var type: ScheduleType {
         if asNeeded { return .asNeeded }
+        if anyTime { return .anyTime }
+        if !windows.isEmpty { return .window }
         if training != nil { return .training }
         if !meals.isEmpty { return .meal }
         if bedtime { return .bedtime }
@@ -447,16 +634,21 @@ extension MedicationSchedule {
 
     /// More than one kind of slot, which the editor shows only one of.
     var isMixed: Bool {
-        !asNeeded && [!times.isEmpty, training != nil, !meals.isEmpty, bedtime].count { $0 } > 1
+        !asNeeded && [!times.isEmpty, training != nil, !meals.isEmpty, bedtime, !windows.isEmpty, anyTime].count { $0 } > 1
     }
 
-    /// Switches to `type`, keeping weekdays and starting it with a sensible default.
+    /// Switches to `type`, keeping the frequency and starting it with a sensible default.
     mutating func become(_ type: ScheduleType) {
         guard type != self.type || isMixed else { return }
-        let keep = (training, meals, times)
-        self = MedicationSchedule(asNeeded: type == .asNeeded, times: [], days: type == .asNeeded ? [] : days)
+        let keep = (training, meals, times, windows, reminder)
+        let wasAnyTime = anyTime
+        self = type == .asNeeded ? .asNeededOnly : MedicationSchedule(asNeeded: false, times: [], days: days, interval: interval, monthDay: monthDay)
         switch type {
         case .fixed: times = keep.2.isEmpty ? ["08:00"] : keep.2
+        case .window: windows = keep.3.isEmpty ? [DoseWindow(part: .manana)] : keep.3
+        case .anyTime:
+            anyTime = true
+            reminder = wasAnyTime ? keep.4 : MedicationSchedule.defaultReminder
         case .training: training = keep.0 ?? TrainingRule()
         case .meal: meals = keep.1.isEmpty ? [.desayuno] : keep.1
         case .bedtime: bedtime = true
@@ -522,8 +714,8 @@ struct SupplementPreset: Identifiable {
         draft.unit = unit
         draft.form = form
         draft.instructions = instructions
-        draft.schedule = MedicationSchedule(asNeeded: false, times: schedule.times, days: draft.schedule.days,
-                                            training: schedule.training, meals: schedule.meals, bedtime: schedule.bedtime)
+        draft.schedule = MedicationSchedule(asNeeded: false, times: schedule.times, days: draft.schedule.days, interval: draft.schedule.interval,
+                                            monthDay: draft.schedule.monthDay, training: schedule.training, meals: schedule.meals, bedtime: schedule.bedtime)
     }
 
     static let all = [
@@ -540,9 +732,10 @@ struct SupplementPreset: Identifiable {
     ]
 }
 
-/// L M X J V S D toggles; none selected means every day.
+/// L M X J V S D toggles; none selected means every day (unless `emptyMeansEvery` is off, for «cada N semanas»).
 private struct WeekdayPicker: View {
     @Binding var days: [Int]
+    var emptyMeansEvery = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -579,6 +772,6 @@ private struct WeekdayPicker: View {
         } else {
             set.insert(day)
         }
-        days = set.count == 7 ? [] : set.sorted()
+        days = set.count == 7 && emptyMeansEvery ? [] : set.sorted()
     }
 }
