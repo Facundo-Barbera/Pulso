@@ -10,6 +10,7 @@ import { listDailyMetrics, readinessFor } from "../daily/store";
 import { localNow } from "../medication/schedule";
 import { medicationDay } from "../medication/store";
 import { sleepOverview } from "../sleep/store";
+import { volumeOf } from "../training/segments";
 import { listSessions } from "../training/store";
 import { listWorkouts } from "../workouts";
 
@@ -66,7 +67,7 @@ const number = new Intl.NumberFormat("es");
 
 export function recentActivity(limit = RECENT): RecentActivity[] {
   const sessions: RecentActivity[] = listSessions(limit).map((s) => {
-    const volume = s.sets.reduce((sum, set) => sum + set.weightKg * set.reps, 0);
+    const volume = s.sets.reduce((sum, set) => sum + volumeOf(set), 0);
     const parts = [`${s.sets.length} ${s.sets.length === 1 ? "serie" : "series"}`, volume > 0 ? `${number.format(Math.round(volume))} kg` : null];
     return { id: s.id, kind: "session", title: s.name, startedAt: s.startedAt, endedAt: s.endedAt, detail: parts.filter(Boolean).join(" · ") };
   });
