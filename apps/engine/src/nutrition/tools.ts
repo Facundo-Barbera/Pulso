@@ -146,19 +146,19 @@ export const nutritionTools = [
   ),
   tool(
     "daily_summary",
-    "Totals eaten on a local day versus the daily targets: totals, targets, remaining (targets minus totals; negative means over), per-slot totals, and the day's caffeineMg and alcoholG. kcal and grams. Defaults to today. Use before suggesting what to eat next.",
+    "Totals eaten on a local day versus the daily targets: totals, targets, remaining (targets minus totals; negative means over), zones (each nutrient's value against its zone: min, max, kind and status below/inZone/above), inZone (kcal in zone and protein at least its minimum), per-slot totals, and the day's caffeineMg and alcoholG. kcal and grams. Defaults to today. Use before suggesting what to eat next: aim for what is still below its zone, mind what is near its max.",
     { date: dateString.optional() },
     async ({ date }) => json(dailySummary(date ?? localDate())),
   ),
   tool(
     "get_targets",
-    "The person's daily nutrition targets: kcal and grams of protein, carbs, fat and fiber. null if never set.",
+    "The person's daily nutrition targets: kcal and grams of protein, carbs, fat and fiber, each with its zone (min, max, kind: min = reach at least, range = stay between, max = stay under; custom when set by hand). null if never set.",
     {},
     async () => json(getTargets()),
   ),
   tool(
     "set_targets",
-    "Replace the daily nutrition targets (kcal; grams of protein, carbs, fat, fiber). Set them when you design or adjust a diet; the Dieta tab's rings and adherence use them.",
+    "Replace the daily nutrition targets (kcal; grams of protein, carbs, fat, fiber) and their zones. Set them when you design or adjust a diet; the Dieta tab's rings show each zone as the band where the person is doing well, and adherence counts days in zone. Pass zones only to change a derived one (e.g. protein { min: 150 }, kcal { min: 1800, max: 2050 }); to keep custom zones, pass them again.",
     targetsShape,
     async (targets) => json(setTargets(targets)),
   ),

@@ -114,7 +114,32 @@ export type MealInput = Omit<
   alcoholG?: number | null;
 };
 
-export type NutritionTargets = Macros & { updatedAt: number };
+/**
+ * How a nutrient's zone reads: `min` = reach at least `min` (protein, fiber; going
+ * past `max` is fine, `max` only ends the band drawn); `range` = stay between `min`
+ * and `max` (kcal, carbs, fat); `max` = stay under `max`.
+ */
+export type ZoneKind = "min" | "range" | "max";
+
+/** The "estás bien aquí" band around one target. kcal or grams, like the target. */
+export type TargetZone = {
+  kind: ZoneKind;
+  /** null for `max` zones. */
+  min: number | null;
+  max: number | null;
+  /** Set by the Coach or the person; false when derived from the target and the body goal. */
+  custom: boolean;
+};
+
+export type ZoneStatus = "below" | "inZone" | "above";
+
+/** One nutrient of one day against its zone. `above` only exists for `range` and `max` zones. */
+export type NutrientZone = TargetZone & { value: number; target: number; status: ZoneStatus };
+
+export type NutritionTargets = Macros & { updatedAt: number; zones: Record<keyof Macros, TargetZone> };
+
+/** A zone as set by the Coach or the person: either bound may be left out (kind follows from which are given). */
+export type ZoneInput = { min?: number | null; max?: number | null; kind?: ZoneKind };
 
 export type DailySummary = {
   date: string;
@@ -123,6 +148,10 @@ export type DailySummary = {
   targets: NutritionTargets | null;
   /** targets − totals (negative = over). null without targets. */
   remaining: Macros | null;
+  /** Each nutrient against its zone; null without targets. */
+  zones: Record<keyof Macros, NutrientZone> | null;
+  /** Something logged, kcal in its zone and protein at least its minimum. False without targets. */
+  inZone: boolean;
   bySlot: Partial<Record<MealSlot, Macros>>;
   entries: number;
   /** Caffeine (mg) and alcohol (g) logged that day; 0 when none. */
