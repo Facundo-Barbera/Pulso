@@ -1,28 +1,21 @@
 import type { NutrientZone } from "@pulso/contract";
 import type { LucideIcon } from "lucide-react";
-import { ringFull } from "./zone";
+import { zoneFraction } from "./zone";
 
 export type RingSpec = {
   key: string;
   color: string;
   Icon: LucideIcon;
-  /** Laps: 1 is a full circle, past 1 it goes round again. */
+  /** Progress toward the target: 1 is a full lap (100 %), past 1 it goes round again. */
   progress: number;
-  zone: NutrientZone | null;
 };
 
-/** Where a value sits on its ring, in laps: against the zone's ring when there is one, else against the target. */
-export const ringLaps = (value: number, zone: NutrientZone | null, target: number | null | undefined) =>
-  Math.max(0, zone ? value / ringFull(zone) : target ? value / target : 0);
-
 /**
- * Concentric rings in the manner of Apple's Activity rings, outermost first: one
- * stroke width, tight gaps, each with its icon at its start so identity reads from
- * the icon and the order, not the hue. Past a lap the ring goes round again and the
- * second lap's end casts a shadow on the first. A zone shows without colour: the
- * unfilled track between min and max is hatched, both ends are cut like brackets,
- * the target is a notched tick, and the arc past the max is hatched. Server-rendered;
- * the first lap sweeps in once (off for reduced motion).
+ * Concentric rings in the manner of Apple's Activity rings, outermost first, and
+ * only that: progress toward each target, one stroke width, tight gaps, the icon at
+ * each ring's start so identity reads from the icon and the order, not the hue, and
+ * past 100 % a second lap whose end casts a shadow. The zone lives in ZoneBar.
+ * Server-rendered; the first lap sweeps in once (off for reduced motion).
  */
 export function ActivityRings({ rings, size, stroke, gap, label }: { rings: RingSpec[]; size: number; stroke: number; gap: number; label: string }) {
   const c = size / 2;
@@ -45,46 +38,17 @@ export function ActivityRings({ rings, size, stroke, gap, label }: { rings: Ring
 }
 
 function Ring({ ring, c, r, stroke }: { ring: RingSpec; c: number; r: number; stroke: number }) {
-  const { color, progress, zone } = ring;
+  const { color, progress } = ring;
   const circumference = 2 * Math.PI * r;
   const lap = Math.min(progress, 1);
   const second = Math.min(Math.max(progress - 1, 0), 1);
-  const full = zone ? ringFull(zone) : 1;
-  const at = (v: number) => v / full;
-  const min = zone?.min != null ? at(zone.min) : null;
-  const max = zone?.max != null ? at(zone.max) : null;
-  const target = zone ? at(zone.target) : null;
-  const point = (f: number, d: number) => ({ x: c + d * Math.cos(f * 2 * Math.PI), y: c + d * Math.sin(f * 2 * Math.PI) });
-  // A segment from fraction a to b of the circle.
-  const seg = (a: number, b: number) => ({ strokeDasharray: `${Math.max(0, b - a) * circumference} ${circumference}`, strokeDashoffset: -a * circumference });
-  const tick = (f: number, half: number) => {
-    const [p, q] = [point(f, r - half), point(f, r + half)];
-    return { x1: p.x, y1: p.y, x2: q.x, y2: q.y };
-  };
-  // Short radial stripes every ~5px of arc between a and b.
-  const hatch = (a: number, b: number) => {
-    const n = Math.floor(((b - a) * circumference) / 5);
-    return Array.from({ length: Math.max(0, n) }, (_, k) => tick(a + ((k + 0.5) * (b - a)) / n, stroke * 0.3));
-  };
-  const band = zone ? { from: Math.min(min ?? 0, 1), to: Math.min(max ?? target!, 1) } : null;
-  const notch = (f: number) => {
-    const rim = r + stroke / 2;
-    const spread = (stroke * 0.32) / rim;
-    const [a, tip, b] = [point(f - spread / (2 * Math.PI), rim), point(f, rim - stroke * 0.38), point(f + spread / (2 * Math.PI), rim)];
-    return `${a.x},${a.y} ${tip.x},${tip.y} ${b.x},${b.y}`;
-  };
-  const start = point(0, r);
-  const end = point(second, r);
+  const point = (f: number) => ({ x: c + r * Math.cos(f * 2 * Math.PI), y: c + r * Math.sin(f * 2 * Math.PI) });
+  const start = point(0);
+  const end = point(second);
 
   return (
     <g>
       <circle className="activity-track" cx={c} cy={c} r={r} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={stroke} />
-      {band && (
-        <>
-          <circle cx={c} cy={c} r={r} fill="none" stroke="var(--foreground)" strokeOpacity={0.1} strokeWidth={stroke} {...seg(band.from, band.to)} />
-          {lap < band.to && hatch(Math.max(band.from, lap), band.to).map((l, k) => <line key={k} className="zone-hatch" {...l} stroke="var(--foreground)" strokeOpacity={0.45} strokeWidth={1.5} />)}
-        </>
-      )}
       {lap > 0 && (
         <>
           <circle cx={start.x} cy={start.y} r={stroke / 2} fill={color} />
@@ -106,19 +70,40 @@ function Ring({ ring, c, r, stroke }: { ring: RingSpec; c: number; r: number; st
       {second > 0 && (
         <>
           <circle cx={end.x} cy={end.y} r={stroke / 2} fill={color} style={{ filter: `drop-shadow(0 0 ${stroke / 4}px rgb(0 0 0 / 0.6))` }} />
-          <circle cx={c} cy={c} r={r} fill="none" stroke={`color-mix(in oklab, ${color} 88%, white)`} strokeWidth={stroke} strokeLinecap="round" {...seg(0, second)} />
-        </>
-      )}
-      {max !== null && progress > max &&
-        [...hatch(Math.min(max, 1), lap), ...(second > 0 ? hatch(0, second) : [])].map((l, k) => <line key={`o${k}`} {...l} stroke="black" strokeOpacity={0.32} strokeWidth={1.5} />)}
-      {[min, max].map((f, k) => f !== null && f > 0 && f < 1 && <line key={`b${k}`} className="zone-mark" {...tick(f, stroke / 2)} stroke="var(--card)" strokeWidth={2} />)}
-      {target !== null && target < 1 && (
-        <>
-          <line {...tick(target, stroke / 2)} stroke="var(--card)" strokeWidth={6} />
-          <line className="zone-mark" {...tick(target, stroke / 2 - 1)} stroke="var(--foreground)" strokeWidth={2.5} strokeLinecap="round" />
-          <polygon className="zone-mark" points={notch(target)} fill="var(--foreground)" />
+          <circle
+            cx={c}
+            cy={c}
+            r={r}
+            fill="none"
+            stroke={`color-mix(in oklab, ${color} 88%, white)`}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${second * circumference} ${circumference}`}
+          />
         </>
       )}
     </g>
+  );
+}
+
+/**
+ * A zone as a line, which reads far better than marks on an arc: a thin neutral
+ * track, the zone as a thicker, lighter stretch of the nutrient's colour, a tick at
+ * the target and a dot at today's value.
+ */
+export function ZoneBar({ zone, color }: { zone: NutrientZone; color: string }) {
+  const pct = (v: number) => `${zoneFraction(zone, v) * 100}%`;
+  const low = zoneFraction(zone, zone.min ?? 0);
+  const high = zoneFraction(zone, zone.max ?? zone.target);
+  return (
+    <div className="relative h-4" aria-hidden>
+      <div className="zone-track absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-[color-mix(in_oklab,var(--foreground)_14%,transparent)]" />
+      <div className="absolute top-1/2 h-2.5 min-w-2 -translate-y-1/2 rounded-full" style={{ left: `${low * 100}%`, width: `${(high - low) * 100}%`, background: `color-mix(in oklab, ${color} 45%, transparent)` }} />
+      <div className="zone-mark bg-foreground absolute top-0 h-4 w-[2.5px] -translate-x-1/2 rounded-full" style={{ left: pct(zone.target) }} />
+      <div
+        className="absolute top-1/2 size-3.5 -translate-y-1/2 rounded-full border-[2.5px] border-[var(--card)] transition-[left] duration-500"
+        style={{ left: `clamp(0px, calc(${pct(zone.value)} - 7px), calc(100% - 14px))`, background: color }}
+      />
+    </div>
   );
 }

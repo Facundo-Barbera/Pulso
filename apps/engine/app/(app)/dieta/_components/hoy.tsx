@@ -13,15 +13,15 @@ import { PrepChip } from "./prep-chip";
 import { EatButton } from "./slot-row";
 import { SlotList } from "./slot-sheet";
 import { fmtAmount } from "./units";
-import { ActivityRings, ringLaps, type RingSpec } from "./activity-rings";
+import { ActivityRings, type RingSpec, ZoneBar } from "./activity-rings";
 import { ZONE_STATUS, zoneLine, zoneRange } from "./zone";
 
 const ENERGY = "var(--domain-energy)";
-const KCAL = { key: "kcal", label: "Calorías", color: ENERGY, Icon: Flame } as const;
-const MACROS = [
-  { key: "protein", label: "Proteína", color: "var(--domain-protein)", Icon: Fish },
-  { key: "carbs", label: "Carbos", color: "var(--domain-carbs)", Icon: Wheat },
-  { key: "fat", label: "Grasa", color: "var(--domain-fat)", Icon: Droplet },
+const NUTRIENTS = [
+  { key: "kcal", label: "Calorías", unit: "kcal", color: ENERGY, Icon: Flame },
+  { key: "protein", label: "Proteína", unit: "g", color: "var(--domain-protein)", Icon: Fish },
+  { key: "carbs", label: "Carbos", unit: "g", color: "var(--domain-carbs)", Icon: Wheat },
+  { key: "fat", label: "Grasa", unit: "g", color: "var(--domain-fat)", Icon: Droplet },
 ] as const;
 
 export const SLOT_ICONS: Record<MealSlot, LucideIcon> = {
@@ -34,72 +34,56 @@ export const SLOT_ICONS: Record<MealSlot, LucideIcon> = {
 };
 
 /**
- * The hero: kcal, protein, carbs and fat as concentric Activity-style rings (see
- * ActivityRings), each with its icon at its start; beside them the day's kcal and
- * a tile per macro that repeats the ring's icon and says in words, with a status
- * icon, how far from its zone it is — so nothing rests on telling hues apart.
+ * The hero: kcal, protein, carbs and fat as concentric Activity-style rings —
+ * progress toward each target, an icon at each ring's start (see ActivityRings) —
+ * and beside them a tile per nutrient on a neutral ground, colour only in its icon
+ * and bar: the value, its zone as a line (ZoneBar), and the status in words with an
+ * icon — so nothing rests on telling hues apart.
  */
 export function MacroHero({ summary, next }: { summary: DailySummary; next: SlotView | null }) {
   const { totals, zones, targets } = summary;
-  const rings: RingSpec[] = [KCAL, ...MACROS].map((n) => ({
-    key: n.key,
-    color: n.color,
-    Icon: n.Icon,
-    zone: zones?.[n.key] ?? null,
-    progress: ringLaps(totals[n.key], zones?.[n.key] ?? null, targets?.[n.key]),
-  }));
-  const label = [KCAL, ...MACROS]
-    .map((n) => {
-      const zone = zones?.[n.key];
-      const unit = n.key === "kcal" ? "kcal" : "g";
-      return `${n.label}: ${fmtNumber(totals[n.key])} ${unit}${zone ? `, ${zoneLine(zone, unit)}, zona ${zoneRange(zone, unit)}` : ""}`;
-    })
-    .join(". ");
+  const rings: RingSpec[] = NUTRIENTS.map((n) => {
+    const target = zones?.[n.key]?.target ?? targets?.[n.key];
+    return { key: n.key, color: n.color, Icon: n.Icon, progress: target ? totals[n.key] / target : 0 };
+  });
+  const label = NUTRIENTS.map((n) => {
+    const zone = zones?.[n.key];
+    return `${n.label}: ${fmtNumber(totals[n.key])} ${n.unit}${zone ? `, ${zoneLine(zone, n.unit)}, zona ${zoneRange(zone, n.unit)}` : ""}`;
+  }).join(". ");
   return (
     <Card className="relative overflow-hidden">
-      <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-[0.10] blur-3xl" style={{ background: ENERGY }} aria-hidden />
-      <div className="relative flex flex-col items-center gap-6 md:flex-row md:items-center md:gap-10">
-        <ActivityRings rings={rings} size={212} stroke={20} gap={3} label={label} />
+      <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-[0.08] blur-3xl" style={{ background: ENERGY }} aria-hidden />
+      <div className="relative flex flex-col items-center gap-6 lg:flex-row lg:items-center lg:gap-10">
+        <ActivityRings rings={rings} size={240} stroke={25} gap={3} label={label} />
         <div className="w-full min-w-0 flex-1">
-          <div className="flex items-baseline justify-center gap-2 md:justify-start">
-            <Flame className="size-5 self-center" style={{ color: ENERGY }} aria-hidden />
-            <p className="tabular text-[36px] leading-none font-semibold tracking-tight">{fmtNumber(totals.kcal)}</p>
-            <span className="text-muted-foreground text-[15px] font-medium">kcal</span>
-          </div>
-          {zones ? (
-            <>
-              <StatusLine zone={zones.kcal} className="mt-2 justify-center text-[17px] font-semibold tracking-tight md:justify-start" iconClassName="size-5">
-                {headline(zones.kcal)}
-              </StatusLine>
-              <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">
-                Tu zona: <span className="tabular">{zoneRange(zones.kcal, "kcal")}</span> · la muesca es tu objetivo de <span className="tabular">{fmtNumber(zones.kcal.target)}</span>
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="mt-2 text-center text-[17px] font-semibold tracking-tight md:text-left">Sin objetivos diarios</p>
-              <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">Pídele al Coach tus objetivos de kcal y macros y aparecen aquí.</p>
-            </>
+          {!targets && (
+            <p className="text-muted-foreground mb-3 text-center text-[13px] lg:text-left">Sin objetivos diarios: pídele al Coach tus objetivos de kcal y macros y aparecen aquí.</p>
           )}
-          <div className="mt-4 grid grid-cols-3 gap-2.5">
-            {MACROS.map((m) => {
-              const zone = zones?.[m.key];
+          <div className="grid grid-cols-2 gap-2.5">
+            {NUTRIENTS.map((n) => {
+              const zone = zones?.[n.key];
+              const target = targets?.[n.key];
               return (
-                <div key={m.key} className="min-w-0 rounded-xl px-2.5 py-2.5 text-center md:text-left" style={{ background: `color-mix(in oklab, ${m.color} 10%, transparent)` }}>
-                  <p className="text-muted-foreground flex items-center justify-center gap-1.5 text-[12px] font-medium md:justify-start">
-                    <m.Icon className="size-3.5 shrink-0" style={{ color: m.color }} strokeWidth={2.5} aria-hidden />
-                    {m.label}
+                <div key={n.key} className="bg-foreground/[0.05] min-w-0 rounded-[14px] p-3">
+                  <p className="text-muted-foreground flex items-center gap-1.5 text-[13px] font-medium">
+                    <n.Icon className="size-4 shrink-0" style={{ color: n.color }} strokeWidth={2.5} aria-hidden />
+                    {n.label}
                   </p>
-                  <p className="tabular mt-0.5 text-[17px] font-semibold">
-                    {fmtNumber(totals[m.key])}
-                    <span className="text-muted-foreground text-[12px] font-normal">{zone || !targets ? " g" : ` / ${fmtNumber(targets[m.key])} g`}</span>
+                  <p className="tabular mt-1 text-[22px] leading-tight font-semibold">
+                    {fmtNumber(totals[n.key])}
+                    <span className="text-muted-foreground text-[13px] font-normal"> {!zone && target ? `/ ${fmtNumber(target)} ${n.unit}` : n.unit}</span>
                   </p>
                   {zone && (
                     <>
-                      <StatusLine zone={zone} className="justify-center text-[12px] font-semibold md:justify-start" iconClassName="size-3.5">
-                        {zoneLine(zone, "g")}
+                      <div className="mt-2">
+                        <ZoneBar zone={zone} color={n.color} />
+                      </div>
+                      <StatusLine zone={zone} className="mt-1.5 text-[12.5px] font-semibold" iconClassName="size-3.5">
+                        {zoneLine(zone, n.unit)}
                       </StatusLine>
-                      <p className="text-muted-foreground tabular text-[11px]">{zoneRange(zone, "g")}</p>
+                      <p className="text-muted-foreground tabular mt-0.5 text-[11.5px] leading-snug">
+                        {zone.kind === "min" ? zoneRange(zone, n.unit) : `${zoneRange(zone, n.unit)} · obj. ${fmtNumber(zone.target)}`}
+                      </p>
                     </>
                   )}
                 </div>
@@ -119,16 +103,9 @@ function StatusLine({ zone, className, iconClassName, children }: { zone: Nutrie
   return (
     <p className={cn("flex items-center gap-1.5", zone.status === "below" && "text-muted-foreground", className)}>
       <Icon className={cn("shrink-0", tint, iconClassName)} strokeWidth={2.5} aria-hidden />
-      <span className="tabular min-w-0">{children}</span>
+      <span className="tabular min-w-0 truncate">{children}</span>
     </p>
   );
-}
-
-/** The hero's sentence about kcal: how far to the zone, that the day is in it, or how far past it. */
-function headline(z: NutrientZone) {
-  if (z.status === "inZone") return "Vas bien: estás en tu zona";
-  if (z.status === "above") return <>Te pasaste {fmtNumber(z.value - (z.max ?? 0))} kcal de tu zona</>;
-  return <>Te faltan {fmtNumber((z.min ?? 0) - z.value)} kcal para tu zona</>;
 }
 
 function NextMeal({ meal }: { meal: SlotView }) {
