@@ -241,92 +241,83 @@ struct CompositionCard: View {
     }
 }
 
-/// Lean and fat per segment, as paired bars.
-struct SegmentalCard: View {
-    let scan: BodyScan
-    /// Fixed 88/40 pt columns truncated "Pierna der." and "12,34" at large text; they scale with it.
-    @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 88
-    @ScaledMetric(relativeTo: .caption) private var valueWidth: CGFloat = 40
-
-    private let rows: [(String, KeyPath<Segmental, Double>)] = [
-        ("Brazo der.", \.rightArm), ("Brazo izq.", \.leftArm), ("Tronco", \.trunk), ("Pierna der.", \.rightLeg), ("Pierna izq.", \.leftLeg),
-    ]
-
-    var body: some View {
-        Card {
-            CardTitle(text: "Por segmento", systemImage: "figure.stand")
-            HStack {
-                Spacer()
-                Label("Magro", systemImage: "circle.fill").foregroundStyle(Theme.protein)
-                Label("Grasa", systemImage: "circle.fill").foregroundStyle(Theme.fat)
-            }
-            .font(.caption2.weight(.semibold))
-            .labelStyle(.titleAndIcon)
-            .imageScale(.small)
-            ForEach(rows, id: \.0) { name, key in
-                let lean = scan.segmentalLean?[keyPath: key]
-                let fat = scan.segmentalFat?[keyPath: key]
-                let scale = key == \Segmental.trunk ? trunkMax : limbMax
-                HStack(spacing: 10) {
-                    Text(name).font(.subheadline).lineLimit(1).minimumScaleFactor(0.8).frame(width: nameWidth, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 4) {
-                        bar(lean, of: scale, color: Theme.protein)
-                        bar(fat, of: scale, color: Theme.fat)
-                    }
-                }
-            }
-        }
-        .fontDesign(.rounded)
-    }
-
-    private var limbMax: Double { max(values([\.rightArm, \.leftArm, \.rightLeg, \.leftLeg]).max() ?? 1, 1) }
-    private var trunkMax: Double { max(values([\.trunk]).max() ?? 1, 1) }
-    private func values(_ keys: [KeyPath<Segmental, Double>]) -> [Double] {
-        keys.flatMap { key in [scan.segmentalLean?[keyPath: key], scan.segmentalFat?[keyPath: key]].compactMap { $0 } }
-    }
-
-    @ViewBuilder private func bar(_ value: Double?, of max: Double, color: Color) -> some View {
-        if let value {
-            HStack(spacing: 6) {
-                GeometryReader { geo in
-                    Capsule().fill(color.gradient).frame(width: Swift.max(geo.size.width * value / max, 4))
-                }
-                .frame(height: 8)
-                Text(value.decimal(2)).font(.caption.weight(.semibold)).monospacedDigit()
-                    .lineLimit(1).minimumScaleFactor(0.8).frame(width: valueWidth, alignment: .trailing)
-            }
-        }
-    }
-}
-
 /// Every scan, newest first. Long-press to delete.
 struct BodyHistoryCard: View {
     let scans: [BodyScan]
     let delete: (BodyScan) -> Void
     @State private var showAll = false
 
+    /// InBody scans wear the scanner and the model ("570"); manual entries a pencil.
+    private func sourceBadge(_ scan: BodyScan) -> some View {
+        let inbody = scan.source == "inbody"
+        return Image(systemName: inbody ? "qrcode.viewfinder" : "square.and.pencil")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(inbody ? Theme.body : .secondary)
+            .frame(width: 36, height: 36)
+            .background((inbody ? Theme.body : Color.secondary).opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                if let device = scan.device {
+                    Text(device)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .padding(.horizontal, 3)
+                        .background(.background, in: RoundedRectangle(cornerRadius: 4))
+                        .offset(x: 6, y: 5)
+                }
+            }
+            .accessibilityLabel(inbody ? "InBody \(scan.device ?? "")" : "Manual")
+    }
+
+    private func summary(_ scan: BodyScan) -> String {
+        let source = scan.source == "inbody" ? "InBody \(scan.device ?? "")".trimmingCharacters(in: .whitespaces) : "Manual"
+        let values = [
+            scan.percentBodyFat.map { "\($0.decimal()) % grasa" },
+            scan.skeletalMuscleMass.map { "\($0.decimal()) kg músculo" },
+        ].compactMap { $0 }
+        return ([source] + values).joined(separator: " · ")
+    }
+
+    /// Weight, muscle and fat mass against the next older scan that measured each.
+    private func deltas(_ scan: BodyScan) -> [(symbol: String, value: Double, lowerIsBetter: Bool)] {
+        let older = scans.drop { $0.id != scan.id }.dropFirst()
+        let metrics: [(String, BodyMetric)] = [("scalemass.fill", .weight), ("figure.strengthtraining.traditional", .skeletalMuscleMass), ("drop.fill", .bodyFatMass)]
+        return metrics.compactMap { symbol, metric in
+            guard let now = metric.value(in: scan), let before = older.lazy.compactMap({ metric.value(in: $0) }).first else { return nil }
+            return (symbol, now - before, metric.lowerIsBetter)
+        }
+    }
+
     var body: some View {
         Card {
             CardTitle(text: "Historial", systemImage: "clock.arrow.circlepath")
             ForEach(showAll ? scans : Array(scans.prefix(5))) { scan in
-                HStack {
-                    Image(systemName: scan.source == "inbody" ? "qrcode" : "square.and.pencil")
-                        .foregroundStyle(Theme.body)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(scan.date.formatted(date: .abbreviated, time: .shortened)).font(.subheadline.weight(.medium))
-                        Text(scan.source == "inbody" ? "InBody \(scan.device ?? "")" : "Manual").font(.caption).foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 12) {
+                    sourceBadge(scan)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(scan.date.formatted(date: .abbreviated, time: .omitted)).font(.subheadline.weight(.semibold))
+                            Spacer(minLength: 8)
+                            Text(scan.weight.map { "\($0.decimal()) kg" } ?? "—").font(.subheadline.weight(.semibold)).monospacedDigit()
+                        }
+                        Text(summary(scan)).font(.caption).foregroundStyle(.secondary)
+                        let deltas = deltas(scan)
+                        if !deltas.isEmpty {
+                            // Three chips fit a 375 pt row at default text; stacked at large Dynamic Type.
+                            AdaptiveStack(horizontalAlignment: .leading, spacing: 6) {
+                                ForEach(deltas, id: \.symbol) { delta in
+                                    HStack(spacing: 3) {
+                                        Image(systemName: delta.symbol).imageScale(.small).foregroundStyle(.secondary)
+                                        DeltaBadge(delta: delta.value, unit: "kg", lowerIsBetter: delta.lowerIsBetter, compact: true)
+                                    }
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(.background.tertiary, in: .capsule)
+                                }
+                            }
+                        }
                     }
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                    Spacer(minLength: 8)
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(scan.weight.map { "\($0.decimal()) kg" } ?? "—").font(.subheadline.weight(.semibold))
-                        Text(scan.percentBodyFat.map { "\($0.decimal())% grasa" } ?? "").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .layoutPriority(1)
                 }
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
@@ -364,7 +355,6 @@ private let previewScan = BodyScan(
     return NarrowPreview(dynamicType: .xxLarge) {
         BodyHero(scan: previewScan, previous: previous)
         CompositionCard(scan: previewScan)
-        SegmentalCard(scan: previewScan)
         BodyHistoryCard(scans: [previewScan, previous]) { _ in }
     }
 }

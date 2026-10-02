@@ -26,6 +26,44 @@ final class BodyTests: XCTestCase {
         XCTAssertEqual(dashboard.projections.first?.horizons.first?.weeks, 4)
     }
 
+    func testDecodesTheAnalysisAndToleratesAnOlderEngine() throws {
+        let json = #"""
+        {"scans":[],"goals":[],"projections":[],
+         "analysis":{"basis":{"heightCm":180,"heightFrom":"profile","sex":"male","standardWeight":71.3},
+           "muscleFat":{"measuredAt":2,"gauges":[{"metric":"weight","measuredAt":2,"value":84,"previous":85,"unit":"kg",
+             "normal":{"low":60.6,"high":82},"band":"high","percent":118,"at":{"value":0.42,"previous":0.43,"low":0.2,"high":0.4},
+             "ticks":["55","70","85","100","115","130","145","160","175","190","205"]}]},
+           "obesity":[{"metric":"visceralFatLevel","measuredAt":2,"value":8,"previous":null,"unit":"nivel","normal":{"low":1,"high":9},
+             "band":"normal","percent":null,"at":{"value":0.37,"previous":null,"low":0,"high":0.42},"ticks":["1","5","10","15","20"]}],
+           "segments":{"measuredAt":2,"basis":"height",
+             "lean":{"rightArm":{"kg":3.9,"percent":117,"band":"high"},"leftArm":{"kg":3.8,"percent":114,"band":"high"},
+               "trunk":{"kg":29,"percent":100,"band":"normal"},"rightLeg":{"kg":10,"percent":95,"band":"normal"},"leftLeg":{"kg":9.6,"percent":88,"band":"low"}},
+             "fat":null,"balance":[{"text":"Brazos equilibrados","even":true}]}}}
+        """#
+        let analysis = try XCTUnwrap(JSONDecoder().decode(BodyDashboard.self, from: Data(json.utf8)).analysis)
+        let weight = try XCTUnwrap(analysis.muscleFat?.gauges.first)
+        XCTAssertEqual(weight.band, .high)
+        XCTAssertEqual(weight.band.title, "Alto")
+        XCTAssertEqual(BodyGaugeStyle.isGood(weight), false)
+        XCTAssertEqual(analysis.obesity.first?.previous, nil)
+        XCTAssertEqual(BodySegment.leftLeg.value(in: try XCTUnwrap(analysis.segments?.lean)).band, .low)
+        XCTAssertNil(analysis.segments?.fat)
+
+        let older = try JSONDecoder().decode(BodyDashboard.self, from: Data(#"{"scans":[],"goals":[],"projections":[]}"#.utf8))
+        XCTAssertNil(older.analysis)
+    }
+
+    func testMoreMuscleThanStandardIsGoodButMoreFatIsNot() {
+        func gauge(_ metric: String, _ band: BodyBand) -> BodyGauge {
+            BodyGauge(metric: metric, measuredAt: 0, value: 1, unit: "kg", normal: .init(low: 0, high: 2), band: band, at: .init(value: 0.5, low: 0.2, high: 0.4), ticks: [])
+        }
+        XCTAssertEqual(BodyGaugeStyle.isGood(gauge("skeletalMuscleMass", .high)), true)
+        XCTAssertEqual(BodyGaugeStyle.isGood(gauge("skeletalMuscleMass", .low)), false)
+        XCTAssertEqual(BodyGaugeStyle.isGood(gauge("bodyFatMass", .high)), false)
+        XCTAssertNil(BodyGaugeStyle.isGood(gauge("bodyFatMass", .low)))
+        XCTAssertEqual(BodyGaugeStyle.isGood(gauge("bmi", .normal)), true)
+    }
+
     func testAParsedQRScanHasNoIdYet() throws {
         let json = #"{"measuredAt":1,"source":"inbody","externalId":"inbody:1","weight":70,"percentBodyFat":20}"#
         let scan = try JSONDecoder().decode(BodyScan.self, from: Data(json.utf8))
