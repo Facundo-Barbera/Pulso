@@ -10,8 +10,9 @@ export type Point = { label: string; value: number | null };
  * axes, no grid. Hovering (or touching) reads the point out above the chart.
  * Gaps (null) break the line rather than inventing values. Labels come
  * preformatted from the server, so nothing depends on the browser's timezone.
+ * `band` tints the range where a value is on track (a target zone) in success green.
  */
-export function Sparkline({ points, color, variant = "line", height = 56, unit, decimals = 0, target, className, label }: { points: Point[]; color: string; variant?: "line" | "bars"; height?: number; unit?: string; decimals?: number; target?: number; className?: string; label: string }) {
+export function Sparkline({ points, color, variant = "line", height = 56, unit, decimals = 0, target, band, className, label }: { points: Point[]; color: string; variant?: "line" | "bars"; height?: number; unit?: string; decimals?: number; target?: number; band?: { min: number; max: number }; className?: string; label: string }) {
   const id = useId();
   const [hover, setHover] = useState<number | null>(null);
   const values = points.map((p) => p.value).filter((v): v is number => v !== null);
@@ -20,8 +21,8 @@ export function Sparkline({ points, color, variant = "line", height = 56, unit, 
   const W = 100;
   const H = height;
   const pad = 4;
-  const max = Math.max(...values, target ?? -Infinity);
-  const min = variant === "bars" ? 0 : Math.min(...values, target ?? Infinity);
+  const max = Math.max(...values, target ?? -Infinity, band?.max ?? -Infinity);
+  const min = variant === "bars" ? 0 : Math.min(...values, target ?? Infinity, band?.min ?? Infinity);
   const span = max - min || 1;
   const x = (i: number) => (points.length === 1 ? W / 2 : (i / (points.length - 1)) * W);
   const y = (v: number) => pad + (1 - (v - min) / span) * (H - pad * 2);
@@ -69,6 +70,7 @@ export function Sparkline({ points, color, variant = "line", height = 56, unit, 
             <stop offset="1" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
+        {band && <rect x="0" width={W} y={y(band.max)} height={Math.max(0.5, y(band.min) - y(band.max))} fill="var(--success)" fillOpacity="0.12" />}
         {target !== undefined && <line x1="0" x2={W} y1={y(target)} y2={y(target)} stroke="var(--muted-foreground)" strokeOpacity="0.45" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
         {variant === "bars"
           ? points.map((p, i) =>

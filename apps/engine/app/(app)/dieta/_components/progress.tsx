@@ -26,9 +26,9 @@ export function ProgressView({ progress }: { progress: DietaProgress }) {
       <Card>
         <CardTitle icon={Flame} color="var(--domain-energy)" title="Calorías, últimos 14 días" />
         <div className="grid grid-cols-2 gap-5 md:grid-cols-4">
-          <StatTile label="Media diaria" value={averages.kcal === null ? "—" : fmtNumber(averages.kcal)} unit="kcal" caption={targets ? `objetivo ${fmtNumber(targets.kcal)}` : undefined} color="var(--domain-energy)" />
-          <StatTile label="En objetivo (±10 %)" value={averages.onTarget} unit={`de ${averages.logged} días`} color="var(--domain-body)" />
-          <StatTile label="Proteína media" value={averages.protein === null ? "—" : fmtNumber(averages.protein)} unit="g" caption={targets ? `objetivo ${fmtNumber(targets.protein)} g` : undefined} color="var(--domain-protein)" />
+          <StatTile label="Media diaria" value={averages.kcal === null ? "—" : fmtNumber(averages.kcal)} unit="kcal" caption={targets ? `zona ${fmtNumber(targets.zones.kcal.min ?? 0)}–${fmtNumber(targets.zones.kcal.max ?? targets.kcal)}` : undefined} color="var(--domain-energy)" />
+          <StatTile label="Días en zona" value={averages.onTarget} unit={`de ${averages.logged} días`} caption={targets ? "kcal en zona y proteína cumplida" : undefined} color="var(--domain-body)" />
+          <StatTile label="Proteína media" value={averages.protein === null ? "—" : fmtNumber(averages.protein)} unit="g" caption={targets ? `mínimo ${fmtNumber(targets.zones.protein.min ?? targets.protein)} g` : undefined} color="var(--domain-protein)" />
           <StatTile label="Plan seguido" value={averages.plan === null ? "—" : fmtNumber(averages.plan * 100)} unit={averages.plan === null ? undefined : "%"} caption={hasPlan ? "de lo planificado, sin hoy" : "sin plan activo"} color="var(--domain-body)" />
         </div>
         <Sparkline
@@ -38,8 +38,9 @@ export function ProgressView({ progress }: { progress: DietaProgress }) {
           points={days.map((d) => ({ label: label(d.date), value: d.entries ? Math.round(d.kcal) : null }))}
           color="var(--domain-energy)"
           target={targets?.kcal}
+          band={targets ? { min: targets.zones.kcal.min ?? 0, max: targets.zones.kcal.max ?? targets.kcal } : undefined}
           unit="kcal"
-          label="kcal por día, últimos 14 días"
+          label="kcal por día, últimos 14 días; la franja verde es tu zona"
         />
       </Card>
 
@@ -50,6 +51,7 @@ export function ProgressView({ progress }: { progress: DietaProgress }) {
             points={days.map((d) => ({ label: label(d.date), value: d.entries ? Math.round(d.protein) : null }))}
             color="var(--domain-protein)"
             target={targets?.protein}
+            band={targets ? { min: targets.zones.protein.min ?? targets.protein, max: targets.zones.protein.max ?? targets.protein } : undefined}
             unit="g"
             height={90}
             label="Proteína por día"
