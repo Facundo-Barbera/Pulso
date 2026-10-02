@@ -30,21 +30,60 @@ enum SlotAction: CaseIterable {
     }
 }
 
-extension SlotStatus {
-    var tint: Color {
-        switch self {
-        case .planned: Theme.energy
-        case .eaten, .replaced: Theme.good
-        case .skipped: .secondary
+/// The one mark a meal shows down the timeline, so the day reads at a glance: filled
+/// as planned, half for something else, hollow pending, dashed when skipped or unanswered.
+enum MealMark: Equatable {
+    case asPlanned, changed, pending, unanswered, skipped
+
+    init(_ slot: PlanSlot) {
+        if slot.isMissed {
+            self = .unanswered
+            return
+        }
+        switch slot.status {
+        case .planned: self = .pending
+        case .skipped: self = .skipped
+        case .eaten: self = slot.real?.asPlanned == false ? .changed : .asPlanned
+        case .replaced: self = slot.real?.asPlanned == true ? .asPlanned : .changed
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .asPlanned: "circle.fill"
+        case .changed: "circle.lefthalf.filled"
+        case .pending: "circle"
+        case .unanswered, .skipped: "circle.dashed"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .asPlanned, .changed: Theme.good
+        case .pending: .secondary
+        case .unanswered: Theme.caution
+        case .skipped: Color(.tertiaryLabel)
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .asPlanned: "Como estaba planeado"
+        case .changed: "Otra cosa"
+        case .pending: "Pendiente"
+        case .unanswered: "Sin registrar"
+        case .skipped: "Saltado"
+        }
+    }
+
+    var isEaten: Bool { self == .asPlanned || self == .changed }
 }
 
-/// One meal of the day on a timeline, as Planeado → Real: what was eaten, prominent,
-/// over what was planned, small and struck; a pending meal shows the plan, and well
-/// past its time («Sin registrar») two quick answers. Tap to open the foods; swipe
-/// right for "Me lo comí", left for "Me lo salté", long-press for every change.
-/// Without `onAction` it only reads.
+/// One meal of the day on a timeline. Folded it is the meal and its time, what was eaten
+/// (or what's planned, quieter) and the kcal; something else than planned adds a small
+/// «en lugar de …». Open it for the foods once, the plan behind a disclosure, and what
+/// can be done. A pending meal swipes right for "Me lo comí", left for "Me lo salté";
+/// long-press for every change. Without `onAction` it only reads.
 struct PlanSlotRow: View {
     let slot: PlanSlot
     /// "Porción del prep · 2 de 4", "Receta rápida · 10 min", "Comer fuera".
@@ -54,102 +93,103 @@ struct PlanSlotRow: View {
     /// Log entries tied to the slot: eaten as planned, or eaten instead.
     var entries: [MealEntry] = []
     var isLast = false
+    /// The day's other meals what was eaten can move to.
+    var moveTargets: [PlanSlot] = []
     var onAction: ((SlotAction) -> Void)?
     var onDeleteEntry: ((MealEntry) -> Void)?
+    var onMove: ((PlanSlot) -> Void)?
+    /// Deletes everything eaten for it: the meal goes back to pending.
+    var onDeleteAll: (() -> Void)?
 
+    @Environment(\.dishActions) private var dishActions
     @State private var expanded = false
+    @State private var showPlanned = false
+    @State private var editing: MealEntry?
+    @State private var addingToDish = false
+    @State private var confirmDelete = false
     @State private var drag: CGFloat = 0
+    @ScaledMetric(relativeTo: .headline) private var markHeight: CGFloat = 22
     private let trigger: CGFloat = 90
 
+    private var mark: MealMark { MealMark(slot) }
     private var actions: [SlotAction] { onAction == nil ? [] : SlotAction.available(for: slot) }
-    private var tint: Color { slot.status.tint }
-    private var muted: Bool { slot.status == .skipped }
-    private var symbol: String {
-        if slot.isMissed { return "clock.badge.questionmark" }
-        if slot.status == .replaced { return "fork.knife.circle.fill" }
-        return slot.isPlanned ? slot.slot.systemImage : slot.status.systemImage
+    /// The dish everything eaten belongs to, when it's one.
+    private var dish: DishRef? {
+        guard let dish = entries.first?.dish, entries.allSatisfy({ $0.dish == dish }) else { return nil }
+        return dish
     }
+    private var hasEntryActions: Bool { !entries.isEmpty && (onDeleteAll != nil || onMove != nil) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 0) {
-                Image(systemName: symbol)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 32, height: 32)
-                    .background(tint.opacity(0.15), in: .circle)
-                    .contentTransition(.symbolEffect(.replace))
-                if !isLast {
-                    Rectangle().fill(.quaternary).frame(width: 2).frame(maxHeight: .infinity)
-                }
-            }
-            VStack(alignment: .leading, spacing: 10) {
+            rail
+            VStack(alignment: .leading, spacing: 12) {
                 swipeable(header)
-                if slot.isMissed, onAction != nil { missedActions }
+                if mark == .unanswered, onAction != nil { missedActions }
                 if expanded { details.transition(.opacity.combined(with: .move(edge: .top))) }
             }
-            .padding(.bottom, isLast ? 0 : 14)
+            .padding(.bottom, isLast ? 0 : 18)
         }
         .animation(.snappy, value: slot.status)
+        .animation(.snappy, value: showPlanned)
         .sensoryFeedback(.selection, trigger: expanded)
         .sensoryFeedback(.success, trigger: slot.status) { _, new in new == .eaten }
+        .sheet(item: $editing) { meal in
+            ComponentAmountSheet(meal: meal) { factor in await dishActions.update(meal, factor) }
+                .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $addingToDish) {
+            if let dish {
+                ComponentForm(title: "Añadir a \(dish.name)", slot: slot.slot) { input in await dishActions.add(input, dish) }
+                    .presentationDetents([.large])
+            }
+        }
+        .confirmationDialog("¿Borrar lo que comiste en \(slot.slot.title.lowercased())?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Borrar", role: .destructive) { onDeleteAll?() }
+        } message: {
+            Text("La comida vuelve a quedar pendiente.")
+        }
+    }
+
+    /// The state mark joined to the next meal by a hairline.
+    private var rail: some View {
+        VStack(spacing: 4) {
+            Image(systemName: mark.systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(mark.tint)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(height: markHeight)
+            if !isLast {
+                Capsule().fill(.quaternary).frame(width: 2).frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 20)
+        .accessibilityHidden(true)
     }
 
     // MARK: Header
 
     private var header: some View {
         Button { withAnimation(.snappy) { expanded.toggle() } } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(slot.slot.title).font(.headline)
-                        if let real = slot.real {
-                            Text(real.eaten, format: .dateTime.hour().minute())
-                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        } else if slot.isMissed {
-                            Text("Sin registrar").font(.caption.weight(.semibold)).foregroundStyle(Theme.caution)
-                        } else if slot.status == .skipped {
-                            Text(slot.status.title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        }
-                        if slot.adjusted != nil && slot.isPlanned {
-                            Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.training)
-                                .accessibilityLabel("Ajustado por el Coach")
-                        }
-                    }
-                    if let real = slot.real {
-                        Text(real.label)
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(expanded ? nil : 2)
-                            .multilineTextAlignment(.leading)
-                        Group {
-                            if real.asPlanned {
-                                Label("Como estaba planeado", systemImage: "checkmark")
-                            } else {
-                                Text("Planeado: ") + Text(slot.what).strikethrough(color: .secondary)
-                            }
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    } else {
-                        Text(slot.what)
-                            .font(.subheadline)
+                    titleLine
+                    Text(slot.real?.label ?? (mark == .changed ? slot.replacedBy : nil) ?? slot.what)
+                        .font(.subheadline)
+                        .foregroundStyle(mark.isEaten ? .primary : .secondary)
+                        .lineLimit(expanded ? nil : 2)
+                        .multilineTextAlignment(.leading)
+                    if mark == .changed, slot.real != nil || slot.replacedBy != nil {
+                        Text("en lugar de \(slot.what)")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .strikethrough(slot.status == .skipped, color: .secondary)
-                            .lineLimit(expanded ? nil : 2)
-                            .multilineTextAlignment(.leading)
-                        if let source {
-                            Label(source, systemImage: sourceSymbol)
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                        }
+                            .lineLimit(1)
                     }
                 }
-                Spacer(minLength: 6)
-                Text("\(Int(slot.kcal)) kcal")
+                Spacer(minLength: 8)
+                Text("\(Int(slot.kcal).formatted()) kcal")
                     .font(.subheadline.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
-                    .foregroundStyle(muted ? .tertiary : .primary)
+                    .foregroundStyle(mark == .skipped ? .tertiary : mark.isEaten ? .primary : .secondary)
                     .contentTransition(.numericText(value: slot.kcal))
                     .lineLimit(1)
                     .layoutPriority(1)
@@ -158,11 +198,29 @@ struct PlanSlotRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(slot.isMissed ? "Sin registrar" : slot.status.title)
+        .accessibilityValue(mark.title)
         .accessibilityHint(expanded ? "Pliega" : "Muestra qué lleva")
         .accessibilityActions {
             ForEach(actions, id: \.self) { action in Button(action.title) { onAction?(action) } }
         }
+    }
+
+    /// "Desayuno 11:11", or the state when nothing was eaten: «Sin registrar», «Saltado».
+    private var titleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(slot.slot.title).font(.headline)
+            if let real = slot.real {
+                Text(real.eaten, format: .dateTime.hour().minute())
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            } else if mark == .unanswered || mark == .skipped {
+                Text(mark.title).font(.caption.weight(.semibold)).foregroundStyle(mark == .unanswered ? Theme.caution : .secondary)
+            }
+            if slot.adjusted != nil && slot.isPlanned {
+                Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.training)
+                    .accessibilityLabel("Ajustado por el Coach")
+            }
+        }
+        .lineLimit(1)
     }
 
     /// The two answers to «Sin registrar»: skipped it, or say what was eaten.
@@ -188,46 +246,32 @@ struct PlanSlotRow: View {
 
     // MARK: Details
 
+    /// Each thing once: what was eaten (or, still pending, what's planned), the plan behind a
+    /// disclosure when it went otherwise, then what can be done.
     @ViewBuilder
     private var details: some View {
         if let note = slot.note {
             Label(note, systemImage: "sparkles").font(.caption).italic().foregroundStyle(.secondary)
         }
-        if let real = slot.real, !real.asPlanned {
-            Text("Planeado")
-                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-        }
-        if entries.isEmpty || slot.real?.asPlanned == false {
-            VStack(spacing: 6) {
-                ForEach(slot.current) { item in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(item.name).font(.subheadline)
-                        Spacer(minLength: 8)
-                        Text(foodQuantityText(item.quantity, item.unit))
-                            .font(.caption.monospacedDigit()).fontDesign(.rounded)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .opacity(slot.real == nil ? 1 : 0.6)
-        }
         if !entries.isEmpty {
-            if slot.real?.asPlanned == false {
-                Text("Comiste").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            EatenFoods(entries: entries, label: slot.real?.label) { editing = $0 } onDelete: { onDeleteEntry?($0) }
+        } else if slot.real == nil {
+            PlannedItems(items: slot.current)
+            if let source {
+                Label(source, systemImage: sourceSymbol).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            LoggedList(meals: entries, onDelete: onDeleteEntry)
         }
-        if let recipeId = recipeId ?? slot.recipeId {
+        if slot.real != nil, mark == .changed || entries.isEmpty { plannedDisclosure }
+        if mark != .changed, let recipeId = recipeId ?? slot.recipeId {
             NavigationLink { RecipeDetailView(recipeId: recipeId) } label: {
-                Label("Ver receta", systemImage: "book")
-                    .font(.subheadline.weight(.medium))
+                Label("Ver receta", systemImage: "book").font(.subheadline.weight(.medium))
             }
         }
         if let first = actions.first {
             AdaptiveStack(horizontalAlignment: .leading, spacing: 8) {
                 Button(first.title, systemImage: first.systemImage) { onAction?(first) }
                     .buttonStyle(.glassProminent)
-                    .tint(Theme.body)
+                    .tint(Theme.good)
                 if actions.count > 1 {
                     Menu {
                         menuItems(Array(actions.dropFirst()))
@@ -239,7 +283,85 @@ struct PlanSlotRow: View {
             }
             .controlSize(.small)
             .lineLimit(1)
+        } else if hasEntryActions {
+            entryActions
         }
+    }
+
+    /// "Planeado · 420 kcal ›", folded: what it replaced is already named in the row.
+    private var plannedDisclosure: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { showPlanned.toggle() } label: {
+                HStack(spacing: 5) {
+                    Text("Planeado · \(Int(slot.macros.kcal).formatted()) kcal").monospacedDigit()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .rotationEffect(.degrees(showPlanned ? 90 : 0))
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(showPlanned ? "Oculta el plan" : "Muestra lo planeado")
+            if showPlanned {
+                PlannedItems(items: slot.current)
+                    .opacity(0.7)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// Editar, Guardar (as a dish), Mover and Borrar as four equal glass tiles.
+    private var entryActions: some View {
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                editControl
+                if let dish, dish.savedDishId == nil {
+                    tile("Guardar", "bookmark") { dishActions.save(dish) }
+                        .accessibilityLabel("Guardar como platillo")
+                }
+                if onMove != nil, !moveTargets.isEmpty {
+                    Menu { moveItems } label: { ActionTile(title: "Mover", systemImage: "arrow.turn.down.right") }
+                        .buttonStyle(.plain)
+                }
+                if onDeleteAll != nil {
+                    tile("Borrar", "trash", role: .destructive) { confirmDelete = true }
+                }
+            }
+        }
+    }
+
+    /// One food: its amount. Several, or a dish: pick which, or add to the dish.
+    @ViewBuilder private var editControl: some View {
+        if entries.count == 1, dish == nil, let only = entries.first {
+            tile("Editar", "slider.horizontal.3") { editing = only }
+        } else {
+            Menu { editItems } label: { ActionTile(title: "Editar", systemImage: "slider.horizontal.3") }
+                .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder private var editItems: some View {
+        Section("Cambiar la cantidad") {
+            ForEach(entries) { meal in Button(meal.name) { editing = meal } }
+        }
+        if dish != nil {
+            Button("Añadir ingrediente", systemImage: "plus") { addingToDish = true }
+        }
+    }
+
+    private var moveItems: some View {
+        Section("Mover a") {
+            ForEach(moveTargets) { target in
+                Button(target.slot.title, systemImage: target.slot.systemImage) { onMove?(target) }
+            }
+        }
+    }
+
+    private func tile(_ title: String, _ systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) { ActionTile(title: title, systemImage: systemImage, destructive: role == .destructive) }
+            .buttonStyle(.plain)
     }
 
     private func menuItems(_ items: [SlotAction]) -> some View {
@@ -248,14 +370,34 @@ struct PlanSlotRow: View {
         }
     }
 
+    /// Long-press on an eaten meal: the same four as its tiles.
+    @ViewBuilder private var entryMenu: some View {
+        if entries.count == 1, let only = entries.first {
+            Button("Cambiar la cantidad", systemImage: "slider.horizontal.3") { editing = only }
+        } else {
+            Menu("Cambiar la cantidad", systemImage: "slider.horizontal.3") { editItems }
+        }
+        if let dish, dish.savedDishId == nil {
+            Button("Guardar como platillo", systemImage: "bookmark") { dishActions.save(dish) }
+        }
+        if onMove != nil, !moveTargets.isEmpty {
+            Menu("Mover a", systemImage: "arrow.turn.down.right") {
+                ForEach(moveTargets) { target in
+                    Button(target.slot.title, systemImage: target.slot.systemImage) { onMove?(target) }
+                }
+            }
+        }
+        if onDeleteAll != nil {
+            Button("Borrar", systemImage: "trash", role: .destructive) { confirmDelete = true }
+        }
+    }
+
     // MARK: Swipe
 
     /// Right past the threshold eats it, left skips it; both are undoable from the toast.
     @ViewBuilder
     private func swipeable(_ content: some View) -> some View {
-        if actions.isEmpty {
-            content
-        } else {
+        if !actions.isEmpty {
             ZStack {
                 HStack {
                     swipeHint(.eaten, Theme.good).opacity(drag > 40 ? 1 : 0)
@@ -280,6 +422,10 @@ struct PlanSlotRow: View {
             }
             .contextMenu { menuItems(actions) }
             .sensoryFeedback(.impact(weight: .light), trigger: abs(drag) > trigger)
+        } else if hasEntryActions {
+            content.contextMenu { entryMenu }
+        } else {
+            content
         }
     }
 
@@ -290,6 +436,116 @@ struct PlanSlotRow: View {
             .labelStyle(.iconOnly)
             .scaleEffect(abs(drag) > trigger ? 1.25 : 1)
             .padding(.horizontal, 8)
+    }
+}
+
+/// An icon over a short word on glass: one of a meal's actions, sharing the row equally.
+private struct ActionTile: View {
+    let title: String
+    let systemImage: String
+    var destructive = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage).font(.subheadline.weight(.semibold))
+            Text(title).font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .foregroundStyle(destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .padding(.vertical, 6)
+        .contentShape(.rect)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 14))
+    }
+}
+
+/// What was eaten for a meal, once. A lone food is its amount and macros (its name and kcal
+/// are already in the row); several are each food with its amount and kcal, then the macros.
+/// Tap a food to change its amount; swipe it to delete it.
+private struct EatenFoods: View {
+    let entries: [MealEntry]
+    var label: String?
+    let onEdit: (MealEntry) -> Void
+    let onDelete: (MealEntry) -> Void
+
+    private var total: NutritionMacros {
+        entries.reduce(.zero) { sum, meal in
+            NutritionMacros(kcal: sum.kcal + meal.kcal, protein: sum.protein + meal.protein, carbs: sum.carbs + meal.carbs,
+                            fat: sum.fat + meal.fat, fiber: sum.fiber + meal.fiber)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if entries.count == 1, let only = entries.first {
+                Button { onEdit(only) } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(only.name == label ? amount(only) : "\(only.name) · \(amount(only))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer(minLength: 8)
+                        MacroLine(macros: total)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Cambia la cantidad")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(entries) { meal in
+                        SwipeToDelete { onDelete(meal) } content: { food(meal) }
+                        if meal.id != entries.last?.id { Divider() }
+                    }
+                }
+                HStack {
+                    Spacer()
+                    MacroLine(macros: total)
+                }
+            }
+        }
+    }
+
+    private func food(_ meal: MealEntry) -> some View {
+        Button { onEdit(meal) } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(meal.name).font(.subheadline).lineLimit(2).multilineTextAlignment(.leading)
+                    Text(amount(meal)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("\(Int(meal.kcal).formatted()) kcal")
+                    .font(.caption.monospacedDigit()).fontDesign(.rounded)
+                    .foregroundStyle(.secondary)
+                    .layoutPriority(1)
+            }
+            .padding(.vertical, 6)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Cambia la cantidad")
+    }
+
+    private func amount(_ meal: MealEntry) -> String { foodAmountText(meal.quantity, meal.unit, measure: meal.measure) }
+}
+
+/// The plan's foods for a meal with their amounts.
+private struct PlannedItems: View {
+    let items: [DietPlanItem]
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(items) { item in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(item.name).font(.subheadline)
+                    Spacer(minLength: 8)
+                    Text(foodQuantityText(item.quantity, item.unit))
+                        .font(.caption.monospacedDigit()).fontDesign(.rounded)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
