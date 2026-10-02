@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Card, CardTitle } from "../../../../_ui/card";
 import { cn } from "../../../../_ui/cn";
 import { EmptyState } from "../../../../_ui/empty-state";
+import { copyText } from "../../../../_ui/insecure";
 import { Ring } from "../../../../_ui/ring";
 import { send } from "../../_components/client";
 import { useToast } from "../../_components/toast";
@@ -81,11 +82,10 @@ export function ShoppingList({ initial, horizonDays }: { initial: List; horizonD
   }
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(list.text);
+    if (await copyText(list.text)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
-    } catch {
+    } else {
       setError("No se pudo copiar: el navegador no dio acceso al portapapeles.");
     }
   }

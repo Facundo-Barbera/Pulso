@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { AgentClient, AgentsOverview } from "@/src/web/agents";
 import { cn } from "../../../_ui/cn";
+import { copyText } from "../../../_ui/insecure";
 import { EmptyState } from "../../../_ui/empty-state";
 import { fmtAgo, fmtShortDate, fmtTime } from "../../../_ui/format";
 
@@ -179,7 +180,7 @@ function CopyLine({ label, value, hint }: { label?: string; value: string; hint?
       {label && <p className="text-muted-foreground mb-1 text-[12px] font-medium">{label}</p>}
       <button
         type="button"
-        onClick={() => navigator.clipboard?.writeText(value).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}
+        onClick={() => copyText(value).then((ok) => ok && (setCopied(true), setTimeout(() => setCopied(false), 1500)))}
         className="bg-background hover:bg-accent focus-visible:ring-ring flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-2"
         title="Copiar"
       >

@@ -2,6 +2,7 @@
 
 import type { AgentMessage, AgentProduct, AgentThread, AgentUndoResponse, CoachBrief } from "@pulso/contract";
 import { useSyncExternalStore } from "react";
+import { uuid } from "../../../_ui/insecure";
 import type { CoachThreadView } from "@/src/web/coach";
 import { rememberLocal, type Photo } from "./photos";
 import { applyEvent, keepIds, readEvents } from "./stream";
@@ -38,7 +39,7 @@ async function problem(response: Response): Promise<string> {
   return body?.message ?? `La Mac respondió ${response.status}.`;
 }
 
-const localId = () => `local-${crypto.randomUUID()}`;
+const localId = () => `local-${uuid()}`;
 
 /** Multipart only when there are photos; otherwise JSON, with the scanned barcodes when there are any. */
 function messageBody(text: string, photos: Photo[], barcodes: string[]): RequestInit {

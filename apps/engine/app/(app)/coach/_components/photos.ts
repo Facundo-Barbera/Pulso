@@ -1,4 +1,5 @@
 import { MAX_AGENT_ATTACHMENTS, type AgentAttachment } from "@pulso/contract";
+import { uuid } from "../../../_ui/insecure";
 
 export const MAX_PHOTOS = MAX_AGENT_ATTACHMENTS;
 /** Same as the Mac keeps: enough to read a label, and a small upload. */
@@ -13,7 +14,7 @@ export type Photo = { id: string; blob: Blob; url: string; width: number; height
  * Safari) goes as it is; the Mac converts it.
  */
 export async function preparePhoto(file: File): Promise<Photo> {
-  const id = `local-${crypto.randomUUID()}`;
+  const id = `local-${uuid()}`;
   try {
     const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));

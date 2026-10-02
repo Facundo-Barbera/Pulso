@@ -5,6 +5,7 @@ import { Copy, Laptop, Smartphone } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "../../../_ui/cn";
+import { copyText } from "../../../_ui/insecure";
 
 /** Mints a code for an iPhone or a browser and shows it with a live countdown and the steps for that kind. The Mac only. */
 export function PairPanel() {
@@ -115,7 +116,7 @@ function Address({ address }: { address: string | null }) {
   if (!address) return <span className="text-foreground">la dirección de Tailscale de esta Mac</span>;
   return (
     <button
-      onClick={() => navigator.clipboard?.writeText(address).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}
+      onClick={() => copyText(address).then((ok) => ok && (setCopied(true), setTimeout(() => setCopied(false), 1500)))}
       className="bg-background text-foreground hover:bg-accent inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-[12px]"
       title="Copiar"
     >
