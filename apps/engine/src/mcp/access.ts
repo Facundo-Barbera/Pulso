@@ -98,20 +98,29 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   update_shopping_item: "write",
   check_shopping_items: "write",
   remove_shopping_items: "write",
+  log_substance_use: "write",
+  list_substance_use: "read",
+  substance_summary: "read",
+  delete_substance_use: "write",
+  set_substance_goal: "write",
 };
 
-/** Tools touching the profile or medications: their descriptions say so to outside agents. */
-const PERSONAL = /^(get_profile|update_profile|list_medications|add_medication|update_medication|log_dose|get_adherence)$/;
+/** Tools touching the profile, medications or Sustancias: their descriptions say so to outside agents. */
+const PERSONAL = /^(get_profile|update_profile|list_medications|add_medication|update_medication|log_dose|get_adherence|.*substance.*)$/;
+/** Sustancias: hidden from every external client unless the person granted it the sensitive scope, and from the Coach's briefs. */
+export const SENSITIVE = /substance/;
 const PERSONAL_NOTE = " This is the person's private health data: use it only for what they asked, and do not copy it elsewhere.";
 
 export const classified = (name: string): boolean => name in ACCESS;
 export const accessOf = (name: string): McpToolInfo["access"] => ACCESS[name] ?? "write";
 
-export const toolInfos = (): McpToolInfo[] => TOOLS.map((t) => ({ name: t.name, access: accessOf(t.name) }));
+export const isSensitive = (name: string): boolean => SENSITIVE.test(name);
 
-/** What a client with `scope` sees; write tools do not exist for a read-only one. */
-export function visibleTools(scope: McpScope): PulsoTool[] {
-  return TOOLS.filter((t) => scope === "read+write" || accessOf(t.name) === "read");
+export const toolInfos = (): McpToolInfo[] => TOOLS.map((t) => ({ name: t.name, access: accessOf(t.name), sensitive: isSensitive(t.name) }));
+
+/** What a client with `scope` sees; write tools do not exist for a read-only one, sensitive ones only with that grant. */
+export function visibleTools(scope: McpScope, sensitive = false): PulsoTool[] {
+  return TOOLS.filter((t) => (scope === "read+write" || accessOf(t.name) === "read") && (sensitive || !isSensitive(t.name)));
 }
 
 export const describeFor = (t: PulsoTool): string => (PERSONAL.test(t.name) ? t.description + PERSONAL_NOTE : t.description);

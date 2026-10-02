@@ -1,6 +1,6 @@
 "use client";
 
-import { CornerDownLeft, Link2, Moon, Search, SquarePen, Sun, SunMoon, type LucideIcon } from "lucide-react";
+import { CircleDashed, CornerDownLeft, Link2, Moon, Search, SquarePen, Sun, SunMoon, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readAppearance, saveAppearance, type Appearance } from "./appearance";
@@ -11,8 +11,11 @@ type Item = { id: string; label: string; hint: string; icon: LucideIcon; color?:
 
 const normalize = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
-/** ⌘K: jump to a section or run a quick action. A native <dialog>, so focus trapping and Escape come free. */
-export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+/**
+ * ⌘K: jump to a section or run a quick action. A native <dialog>, so focus trapping and Escape come free.
+ * Sustancias is listed only on a browser that shows it; it is never in the sidebar.
+ */
+export function CommandPalette({ open, onClose, substances = false }: { open: boolean; onClose: () => void; substances?: boolean }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
@@ -23,12 +26,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     return [
       ...SECTIONS.map((s, i) => ({ id: s.href, label: s.label, hint: `⌘${i + 1}`, icon: s.icon, color: s.color, run: () => router.push(s.href) })),
       { id: "coach-new", label: "Nuevo chat con el Coach", hint: "Coach", icon: SquarePen, color: "var(--pulso-violet)", run: () => router.push("/coach/nuevo") },
+      ...(substances ? [{ id: "substances", label: "Sustancias", hint: "Privado", icon: CircleDashed, color: "var(--domain-medication)", run: () => router.push("/sustancias") }] : []),
       { id: "pair", label: "Emparejar un navegador", hint: "Ajustes", icon: Link2, run: () => router.push("/ajustes#emparejar") },
       { id: "dark", label: "Tema oscuro", hint: "Apariencia", icon: Moon, run: theme("dark") },
       { id: "light", label: "Tema claro", hint: "Apariencia", icon: Sun, run: theme("light") },
       { id: "system", label: "Tema del sistema", hint: "Apariencia", icon: SunMoon, run: theme("system") },
     ];
-  }, [router]);
+  }, [router, substances]);
 
   const matches = useMemo(() => {
     const q = normalize(query.trim());

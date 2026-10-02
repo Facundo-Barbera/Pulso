@@ -16,6 +16,7 @@ app/
     _hoy/                 Hoy's own components
     coach/                the Coach chat (below)
     entreno/ dieta/ calendario/ cuerpo/ sueno/ medicacion/
+    sustancias/           private and unlisted: only from Ajustes or ⌘K, per browser (see below)
     ajustes/              pairing, devices, appearance
       _components/
   pair/route.ts           the no-JS pair form for unpaired browsers
@@ -75,4 +76,5 @@ src/web/                  view assemblers: one function per page that reads the 
 - **Loopback** (no `x-pulso-via` header): the Electron window and this Mac. Full trust.
 - **Tailnet** (`bun run tailnet` stamps `x-pulso-via: tailnet` and passes the browser's Host as `x-pulso-host`): `proxy.ts` → `src/tailnet-gate.ts`. Public: `/pair`, `POST /api/mobile/pair`. Phone: `/api/mobile/*` (bearer checked per route, `mobile` scope). Paired browser (HttpOnly `SameSite=Lax` cookie `pulso_device`): pages, `/_next/*` and `/api/web/*` by scope. Admin (`/api/web/admin/*`, any other `/api`): 403.
 - Writes carrying the cookie must have `Origin: http://<x-pulso-host>`. A revoked cookie is cleared on its next request.
+- **Sustancias** is the most private data: not in the sidebar, Hoy or briefs. Each web client has its own switch (`substance_visibility`; on for the Mac, off for every paired browser until turned on there), and `/api/web/sustancias/*` answers 404 where it is off. External MCP clients see its tools only with the «Datos sensibles» grant.
 - Pairing: Ajustes › Emparejar › Navegador mints an 8-digit code (5 min, one use, only for that kind; five wrong guesses burn it). The browser opens `http://<tailscale-ip>:8090`, gets the pair form, types the code and a name.

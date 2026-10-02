@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpScope } from "@pulso/contract";
-import { auditLog, createClient, revokeClient, setScope } from "./clients";
+import { auditLog, createClient, revokeClient, setScope, setSensitive } from "./clients";
 import { handleMcp } from "./server";
 
 const URL_ = new URL("http://127.0.0.1:3230/api/mcp");
@@ -75,6 +75,38 @@ describe("scopes", () => {
     const wrote = await mcp.callTool({ name: "update_profile", arguments: { notes: "Prefiere entrenar temprano" } });
     expect(wrote.isError).toBeFalsy();
     expect(JSON.parse(textOf(wrote)).notes).toBe("Prefiere entrenar temprano");
+    await mcp.close();
+  });
+
+  test("Sustancias stays hidden, even with write, until the client is granted the sensitive scope", async () => {
+    const { client: row, secret } = newClient("read+write");
+    expect(row.sensitive).toBe(false);
+    let mcp = await connect(secret);
+    let names = (await mcp.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("update_profile");
+    expect(names.filter((n) => n.includes("substance"))).toEqual([]);
+    const refused = await mcp.callTool({ name: "substance_summary", arguments: {} });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toContain("not found");
+    await mcp.close();
+    expect(auditLog({ clientId: row.id })[0]).toMatchObject({ tool: "substance_summary", outcome: "refused" });
+
+    expect(setSensitive(row.id, true)?.sensitive).toBe(true);
+    mcp = await connect(secret);
+    names = (await mcp.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("substance_summary");
+    expect(names).toContain("log_substance_use");
+    expect((await mcp.listTools()).tools.find((t) => t.name === "substance_summary")!.description).toContain("private health data");
+    expect((await mcp.callTool({ name: "substance_summary", arguments: {} })).isError).toBeFalsy();
+    await mcp.close();
+
+    // A read-only client with the grant sees the sensitive reads but not their writes.
+    const reader = newClient("read");
+    setSensitive(reader.client.id, true);
+    mcp = await connect(reader.secret);
+    names = (await mcp.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("substance_summary");
+    expect(names).not.toContain("log_substance_use");
     await mcp.close();
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { McpClientCreated, McpEndpoint, McpScope } from "@pulso/contract";
-import { Bot, Check, Copy, KeyRound, Unplug } from "lucide-react";
+import { Bot, Check, Copy, KeyRound, Lock, LockOpen, Unplug } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { AgentClient, AgentsOverview } from "@/src/web/agents";
@@ -53,7 +53,7 @@ export function AgentsPanel({ overview }: { overview: AgentsOverview }) {
   return (
     <div>
       <p className="text-muted-foreground text-[13px] leading-relaxed">
-        Otros agentes — Claude Code, Telar, Delta — pueden usar las herramientas de Pulso por MCP, cada uno con su propia llave. Empiezan en sólo lectura ({overview.tools.read} herramientas); con escritura ven también las {overview.tools.write} que registran o cambian datos.
+        Otros agentes — Claude Code, Telar, Delta — pueden usar las herramientas de Pulso por MCP, cada uno con su propia llave. Empiezan en sólo lectura ({overview.tools.read} herramientas); con escritura ven también las {overview.tools.write} que registran o cambian datos. Sustancias ({overview.tools.sensitive}) queda oculto para todos salvo que actives «Datos sensibles» en uno.
       </p>
 
       {created ? <Secret created={created} onDone={() => setCreated(null)} /> : <CreateForm onCreate={create} />}
@@ -69,6 +69,7 @@ export function AgentsPanel({ overview }: { overview: AgentsOverview }) {
                 key={client.id}
                 client={client}
                 onScope={(scope) => call(`/api/web/admin/mcp/clients/${client.id}`, { method: "PATCH", body: JSON.stringify({ scope }) })}
+                onSensitive={(sensitive) => call(`/api/web/admin/mcp/clients/${client.id}`, { method: "PATCH", body: JSON.stringify({ sensitive }) })}
                 onRevoke={() => call(`/api/web/admin/mcp/clients/${client.id}`, { method: "DELETE" })}
               />
             ))}
@@ -190,7 +191,17 @@ function CopyLine({ label, value, hint }: { label?: string; value: string; hint?
   );
 }
 
-function ClientRow({ client, onScope, onRevoke }: { client: AgentClient; onScope: (scope: McpScope) => Promise<unknown>; onRevoke: () => Promise<unknown> }) {
+function ClientRow({
+  client,
+  onScope,
+  onSensitive,
+  onRevoke,
+}: {
+  client: AgentClient;
+  onScope: (scope: McpScope) => Promise<unknown>;
+  onSensitive: (sensitive: boolean) => Promise<unknown>;
+  onRevoke: () => Promise<unknown>;
+}) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const run = async (action: () => Promise<unknown>) => {
@@ -213,6 +224,21 @@ function ClientRow({ client, onScope, onRevoke }: { client: AgentClient; onScope
           </span>
         </span>
         <ScopeToggle scope={client.scope} disabled={busy} onChange={(scope) => run(() => onScope(scope))} />
+        <button
+          type="button"
+          role="switch"
+          aria-checked={client.sensitive}
+          disabled={busy}
+          onClick={() => run(() => onSensitive(!client.sensitive))}
+          title={client.sensitive ? "Ve Sustancias. Pulsa para ocultarlo." : "No ve Sustancias. Pulsa para permitirlo."}
+          className={cn(
+            "focus-visible:ring-ring inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium outline-none focus-visible:ring-2 disabled:opacity-60",
+            client.sensitive ? "bg-warning/15 text-warning" : "text-muted-foreground hover:text-foreground hover:bg-muted",
+          )}
+        >
+          {client.sensitive ? <LockOpen className="size-3.5" /> : <Lock className="size-3.5" />}
+          Datos sensibles
+        </button>
         {confirming ? (
           <span className="flex gap-1.5">
             <button onClick={() => setConfirming(false)} className="hover:bg-muted min-h-9 rounded-lg px-2.5 text-[13px]">

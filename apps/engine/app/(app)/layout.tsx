@@ -1,5 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { callerOf } from "@/src/device-auth";
+import { shownHere } from "@/src/substances/web";
 import { fromTailnet } from "@/src/tailnet-gate";
 import { Shell, SIDEBAR_COOKIE } from "../_ui/shell";
 
@@ -11,7 +12,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const local = !fromTailnet(head);
   const name = local ? null : (callerOf(head).device?.name ?? null);
   return (
-    <Shell collapsed={jar.get(SIDEBAR_COOKIE)?.value === "1"} who={{ local, name }}>
+    <Shell collapsed={jar.get(SIDEBAR_COOKIE)?.value === "1"} who={{ local, name, substances: shownHere(head) }}>
       {children}
     </Shell>
   );

@@ -17,7 +17,8 @@ export type AgentClient = McpClient & {
 export type AgentsOverview = {
   /** live clients first, then revoked; each group newest first */
   clients: AgentClient[];
-  tools: { read: number; write: number };
+  /** read and write exclude the sensitive tools, which only clients with that grant see. */
+  tools: { read: number; write: number; sensitive: number };
 };
 
 export const RECENT_CALLS = 8;
@@ -29,6 +30,7 @@ export function agentsOverview(): AgentsOverview {
       return { ...client, recent, refused: recent.filter((e) => e.outcome === "refused").length };
     })
     .sort((a, b) => Number(a.revokedAt !== null) - Number(b.revokedAt !== null));
-  const tools = toolInfos();
-  return { clients, tools: { read: tools.filter((t) => t.access === "read").length, write: tools.filter((t) => t.access === "write").length } };
+  const all = toolInfos();
+  const tools = all.filter((t) => !t.sensitive);
+  return { clients, tools: { read: tools.filter((t) => t.access === "read").length, write: tools.filter((t) => t.access === "write").length, sensitive: all.length - tools.length } };
 }

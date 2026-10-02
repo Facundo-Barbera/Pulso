@@ -13,7 +13,8 @@ const instructions = (client: McpClient) =>
   "Everything here is their private health data; use it only for what they asked. Times are epoch ms unless a tool says otherwise. " +
   (client.scope === "read"
     ? "This connection is read-only: it can look but not log or change anything. Write access is enabled per client in Pulso's settings on the Mac."
-    : "This connection can also write: log and change things only when the person asked for it.");
+    : "This connection can also write: log and change things only when the person asked for it.") +
+  (client.sensitive ? " It may also see the person's Sustancias log, which is especially private: never repeat it outside what they asked." : "");
 
 const failure = (text: string): CallToolResult => ({ content: [{ type: "text", text }], isError: true });
 
@@ -23,7 +24,7 @@ const failure = (text: string): CallToolResult => ({ content: [{ type: "text", t
  * as if it did not exist. Every call lands in the audit log, without arguments.
  */
 export function serverFor(client: McpClient): McpServer {
-  const tools = new Map(visibleTools(client.scope).map((t) => [t.name, t]));
+  const tools = new Map(visibleTools(client.scope, client.sensitive).map((t) => [t.name, t]));
   const mcp = new McpServer({ name: "pulso", version: "1.0.0" }, { capabilities: { tools: {} }, instructions: instructions(client) });
 
   mcp.server.setRequestHandler(ListToolsRequestSchema, () => ({

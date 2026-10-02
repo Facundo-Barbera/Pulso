@@ -1,4 +1,4 @@
-import { isScope, revokeClient, setScope } from "@/src/mcp/clients";
+import { parseUpdate, revokeClient, updateClient } from "@/src/mcp/clients";
 import { json, loopbackOnly } from "../../../../http";
 
 export const dynamic = "force-dynamic";
@@ -7,13 +7,13 @@ type Params = { params: Promise<{ id: string }> };
 
 const notFound = () => json({ code: "not_found", message: "No existe ese agente." }, 404);
 
-/** `{ scope }` → `McpClient`: turns write access on or off. Revoked clients stay revoked. The Mac only. */
+/** `{ scope?, sensitive? }` → `McpClient`: turns write access or the sensitive grant (Sustancias) on or off. Revoked clients stay revoked. The Mac only. */
 export async function PATCH(request: Request, { params }: Params): Promise<Response> {
   const refused = loopbackOnly(request);
   if (refused) return refused;
-  const scope = ((await request.json().catch(() => undefined)) as { scope?: unknown } | undefined)?.scope;
-  if (!isScope(scope)) return json({ code: "invalid_request", message: 'El alcance es "read" o "read+write".' }, 400);
-  const client = setScope((await params).id, scope);
+  const update = parseUpdate(await request.json().catch(() => undefined));
+  if (typeof update === "string") return json({ code: "invalid_request", message: update }, 400);
+  const client = updateClient((await params).id, update);
   return client ? json(client) : notFound();
 }
 

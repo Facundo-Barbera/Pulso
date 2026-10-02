@@ -20,7 +20,8 @@ export async function POST(request: Request): Promise<Response> {
   const input = await jsonBody(request);
   if (!input || typeof input.name !== "string" || !input.name.trim()) return badRequest("Falta el nombre del cliente.");
   if (input.scope !== undefined && !isScope(input.scope)) return badRequest('El alcance es "read" o "read+write".');
-  const { client, secret } = createClient({ name: input.name, scope: input.scope });
+  if (input.sensitive !== undefined && typeof input.sensitive !== "boolean") return badRequest("sensitive es true o false.");
+  const { client, secret } = createClient({ name: input.name, scope: input.scope, sensitive: input.sensitive });
   const port = Number(new URL(request.url).port) || ENGINE_PORT;
   const body: McpClientCreated = { client, secret, connection: connectionCard(secret, port) };
   return Response.json(body, { status: 201, headers: NO_STORE });

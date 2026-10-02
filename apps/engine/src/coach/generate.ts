@@ -8,19 +8,20 @@ import { getProfile } from "../agent/profile";
 import { TOOLS } from "../agent/registry";
 import { agentOptions, type QueryFn } from "../agent/runner";
 import { claudeMd } from "../agent/workspace";
+import { isSensitive } from "../mcp/access";
 import { briefPrompt } from "./prompts";
 import { completeBrief, failBrief, getBrief } from "./store";
 
 const BRIEF_LIMIT_MS = 10 * 60_000;
 const WRITES = /^(log|add|create|update|set|delete)_/;
 
-/** A brief only reads: every pulso tool that writes is denied, and no built-ins. */
+/** A brief only reads: every pulso tool that writes is denied, and no built-ins. Sustancias never reaches a brief. */
 export function briefOptions(cwd: string, context: string, abortController: AbortController): Options {
   return {
     ...agentOptions(cwd, context, undefined, abortController),
     tools: [],
     allowedTools: ["mcp__pulso"],
-    disallowedTools: TOOLS.map((t) => t.name).filter((name) => WRITES.test(name)).map((name) => `mcp__pulso__${name}`),
+    disallowedTools: TOOLS.map((t) => t.name).filter((name) => WRITES.test(name) || isSensitive(name)).map((name) => `mcp__pulso__${name}`),
     persistSession: false,
     maxTurns: 25,
   };
