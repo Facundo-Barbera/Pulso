@@ -10,7 +10,8 @@ export type Point = { label: string; value: number | null };
  * A small chart for a trend: a line with a soft area under it, or bars. The
  * time axis is the whole window (one slot per point), so empty days read as
  * empty rather than shifting the rest. On a line, a gap between readings is
- * bridged with a dashed segment and a lone reading gets a dot: never a sliver.
+ * bridged with a dashed segment over one continuous area, and a lone reading
+ * gets a dot: never a sliver.
  * Hovering, touching or arrow keys read a point out in the header; otherwise
  * the header names the window (`range`) and the dashed `target` line
  * (`targetLabel`, e.g. "media 43 ms"). The first and last labels sit under it.
@@ -173,10 +174,9 @@ export function Sparkline({
             )
           ) : (
             <>
-              {runs.map((run, r) =>
-                run.length < 2 ? null : (
-                  <path key={r} d={`${run.map((p, k) => `${k ? "L" : "M"}${x(p.i)},${y(p.v)}`).join(" ")} L${x(run.at(-1)!.i)},${H} L${x(run[0]!.i)},${H} Z`} fill={`url(#${id}a)`} />
-                ),
+              {/* One area under every reading, across gaps too: per-run areas read as broken pieces. */}
+              {present.length > 1 && (
+                <path d={`${present.map((p, k) => `${k ? "L" : "M"}${x(p.i)},${y(p.v)}`).join(" ")} L${x(last.i)},${H} L${x(present[0]!.i)},${H} Z`} fill={`url(#${id}a)`} />
               )}
               {bridges.map(([a, b], k) => (
                 <line key={k} x1={x(a.i)} y1={y(a.v)} x2={x(b.i)} y2={y(b.v)} stroke={color} strokeOpacity="0.55" strokeWidth="1.5" strokeDasharray="2 4" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
