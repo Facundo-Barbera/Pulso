@@ -506,9 +506,10 @@ private let previewDay = DailyMetrics(
         ReadinessHero(readiness: previewReadiness)
         ActivityCard(day: previewDay)
         SleepCard(day: previewDay, onSync: {})
-        RecentWorkoutsCard(workouts: [
-            Workout(id: "1", source: "watch", activity: "cross_training", startedAt: 1_790_800_000_000, endedAt: 1_790_804_500_000, energy: 812, distance: 10_250),
-            Workout(id: "2", source: "watch", activity: "functional_strength", startedAt: 1_790_700_000_000, endedAt: 1_790_703_900_000, energy: 430),
+        RecentWorkoutsCard(entries: [
+            ActivityEntry(kind: "session", id: "s", title: "Torso A", startedAt: 1_790_900_000_000, endedAt: 1_790_902_460_000, energy: 201, distance: 490, sets: 10, volumeKg: 2452, merged: true),
+            ActivityEntry(workout: Workout(id: "1", source: "watch", activity: "cross_training", startedAt: 1_790_800_000_000, endedAt: 1_790_804_500_000, energy: 812, distance: 10_250)),
+            ActivityEntry(workout: Workout(id: "2", source: "watch", activity: "functional_strength", startedAt: 1_790_700_000_000, endedAt: 1_790_703_900_000, energy: 430)),
         ], onSync: {})
     }
 }

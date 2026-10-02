@@ -25,4 +25,11 @@ export const CORE_SCHEMA = `
     distance REAL
   );
   CREATE INDEX IF NOT EXISTS workouts_started ON workouts (started_at DESC);
+  -- The person's say on which Pulso session a Health workout belongs to; overrides matching by time.
+  -- session_id NULL: kept apart ("Separar").
+  CREATE TABLE IF NOT EXISTS workout_links (
+    workout_id TEXT PRIMARY KEY REFERENCES workouts (id) ON DELETE CASCADE,
+    session_id TEXT,
+    updated_at INTEGER NOT NULL
+  );
 `;

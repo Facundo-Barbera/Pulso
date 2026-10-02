@@ -10,6 +10,7 @@ import { listSleepNights } from "../sleep/store";
 import { AREA_NAMES } from "./planner";
 import { expand } from "./recurrence";
 import { plannedView } from "./schedule";
+import { activityLabel, attachmentsBetween } from "../workouts-merge";
 import { healthWorkouts, loggedSessions, scansBetween } from "./sources";
 import { CalendarError, listBusyBlocks, listHealthEvents, mealTimesBetween } from "./store";
 import { addDays, DATE, daysBetween, local, localDateTime, TIME } from "./time";
@@ -22,12 +23,6 @@ export const SLOT_NAMES: Record<MealSlot, string> = {
 };
 
 const KIND_NAMES: Record<HealthEvent["kind"], string> = { lesion: "Lesión", enfermedad: "Enfermedad", sintoma: "Síntoma", cirugia: "Cirugía", otro: "Otro" };
-
-const ACTIVITIES: Record<string, string> = {
-  running: "Carrera", walking: "Caminata", hiking: "Senderismo", cycling: "Ciclismo", swimming: "Natación", strength: "Fuerza",
-  functional_strength: "Fuerza", hiit: "HIIT", yoga: "Yoga", rowing: "Remo", elliptical: "Elíptica", core: "Core",
-  flexibility: "Flexibilidad", cross_training: "Entrenamiento cruzado", soccer: "Fútbol",
-};
 
 const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).padStart(2, "0")} min` : `${Math.round(min)} min`);
 const at = (date: string, time: string) => `${date}T${time}`;
@@ -59,21 +54,28 @@ export function timeline(from: string, to: string, now = new Date()): CalendarRa
   }
   const fulfilled = new Set(planned.map((p) => p.sessionId));
   const sessions = loggedSessions(from, to);
+  // Health workouts recorded during a session (and Pulso's own copies) are that session: its time spans them, they get no item.
+  const health = healthWorkouts(from, to);
+  const range = [...sessions, ...health];
+  const merged = range.length ? attachmentsBetween(Math.min(...range.map((r) => r.startedAt)), Math.max(...range.map((r) => r.endedAt))) : null;
   for (const s of sessions.filter((s) => !fulfilled.has(s.id))) {
+    const parts = (merged?.bySession.get(s.id) ?? []).map((a) => a.workout);
+    const start = Math.min(s.startedAt, ...parts.map((p) => p.startedAt));
+    const end = Math.max(s.endedAt, ...parts.map((p) => p.endedAt));
+    const kcal = parts.reduce((n, p) => n + (p.energy ?? 0), 0);
     items.push({
-      id: `session:${s.id}`, kind: "training", title: s.name, subtitle: hm((s.endedAt - s.startedAt) / 60_000), date: s.date,
-      start: localDateTime(s.startedAt), end: localDateTime(s.endedAt), allDay: false, color: "training", status: "done", link: { tab: "entreno", id: s.id },
+      id: `session:${s.id}`, kind: "training", title: s.name, subtitle: [hm((end - start) / 60_000), kcal > 0 ? `${Math.round(kcal)} kcal` : null].filter(Boolean).join(" · "), date: s.date,
+      start: localDateTime(start), end: localDateTime(end), allDay: false, color: "training", status: "done", link: { tab: "entreno", id: s.id },
     });
   }
 
-  // Health workouts, minus the ones that are a Pulso session written back to Health.
-  for (const w of healthWorkouts(from, to)) {
-    if (sessions.some((s) => w.startedAt < s.endedAt && s.startedAt < w.endedAt)) continue;
+  for (const w of health) {
+    if (merged?.sessionOf.has(w.id) || merged?.hidden.has(w.id)) continue;
     const parts = [hm((w.endedAt - w.startedAt) / 60_000)];
     if (w.energy) parts.push(`${Math.round(w.energy)} kcal`);
     if (w.distance) parts.push(`${(w.distance / 1000).toFixed(1)} km`);
     items.push({
-      id: `workout:${w.id}`, kind: "workout", title: ACTIVITIES[w.activity] ?? "Entrenamiento", subtitle: parts.join(" · "), date: local(w.startedAt).date,
+      id: `workout:${w.id}`, kind: "workout", title: activityLabel(w.activity), subtitle: parts.join(" · "), date: local(w.startedAt).date,
       start: localDateTime(w.startedAt), end: localDateTime(w.endedAt), allDay: false, color: "workout", status: w.activity, link: { tab: "hoy", id: w.id },
     });
   }

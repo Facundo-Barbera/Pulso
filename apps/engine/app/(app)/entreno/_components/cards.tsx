@@ -4,9 +4,13 @@ import type { HistoryEntry, ProgramHeader } from "@/src/web/entreno";
 import { Card, CardTitle } from "../../../_ui/card";
 import { EmptyState } from "../../../_ui/empty-state";
 import { fmtLongDate, fmtMinutes, fmtNumber, fmtTime } from "../../../_ui/format";
+import { Recorded } from "./recorded";
 
-/** Sessions logged in Pulso and workouts from Salud, newest first. Each opens to its detail; no JS needed. */
-export function HistoryCard({ history, delay, className }: { history: HistoryEntry[]; delay?: number; className?: string }) {
+/**
+ * Sessions logged in Pulso and workouts from Salud, newest first, each workout
+ * once (what the Watch recorded during a session is inside it). Each opens to its detail.
+ */
+export function HistoryCard({ history, delay, className, canEdit = false }: { history: HistoryEntry[]; delay?: number; className?: string; canEdit?: boolean }) {
   return (
     <Card delay={delay} className={className}>
       <CardTitle icon={History} color="var(--domain-training)" title="Últimas sesiones" />
@@ -18,8 +22,13 @@ export function HistoryCard({ history, delay, className }: { history: HistoryEnt
             <li key={`${h.kind}-${h.id}`}>
               <details className="group rounded-2xl open:bg-muted/40">
                 <summary className="hover:bg-muted/60 focus-visible:ring-ring flex min-h-14 cursor-pointer list-none items-center gap-3 rounded-2xl px-2 py-2 outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
-                  <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${h.kind === "session" ? "bg-training/15 text-training" : "bg-energy/15 text-energy"}`}>
+                  <span className={`relative grid size-9 shrink-0 place-items-center rounded-xl ${h.kind === "session" ? "bg-training/15 text-training" : "bg-energy/15 text-energy"}`}>
                     {h.kind === "session" ? <Dumbbell className="size-4" /> : <Watch className="size-4" />}
+                    {h.merged && (
+                      <span className="bg-card text-heart absolute -right-1 -bottom-1 grid size-4 place-items-center rounded-full shadow-1" aria-label="Con datos de Apple Watch">
+                        <Watch className="size-2.5" />
+                      </span>
+                    )}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5 text-[15px] font-medium">
@@ -40,7 +49,7 @@ export function HistoryCard({ history, delay, className }: { history: HistoryEnt
                     {h.source && ` · ${h.source}`}
                   </p>
                   {h.kind === "session" ? (
-                    <SessionDetail entry={h} />
+                    <SessionDetail entry={h} canEdit={canEdit} />
                   ) : (
                     <dl className="tabular grid grid-cols-3 gap-3 text-[13px]">
                       <Fact label="Duración" value={fmtMinutes((h.endedAt - h.startedAt) / 60_000)} />
@@ -58,8 +67,17 @@ export function HistoryCard({ history, delay, className }: { history: HistoryEnt
   );
 }
 
-/** What was lifted in a logged session, exercise by exercise, in the order it was done. */
-export function SessionDetail({ entry: h }: { entry: HistoryEntry }) {
+/** What was lifted in a logged session, exercise by exercise, in the order it was done, then what the Watch recorded. */
+export function SessionDetail({ entry: h, canEdit = false }: { entry: HistoryEntry; canEdit?: boolean }) {
+  return (
+    <>
+      <Lifted entry={h} />
+      <Recorded entry={h} canEdit={canEdit} />
+    </>
+  );
+}
+
+function Lifted({ entry: h }: { entry: HistoryEntry }) {
   return h.exercises.length === 0 ? (
     <p className="text-muted-foreground text-[13px]">Sin series registradas.</p>
   ) : (

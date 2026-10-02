@@ -90,6 +90,8 @@ struct CardioLog: Codable, Hashable {
     var avgHr: Double? = nil
     var kcal: Double? = nil
     var doneAt: Double
+    /// Read only: the Health workout that filled what this log left empty.
+    var recordedBy: String? = nil
 }
 
 struct HrZoneRange: Codable, Hashable {
@@ -440,6 +442,11 @@ struct TrainingSession: Codable, Identifiable, Hashable {
     var sets: [SetLog]
     var cardio: [CardioLog]? = nil
     var cardioMinutes: Double? = nil
+    /// Read only: Health workouts recorded during the session were merged into it.
+    var merged: Bool? = nil
+    var recorded: SessionRecording? = nil
+    /// Read only, one session's detail: Health workouts nearby that could be joined.
+    var joinable: [RecordedPart]? = nil
 
     var start: Date { Date(timeIntervalSince1970: startedAt / 1000) }
     var duration: TimeInterval { (endedAt - startedAt) / 1000 }
@@ -519,6 +526,11 @@ extension TrainingSession {
         session.cardioMinutes = cardioMinutes?.finite
         session.startedAt = startedAt.finite ?? 0
         session.endedAt = endedAt.finite ?? session.startedAt
+        // The engine's read-only additions are not the phone's to send back.
+        session.merged = nil
+        session.recorded = nil
+        session.joinable = nil
+        session.cardio = session.cardio?.map { var log = $0; log.recordedBy = nil; return log }
         return session
     }
 }

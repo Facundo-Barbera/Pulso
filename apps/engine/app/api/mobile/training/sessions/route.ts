@@ -1,12 +1,13 @@
 import { sessionInput } from "@/src/training/inputs";
-import { listSessions, saveSession, TrainingError } from "@/src/training/store";
+import { saveSession, TrainingError } from "@/src/training/store";
+import { listMergedSessions } from "@/src/workouts-merge";
 import { deviceOf, NO_STORE, unpaired } from "../../auth";
 
 export const dynamic = "force-dynamic";
 
 export function GET(request: Request): Response {
   if (!deviceOf(request)) return unpaired();
-  return Response.json({ sessions: listSessions(30) }, { headers: NO_STORE });
+  return Response.json({ sessions: listMergedSessions(30) }, { headers: NO_STORE });
 }
 
 /** A finished session (`SessionInput`), upserted by its client-made id. Returns `SessionSaved` with any PRs. */

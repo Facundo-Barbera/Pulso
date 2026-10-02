@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { linkDuplicates } from "./workouts-dedupe";
 
 /** Columns added after the first release of `workouts`. */
-const ADDED_COLUMNS = ["source_bundle TEXT", "source_name TEXT", "duplicate_of TEXT"];
+const ADDED_COLUMNS = ["source_bundle TEXT", "source_name TEXT", "duplicate_of TEXT", "external_ref TEXT", "avg_hr REAL", "max_hr REAL", "heart_rate TEXT"];
 
 /**
  * Brings `workouts` up to date on every boot, for fresh and existing databases

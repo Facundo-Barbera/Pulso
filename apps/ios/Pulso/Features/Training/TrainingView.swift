@@ -489,6 +489,13 @@ private struct RecentSessions: View {
     let sessions: [TrainingSession]
     let open: (TrainingSession) -> Void
 
+    /// "10 series · 41 min · 201 kcal": the time spans what the Watch recorded too, its kcal counted once.
+    private func recentDetail(_ session: TrainingSession) -> String {
+        var parts = ["\(session.sets.count) series", "\(Int(session.spanDuration / 60)) min"]
+        if let kcal = session.recorded?.energy { parts.append("\(Int(kcal.rounded())) kcal") }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         Card {
             CardTitle(text: "Últimas sesiones", systemImage: "clock.arrow.circlepath")
@@ -496,7 +503,15 @@ private struct RecentSessions: View {
                 Button { open(session) } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(session.name).font(.body.weight(.medium)).foregroundStyle(.primary)
+                            HStack(spacing: 5) {
+                                Text(session.name).font(.body.weight(.medium)).foregroundStyle(.primary)
+                                if session.merged == true {
+                                    Image(systemName: "applewatch")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.pink)
+                                        .accessibilityLabel("Con datos de Apple Watch")
+                                }
+                            }
                             Text(session.start.formatted(.dateTime.weekday(.wide).day().month()))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -504,7 +519,7 @@ private struct RecentSessions: View {
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {
                             Text(TrainingStore.shared.defaultUnit.formatTotal(session.volumeKg)).font(.subheadline.weight(.semibold)).fontDesign(.rounded)
-                            Text("\(session.sets.count) series · \(Int(session.duration / 60)) min").font(.caption).foregroundStyle(.secondary)
+                            Text(recentDetail(session)).font(.caption).foregroundStyle(.secondary).fontDesign(.rounded)
                         }
                     }
                     .padding(.vertical, 4)

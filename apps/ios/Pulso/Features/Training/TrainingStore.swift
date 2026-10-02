@@ -207,13 +207,14 @@ final class TrainingStore {
         }
     }
 
-    /// A logged session by id: from the recent list, else from the Mac.
+    /// A logged session by id, as its detail: from the Mac (with the Watch's heart rate and what could
+    /// be joined), else from the recent list when the Mac can't be reached.
     func session(_ id: String) async -> TrainingSession? {
-        if let known = sessions.first(where: { $0.id == id }) { return known }
-        guard let api = PulsoModel.shared.api else { return nil }
+        let known = sessions.first { $0.id == id }
+        guard let api = PulsoModel.shared.api else { return known }
         do { return try await api.trainingSession(id) } catch {
-            PulsoModel.shared.handle(error)
-            return nil
+            if known == nil { PulsoModel.shared.handle(error) }
+            return known
         }
     }
 

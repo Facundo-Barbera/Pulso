@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { listMergedSessions } from "../workouts-merge";
 import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape, supersetIdShape, weightUnitEnum } from "./inputs";
 import { describeLive, editLive, getLive, type LiveOp } from "./live";
 import { idsWithMedia } from "./media";
@@ -14,7 +15,6 @@ import {
   getActiveProgram,
   getExercise,
   listExercises,
-  listSessions,
   nextDay,
   saveSession,
   setExerciseUnit,
@@ -246,12 +246,14 @@ export const trainingTools = [
 
   tool(
     "list_sessions",
-    "Logged training sessions, newest first, with every set (exerciseId, weightKg, reps, rpe, setIndex; `segments` lists each load of a set where the load dropped mid-set, top first, weightKg/reps being the top one) and cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). Times are epoch ms. Pass exerciseId to only get sessions that included it.",
+    "Logged training sessions, newest first, with every set (exerciseId, weightKg, reps, rpe, setIndex; `segments` lists each load of a set where the load dropped mid-set, top first, weightKg/reps being the top one) and cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). Times are epoch ms. Pass exerciseId to only get sessions that included it. " +
+      "merged: true means Apple Watch (or another Health app) recorded workouts during the session; they are in `recorded` (parts, kcal summed once, avg/max heart rate, distance, startedAt/endedAt spanning them) " +
+      "and are NOT extra training: never add them again from list_workouts. A cardio block with `recordedBy` had its empty fields filled from that Watch workout.",
     {
       limit: z.number().int().min(1).max(100).default(10),
       exerciseId: z.string().optional(),
     },
-    async ({ limit, exerciseId }) => guard(() => listSessions(limit, exerciseId)),
+    async ({ limit, exerciseId }) => guard(() => listMergedSessions(limit, exerciseId)),
   ),
 
   tool(

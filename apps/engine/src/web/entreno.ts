@@ -3,7 +3,7 @@
  * body stores. The page, `GET /api/web/entreno` and the session logger share
  * these shapes. The numbers match the iPhone's plan screen (TrainingPlan.swift).
  */
-import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, SetSegment, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
+import type { ExerciseDetail, ExercisePerformance, HeartRatePoint, JoinCandidate, LoadSuggestion, SessionRecording, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, SetSegment, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
 import { listScans } from "../body/store";
 import { ANATOMY } from "../training/anatomy";
 import { e1rm } from "../training/math";
@@ -11,8 +11,7 @@ import { idsWithMedia, MEDIA_ROUTE, type MediaKind } from "../training/media";
 import { segmentsOf, volumeOf } from "../training/segments";
 import { activeProgramView, exerciseDetail, exercisePerformance, getExercise, getSession, listSessions, trainingSettings, unitOf } from "../training/store";
 import { formatWeight, toUnit } from "../training/units";
-import { listWorkouts } from "../workouts";
-import { activityLabel } from "./today";
+import { activityLabel, joinableFor, mergeSessions, standaloneWorkouts } from "../workouts-merge";
 
 // ── Plan arithmetic ──────────────────────────────────────────────────────────
 
@@ -131,6 +130,13 @@ export type HistoryEntry = {
   source: string | null;
   energy: number | null;
   distanceKm: number | null;
+  /** sessions: Apple Watch workouts were merged in (`recorded`); times span them */
+  merged: boolean;
+  recorded: SessionRecording | null;
+  /** sessions: Health workouts nearby that could be joined ("Unir con…") */
+  joinable: JoinCandidate[];
+  /** sessions: the Watch's heart rate, at most 60 points, labels "13:42" */
+  heartRate: { label: string; value: number }[];
 };
 
 export type EntrenoOverview = {
@@ -155,6 +161,14 @@ const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes
 /** 1 = Monday … 7 = Sunday, like `ProgramDay.weekday`. */
 const isoWeekday = (at: Date) => ((at.getDay() + 6) % 7) + 1;
 const number = new Intl.NumberFormat("es");
+const clock = new Intl.DateTimeFormat("es", { hour: "2-digit", minute: "2-digit" });
+const HR_POINTS = 60;
+
+/** Every nth reading, so a long session still draws as one light line. */
+function heartLine(series: HeartRatePoint[]): HistoryEntry["heartRate"] {
+  const step = Math.max(1, Math.ceil(series.length / HR_POINTS));
+  return series.filter((_, i) => i % step === 0).map((p) => ({ label: clock.format(p.at), value: Math.round(p.bpm) }));
+}
 
 function tagline(day: ProgramDay, isNext: boolean, now: Date): string | null {
   const next = isNext ? (day.weekday === isoWeekday(now) ? "Hoy toca" : "Siguiente") : null;
@@ -182,18 +196,47 @@ function sessionEntry(session: TrainingSession, records: Set<string>, units: Uni
   }
   const volume = session.sets.reduce((sum, s) => sum + volumeOf(s), 0);
   const total = toUnit(volume, units.defaultUnit);
-  const parts = [`${session.sets.length} ${session.sets.length === 1 ? "serie" : "series"}`, volume > 0 ? `${number.format(Math.round(total))} ${units.defaultUnit}` : null];
-  return { id: session.id, kind: "session", title: session.name, startedAt: session.startedAt, endedAt: session.endedAt, summary: parts.filter(Boolean).join(" · "), exercises, source: "Pulso", energy: null, distanceKm: null };
+  const r = session.recorded ?? null;
+  const parts = [
+    `${session.sets.length} ${session.sets.length === 1 ? "serie" : "series"}`,
+    volume > 0 ? `${number.format(Math.round(total))} ${units.defaultUnit}` : null,
+    r?.energy != null ? `${Math.round(r.energy)} kcal` : null,
+  ];
+  return {
+    id: session.id,
+    kind: "session",
+    title: session.name,
+    startedAt: r?.startedAt ?? session.startedAt,
+    endedAt: r?.endedAt ?? session.endedAt,
+    summary: parts.filter(Boolean).join(" · "),
+    exercises,
+    source: "Pulso",
+    energy: r?.energy ?? null,
+    distanceKm: r?.distance != null ? Math.round(r.distance / 10) / 100 : null,
+    merged: !!session.merged,
+    recorded: r,
+    joinable: session.joinable ?? [],
+    heartRate: heartLine(r?.heartRate ?? []),
+  };
 }
 
-/** Logged sessions and Health workouts, newest first, each with its detail. */
+/** Sessions merged with what Health recorded during them (heart rate included) and what could still be joined. */
+function withRecordings(sessions: TrainingSession[]): TrainingSession[] {
+  const joinable = joinableFor(sessions);
+  return mergeSessions(sessions, { series: true }).map((s) => ({ ...s, joinable: joinable.get(s.id) ?? [] }));
+}
+
+/**
+ * Logged sessions and Health workouts, newest first, each with its detail.
+ * A Health workout recorded during a session is inside that session's entry, not a row of its own.
+ */
 export function trainingHistory(limit = 12, sessions = listSessions(SESSIONS), units: Units = trainingSettings()): HistoryEntry[] {
   const records = sessionRecords(sessions);
-  const own = sessions.map((s) => sessionEntry(s, records.get(s.id) ?? new Set(), units));
-  const workouts = listWorkouts(limit).map((w): HistoryEntry => {
+  const own = withRecordings(sessions.slice(0, limit)).map((s) => sessionEntry(s, records.get(s.id) ?? new Set(), units));
+  const workouts = standaloneWorkouts(limit).map((w): HistoryEntry => {
     const distanceKm = w.distance != null && w.distance > 0 ? Math.round(w.distance / 10) / 100 : null;
     const parts = [w.energy != null ? `${Math.round(w.energy)} kcal` : null, distanceKm != null ? `${number.format(distanceKm)} km` : null];
-    return { id: w.id, kind: "workout", title: activityLabel(w.activity), startedAt: w.startedAt, endedAt: w.endedAt, summary: parts.filter(Boolean).join(" · ") || null, exercises: [], source: w.sourceName ?? "Salud", energy: w.energy, distanceKm };
+    return { id: w.id, kind: "workout", title: activityLabel(w.activity), startedAt: w.startedAt, endedAt: w.endedAt, summary: parts.filter(Boolean).join(" · ") || null, exercises: [], source: w.sourceName ?? "Salud", energy: w.energy, distanceKm, merged: false, recorded: null, joinable: [], heartRate: [] };
   });
   return [...own, ...workouts].sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }
@@ -210,12 +253,11 @@ export function entrenoOverview(now = new Date()): EntrenoOverview {
   const referenced = blocks.flatMap((b) => b.weeks.flatMap((w) => [...w.days.flatMap((d) => d.sessions), ...w.other]));
   const known = new Map(sessions.map((s) => [s.id, s]));
   const byId = sessionRecords(sessions);
-  const opened = Object.fromEntries(
-    [...new Set(referenced.map((s) => s.id))].flatMap((id) => {
-      const session = known.get(id) ?? getSession(id);
-      return session ? [[id, sessionEntry(session, byId.get(id) ?? new Set(), units)]] : [];
-    }),
-  );
+  const weekSessions = [...new Set(referenced.map((s) => s.id))].flatMap((id) => {
+    const session = known.get(id) ?? getSession(id);
+    return session ? [session] : [];
+  });
+  const opened = Object.fromEntries(withRecordings(weekSessions).map((s) => [s.id, sessionEntry(s, byId.get(s.id) ?? new Set(), units)]));
   const shared = { history, blocks, sessions: opened, adjustment: view.adjustment ?? null };
   if (!program) return { defaultUnit, program: null, nextDayId: null, days: [], adjusted: null, ...shared };
 

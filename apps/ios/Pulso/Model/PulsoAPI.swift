@@ -10,6 +10,8 @@ struct Workout: Codable, Identifiable, Equatable {
     var endedAt: Double
     var energy: Double?
     var distance: Double?
+    var avgHeartRate: Double?
+    var maxHeartRate: Double?
 }
 
 /// What the phone sends from HealthKit (`WorkoutInput`).
@@ -22,6 +24,12 @@ struct WorkoutInput: Codable, Equatable {
     var distance: Double?
     var sourceBundle: String?
     var sourceName: String?
+    /// `HKMetadataKeyExternalUUID`: Pulso writes the session id there, so the engine knows its own copies.
+    var externalRef: String?
+    var avgHeartRate: Double?
+    var maxHeartRate: Double?
+    /// About one reading a minute, recent workouts only.
+    var heartRate: [HeartRatePoint]?
 }
 
 /// The Mac's `/api/mobile/*` routes. One bearer token, JSON both ways, short
@@ -35,7 +43,8 @@ struct PulsoAPI {
     }
 
     struct PairResponse: Decodable { var deviceId: String; var name: String; var token: String }
-    struct WorkoutsResponse: Decodable { var workouts: [Workout] }
+    /// `workouts`: Health workouts not part of a Pulso session. `activity`: those and the sessions, merged (older engines: nil).
+    struct WorkoutsResponse: Decodable { var workouts: [Workout]; var activity: [ActivityEntry]? }
     struct SyncResponse: Decodable { var written: Int }
     struct StatusResponse: Decodable { var at: Double }
     private struct ErrorBody: Decodable { var code: String; var message: String }
@@ -60,9 +69,8 @@ struct PulsoAPI {
         try await call("api/mobile/status", method: "GET")
     }
 
-    func workouts() async throws -> [Workout] {
-        let response: WorkoutsResponse = try await call("api/mobile/workouts", method: "GET")
-        return response.workouts
+    func workouts() async throws -> WorkoutsResponse {
+        try await call("api/mobile/workouts", method: "GET")
     }
 
     func sync(_ workouts: [WorkoutInput]) async throws -> Int {

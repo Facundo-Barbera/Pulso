@@ -5,8 +5,13 @@ struct SessionSummaryView: View {
     let summary: SessionSummary
     @Environment(\.dismiss) private var dismiss
     @State private var celebrate = false
+    /// The session after "Separar" / "Unir con…" changed what is merged into it.
+    @State private var relinked: TrainingSession?
 
-    private var session: TrainingSession { summary.session }
+    private var session: TrainingSession { relinked ?? summary.session }
+    /// The Watch's kcal when it recorded the session (never added to the logged ones), else what was logged.
+    private var energy: Double? { session.recorded?.energy ?? total(\.kcal) }
+    private var showsRecorded: Bool { !(session.recorded?.parts.isEmpty ?? true) || !(session.joinable?.isEmpty ?? true) }
     private var cardio: [CardioLog] { session.cardio ?? [] }
     private var cardioMinutes: Double { session.cardioMinutes ?? cardio.reduce(0) { $0 + $1.durationSeconds } / 60 }
 
@@ -22,22 +27,28 @@ struct SessionSummaryView: View {
                 VStack(spacing: 22) {
                     hero
                     HStack(spacing: 12) {
-                        Tile(value: Duration.seconds(session.duration).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated)), label: "Duración", systemImage: "clock")
+                        Tile(value: Duration.seconds(session.spanDuration).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated)), label: "Duración", systemImage: "clock")
                         if !session.sets.isEmpty || cardio.isEmpty {
                             Tile(value: "\(session.sets.count)", label: "Series", systemImage: "square.stack.3d.up")
                             Tile(value: TrainingStore.shared.defaultUnit.formatTotal(session.volumeKg), label: "Volumen", systemImage: "scalemass")
                         }
                     }
-                    if !cardio.isEmpty {
+                    if !cardio.isEmpty || energy != nil {
                         HStack(spacing: 12) {
-                            Tile(value: "\(Int(cardioMinutes.rounded())) min", label: cardio.count == 1 ? "Cardio" : "Cardio · \(cardio.count) bloques", systemImage: "heart")
+                            if !cardio.isEmpty {
+                                Tile(value: "\(Int(cardioMinutes.rounded())) min", label: cardio.count == 1 ? "Cardio" : "Cardio · \(cardio.count) bloques", systemImage: "heart")
+                            }
                             if let km = total(\.distanceKm) {
                                 Tile(value: "\(km.formatted(.number.precision(.fractionLength(0...2)))) km", label: "Distancia", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                             }
-                            if let kcal = total(\.kcal) {
-                                Tile(value: "\(Int(kcal)) kcal", label: "Energía", systemImage: "flame")
+                            if let energy {
+                                Tile(value: "\(Int(energy.rounded())) kcal", label: "Energía", systemImage: "flame")
                             }
                         }
+                    }
+                    if showsRecorded {
+                        RecordedCard(session: session) { relinked = $0 }
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                     PostWorkoutDoseCard(sessionStart: session.start)
                     ForEach(summary.cutShort, id: \.self) { line in
@@ -73,6 +84,7 @@ struct SessionSummaryView: View {
                 }
                 .padding(Theme.padding)
                 .animation(.snappy, value: summary.prs)
+                .animation(.snappy, value: relinked)
             }
             .navigationTitle(session.name)
             .navigationBarTitleDisplayMode(.inline)

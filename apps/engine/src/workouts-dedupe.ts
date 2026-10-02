@@ -1,6 +1,14 @@
 import type { Database } from "bun:sqlite";
 
-type Candidate = { id: string; activity: string; started_at: number; ended_at: number; energy: number | null; distance: number | null };
+type Candidate = { id: string; activity: string; started_at: number; ended_at: number; energy: number | null; distance: number | null; source_bundle?: string | null };
+
+/**
+ * Pulso's own copies of its sessions (written on finish) are never one of two
+ * recordings: merged here, the Watch's workout of the same session could be
+ * the one dropped. workouts-merge folds them into their session instead.
+ */
+/** `com.facundo.pulso` and the Debug build's `com.facundo.pulso.dev`. */
+export const PULSO_BUNDLE = /^com\.facundo\.pulso(\.|$)/;
 
 /** Fraction of the shorter workout covered by the other. */
 export function overlap(a: Pick<Candidate, "started_at" | "ended_at">, b: Pick<Candidate, "started_at" | "ended_at">): number {
@@ -22,7 +30,7 @@ const compare = (a: Candidate, b: Candidate) => {
 export function findDuplicates(workouts: Candidate[]): Map<string, string> {
   const canonical: Candidate[] = [];
   const duplicateOf = new Map<string, string>();
-  for (const w of [...workouts].sort(compare)) {
+  for (const w of [...workouts].filter((w) => !w.source_bundle || !PULSO_BUNDLE.test(w.source_bundle)).sort(compare)) {
     const original = canonical.find((c) => c.activity === w.activity && overlap(c, w) > 0.5);
     if (original) duplicateOf.set(w.id, original.id);
     else canonical.push(w);
@@ -33,7 +41,7 @@ export function findDuplicates(workouts: Candidate[]): Map<string, string> {
 /** Recomputes `duplicate_of` for every workout. Idempotent; only rows whose link changed are written. */
 export function linkDuplicates(database: Database): void {
   const rows = database
-    .query<Candidate & { duplicate_of: string | null }, []>("SELECT id, activity, started_at, ended_at, energy, distance, duplicate_of FROM workouts")
+    .query<Candidate & { duplicate_of: string | null }, []>("SELECT id, activity, started_at, ended_at, energy, distance, source_bundle, duplicate_of FROM workouts")
     .all();
   const duplicates = findDuplicates(rows);
   const update = database.query("UPDATE workouts SET duplicate_of = ? WHERE id = ?");

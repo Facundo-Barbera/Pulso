@@ -10,9 +10,7 @@ import { listDailyMetrics, readinessFor } from "../daily/store";
 import { localNow } from "../medication/schedule";
 import { medicationDay } from "../medication/store";
 import { listSleepNights, sleepSummary } from "../sleep/store";
-import { volumeOf } from "../training/segments";
-import { listSessions } from "../training/store";
-import { listWorkouts } from "../workouts";
+import { recentActivity as mergedActivity } from "../workouts-merge";
 
 export type RecentActivity = {
   id: string;
@@ -23,6 +21,8 @@ export type RecentActivity = {
   endedAt: number;
   /** Spanish, e.g. "18 series · 6.240 kg" */
   detail: string | null;
+  /** a session with Apple Watch workouts merged in */
+  merged: boolean;
 };
 
 export type TodayOverview = {
@@ -47,39 +47,19 @@ export type TodayOverview = {
 export const TREND_DAYS = 14;
 const RECENT = 5;
 
-const ACTIVITY_ES: Record<string, string> = {
-  running: "Carrera",
-  walking: "Caminata",
-  hiking: "Senderismo",
-  cycling: "Ciclismo",
-  swimming: "Natación",
-  strength: "Fuerza",
-  functional_strength: "Fuerza funcional",
-  hiit: "HIIT",
-  yoga: "Yoga",
-  rowing: "Remo",
-  elliptical: "Elíptica",
-  core: "Core",
-  flexibility: "Flexibilidad",
-  cross_training: "Entrenamiento cruzado",
-  soccer: "Fútbol",
-};
-
-export const activityLabel = (activity: string) => ACTIVITY_ES[activity] ?? "Entrenamiento";
+export { activityLabel } from "../workouts-merge";
 
 const number = new Intl.NumberFormat("es");
 
+/** Sessions (with what the Watch recorded during them merged in) and Health workouts on their own: each workout once. */
 export function recentActivity(limit = RECENT): RecentActivity[] {
-  const sessions: RecentActivity[] = listSessions(limit).map((s) => {
-    const volume = s.sets.reduce((sum, set) => sum + volumeOf(set), 0);
-    const parts = [`${s.sets.length} ${s.sets.length === 1 ? "serie" : "series"}`, volume > 0 ? `${number.format(Math.round(volume))} kg` : null];
-    return { id: s.id, kind: "session", title: s.name, startedAt: s.startedAt, endedAt: s.endedAt, detail: parts.filter(Boolean).join(" · ") };
+  return mergedActivity(limit).map((a) => {
+    const parts =
+      a.kind === "session"
+        ? [`${a.sets} ${a.sets === 1 ? "serie" : "series"}`, a.volumeKg ? `${number.format(a.volumeKg)} kg` : null, a.merged && a.energy != null ? `${Math.round(a.energy)} kcal` : null]
+        : [a.energy != null ? `${Math.round(a.energy)} kcal` : null, a.distance != null ? `${number.format(Math.round(a.distance / 10) / 100)} km` : null];
+    return { id: a.id, kind: a.kind, title: a.title, startedAt: a.startedAt, endedAt: a.endedAt, detail: parts.filter(Boolean).join(" · ") || null, merged: a.merged };
   });
-  const workouts: RecentActivity[] = listWorkouts(limit).map((w) => {
-    const parts = [w.energy != null ? `${Math.round(w.energy)} kcal` : null, w.distance != null && w.distance > 0 ? `${number.format(Math.round(w.distance / 10) / 100)} km` : null];
-    return { id: w.id, kind: "workout", title: activityLabel(w.activity), startedAt: w.startedAt, endedAt: w.endedAt, detail: parts.filter(Boolean).join(" · ") || null };
-  });
-  return [...sessions, ...workouts].sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }
 
 export function todayOverview(now = new Date()): TodayOverview {

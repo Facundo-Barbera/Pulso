@@ -110,6 +110,7 @@ export function Weeks({ blocks, sessions, nextDayId, canEdit }: { blocks: Traini
             linkable={block.active}
             open={open === d.dayId ? (d.sessions.at(-1) && sessions[d.sessions.at(-1)!.id]) || null : null}
             toggle={() => setOpen(open === d.dayId ? null : d.dayId)}
+            canEdit={canEdit}
           />
         ))}
       </ul>
@@ -153,7 +154,7 @@ function StepButton({ label, disabled, onClick, children }: { label: string; dis
 }
 
 /** "Hecho · jue 1 oct · 41 min · 10 series", "Siguiente", "No se hizo". */
-function DayRow({ number, day, week, isNext, linkable, open, toggle }: { number: number; day: WeekDay; week: ProgramWeek; isNext: boolean; linkable: boolean; open: HistoryEntry | null; toggle: () => void }) {
+function DayRow({ number, day, week, isNext, linkable, open, toggle, canEdit }: { number: number; day: WeekDay; week: ProgramWeek; isNext: boolean; linkable: boolean; open: HistoryEntry | null; toggle: () => void; canEdit: boolean }) {
   const last = day.sessions.at(-1);
   const isDone = day.status === "done" || day.status === "partial";
   const subtitle = isDone && last
@@ -190,7 +191,7 @@ function DayRow({ number, day, week, isNext, linkable, open, toggle }: { number:
           </button>
           {open && (
             <div className="pb-4 pl-11">
-              <SessionDetail entry={open} />
+              <SessionDetail entry={open} canEdit={canEdit} />
             </div>
           )}
         </>

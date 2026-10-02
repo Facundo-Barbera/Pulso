@@ -18,8 +18,10 @@ final class TodayStore {
     /// When the engine last answered, for the "actualizado hace…" line.
     private(set) var updatedAt: Date?
 
-    /// Workouts with duplicates from two recording apps merged.
-    var workouts: [Workout] { WorkoutMerge.merged(PulsoModel.shared.workouts) }
+    /// What was trained, each workout once: the engine's merged list, or (an older engine) Health workouts with duplicates merged here.
+    var recent: [ActivityEntry] {
+        PulsoModel.shared.activity ?? WorkoutMerge.merged(PulsoModel.shared.workouts).map(ActivityEntry.init(workout:))
+    }
 
     var today: DailyMetrics? { days.last { $0.date == (readiness?.date ?? DayKey.string(.now)) } }
 

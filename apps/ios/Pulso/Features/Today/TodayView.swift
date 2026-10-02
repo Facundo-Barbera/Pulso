@@ -16,7 +16,7 @@ struct TodayView: View {
                 ActivityCard(day: store.today)
                 SleepCard(day: store.today, onSync: sync) { SleepView(model: model) }
                 TrendsCard(store: store)
-                RecentWorkoutsCard(workouts: store.workouts, onSync: sync)
+                RecentWorkoutsCard(entries: store.recent, onSync: sync)
             }
             .padding(.horizontal)
             .padding(.bottom, 32)
