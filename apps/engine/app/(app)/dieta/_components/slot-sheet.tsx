@@ -1,7 +1,7 @@
 "use client";
 
 import type { Macros, PlanItem, Recipe } from "@pulso/contract";
-import { Clock, Users } from "lucide-react";
+import { ChevronRight, Clock, Users } from "lucide-react";
 import { useState } from "react";
 import type { DietaEntry } from "@/src/web/dieta";
 import type { SlotView } from "@/src/web/dieta-plan";
@@ -107,7 +107,7 @@ export function SlotSheet({ slot, recipe, entries = [], onClose }: { slot: SlotV
     <Sheet
       open={open}
       onClose={close}
-      title={slot.label}
+      title={slot.real?.label ?? slot.label}
       footer={
         slot.status === "planned" ? (
           <>
@@ -148,15 +148,7 @@ export function SlotSheet({ slot, recipe, entries = [], onClose }: { slot: SlotV
           {slot.source && ` · ${slot.source}`}
           {(slot.status !== "planned" || slot.missed) && <span className="text-foreground font-medium"> · {statusLabel(slot)}</span>}
         </p>
-        {slot.real && !slot.real.asPlanned && (
-          <div className="bg-body/10 rounded-xl px-4 py-3">
-            <p className="text-muted-foreground text-[12px]">Comiste</p>
-            <p className="text-[15px] font-semibold">{slot.real.label}</p>
-            <p className="text-muted-foreground tabular mt-0.5 text-[13px]">
-              {fmt(Math.round(slot.real.macros.kcal))} kcal · {fmt(Math.round(slot.real.macros.protein))} g proteína · planeado {fmt(slot.kcal)} kcal
-            </p>
-          </div>
-        )}
+        {slot.real && <MacroLine macros={slot.real.macros} />}
         {entries.length > 0 && (
           <ul className="-mx-2 -mt-2">
             {byDish(entries).map(({ dish, entries: parts }) => {
@@ -177,19 +169,35 @@ export function SlotSheet({ slot, recipe, entries = [], onClose }: { slot: SlotV
             })}
           </ul>
         )}
-        {slot.real && !slot.real.asPlanned && <p className="text-muted-foreground -mb-2 text-[12px] font-medium">Lo planeado</p>}
         {slot.note && <p className="text-muted-foreground text-[13px] italic">«{slot.note}»</p>}
-        {slot.adjusted && <p className="text-training text-[13px] font-medium">Porciones ajustadas por el Coach para hoy.</p>}
-        {recipe ? (
-          <>
-            {slot.portions !== null && slot.portions !== 1 && <p className="text-[14px]">Te toca {fmt(slot.portions)} porciones.</p>}
-            <RecipeDetail recipe={recipe} portions={slot.portions ?? 1} />
-            <SaveRecipeAsDish recipe={recipe} />
-          </>
+        {slot.real ? (
+          // Eaten: what it was is above, once; the plan behind it stays folded.
+          !slot.real.asPlanned && (
+            <details className="group/plan">
+              <summary className="text-muted-foreground hover:text-foreground flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium [&::-webkit-details-marker]:hidden">
+                Planeado: {slot.label} · <span className="tabular">{fmt(Math.round(slot.macros.kcal))} kcal</span>
+                <ChevronRight className="size-3.5 transition-transform group-open/plan:rotate-90" aria-hidden />
+              </summary>
+              <div className="mt-2 opacity-80">
+                <ItemList items={items.map((i) => ({ name: i.name, kcal: i.kcal, amount: fmtAmount(null, i.quantity, i.unit) }))} />
+              </div>
+            </details>
+          )
         ) : (
           <>
-            <MacroLine macros={slot.macros} />
-            <ItemList items={items.map((i) => ({ name: i.name, kcal: i.kcal, amount: fmtAmount(null, i.quantity, i.unit) }))} />
+            {slot.adjusted && <p className="text-training text-[13px] font-medium">Porciones ajustadas por el Coach para hoy.</p>}
+            {recipe ? (
+              <>
+                {slot.portions !== null && slot.portions !== 1 && <p className="text-[14px]">Te toca {fmt(slot.portions)} porciones.</p>}
+                <RecipeDetail recipe={recipe} portions={slot.portions ?? 1} />
+                <SaveRecipeAsDish recipe={recipe} />
+              </>
+            ) : (
+              <>
+                <MacroLine macros={slot.macros} />
+                <ItemList items={items.map((i) => ({ name: i.name, kcal: i.kcal, amount: fmtAmount(null, i.quantity, i.unit) }))} />
+              </>
+            )}
           </>
         )}
       </div>
@@ -205,7 +213,14 @@ export function SlotList({ slots, recipes, entries = [], showTitle = true }: { s
     <>
       <ul className="-mx-2">
         {slots.map((slot) => (
-          <SlotRow key={slot.id} slot={slot} showTitle={showTitle} onOpen={() => setShown({ slot, key: Date.now() })} />
+          <SlotRow
+            key={slot.id}
+            slot={slot}
+            showTitle={showTitle}
+            time={entries.find((e) => slot.real?.entryIds.includes(e.id))?.time}
+            moveTargets={entries.length ? slots.filter((s) => s.id !== slot.id) : []}
+            onOpen={() => setShown({ slot, key: Date.now() })}
+          />
         ))}
       </ul>
       {shown && (

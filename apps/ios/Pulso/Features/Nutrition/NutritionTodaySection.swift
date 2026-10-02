@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Dieta · Hoy: the macro hero, water in one row, then one «Hoy» timeline: each
-/// planned meal as Planeado → Real with quick changes, and the day's extras under
-/// it. Without a plan, what was eaten is the timeline.
+/// Dieta · Hoy: the macro hero, water in one row, then the day's meals down a
+/// timeline, folded to a line each, then the extras in their own compact card.
+/// Without a plan, what was eaten is the timeline.
 struct NutritionTodaySection: View {
     let day: NutritionDay
     let store: NutritionStore
@@ -14,6 +14,8 @@ struct NutritionTodaySection: View {
     /// Opens the Coach with this text waiting in the composer.
     let draftForCoach: (String) -> Void
     var onAction: (SlotAction, PlanSlot) -> Void = { _, _ in }
+    /// Ties entries to another meal of the day (a plan change with its undo).
+    var onMove: ([MealEntry], PlanSlot) -> Void = { _, _ in }
 
     private var planDay: DietDay? { store.planDay.flatMap { $0.slots.isEmpty ? nil : $0 } }
     /// Entries not tied to one of today's slots: snacks and drinks between meals.
@@ -43,8 +45,11 @@ struct NutritionTodaySection: View {
             )
         }
         if let planDay {
-            TodayPlanCard(day: planDay, horizon: store.horizon, meals: day.meals, extras: extras, showPlan: showPlan, onAction: onAction) { meal in
-                Task { await store.delete(meal) }
+            TodayPlanCard(day: planDay, horizon: store.horizon, meals: day.meals, showPlan: showPlan, onAction: onAction, onMove: onMove) {
+                delete($0)
+            }
+            if !extras.isEmpty {
+                ExtrasCard(extras: extras, moveTargets: planDay.slots, onMove: onMove) { delete($0) }
             }
         } else if !extras.isEmpty {
             MealTimeline(meals: extras) { meal in
@@ -53,6 +58,10 @@ struct NutritionTodaySection: View {
         } else {
             emptyDay
         }
+    }
+
+    private func delete(_ meals: [MealEntry]) {
+        Task { await store.deleteMeals(meals.map(\.id)) }
     }
 
     /// Symbol, one line, one action: telling the Coach today, copying the day before on a past day.
@@ -77,57 +86,134 @@ struct NutritionTodaySection: View {
     }
 }
 
-/// The day in one card: each planned meal as Planeado → Real, then the extras.
+/// The day's planned meals down a timeline, one line each until opened. The title
+/// carries real against planned kcal and is the way to Plan.
 private struct TodayPlanCard: View {
     let day: DietDay
     let horizon: DietHorizon?
     let meals: [MealEntry]
-    var extras: [MealEntry] = []
     let showPlan: () -> Void
     let onAction: (SlotAction, PlanSlot) -> Void
-    let onDelete: (MealEntry) -> Void
+    let onMove: ([MealEntry], PlanSlot) -> Void
+    let onDelete: ([MealEntry]) -> Void
 
     var body: some View {
         Card {
-            Button(action: showPlan) {
-                HStack {
-                    CardTitle(text: "Hoy", systemImage: "list.bullet.clipboard")
-                    Spacer(minLength: 4)
-                    totals
-                        .font(.caption.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .contentTransition(.numericText())
-                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                CardTitle(text: "Comidas", systemImage: "fork.knife")
+                Spacer(minLength: 4)
+                Button(action: showPlan) {
+                    HStack(spacing: 3) {
+                        totals.monospacedDigit().contentTransition(.numericText())
+                        Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                    }
+                    .font(.caption.weight(.semibold)).fontDesign(.rounded)
+                    .contentShape(.rect)
                 }
-                .contentShape(.rect)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityHint("Abre el plan")
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Abre el plan")
+            .lineLimit(1)
+            .padding(.bottom, 4)
             VStack(spacing: 0) {
                 ForEach(day.slots) { slot in
+                    let entries = meals.filter { $0.slotId == slot.id }
                     PlanSlotRow(slot: slot, source: horizon?.source(of: slot), recipeId: horizon?.recipeId(of: slot),
-                                entries: meals.filter { $0.slotId == slot.id }, isLast: slot.id == day.slots.last?.id,
-                                onAction: { onAction($0, slot) }, onDeleteEntry: onDelete)
-                }
-            }
-            if !extras.isEmpty {
-                Divider().padding(.vertical, 2)
-                Text("EXTRAS").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(.secondary)
-                VStack(spacing: 0) {
-                    LoggedList(meals: extras.sorted { $0.eatenAt < $1.eatenAt }, onDelete: onDelete)
+                                entries: entries, isLast: slot.id == day.slots.last?.id,
+                                moveTargets: day.slots.filter { $0.id != slot.id },
+                                onAction: { onAction($0, slot) }, onDeleteEntry: { onDelete([$0]) },
+                                onMove: { onMove(entries, $0) }, onDeleteAll: { onDelete(entries) })
                 }
             }
         }
     }
 
-    /// "1.334 real · 1.878 planeado"; the pending count from an older Mac without totals.
-    @ViewBuilder private var totals: some View {
+    /// "1.525 de 1.925 kcal"; how many are left from an older Mac without totals.
+    private var totals: Text {
         if let real = day.real, let planned = day.asPlanned {
-            Text("\(Int(real.kcal)) real · \(Int(planned.kcal)) planeado")
-        } else {
-            Text(day.pending == 0 ? "Resuelto" : "\(day.pending) \(day.pending == 1 ? "pendiente" : "pendientes")")
+            return Text("\(Int(real.kcal).formatted()) de \(Int(planned.kcal).formatted()) kcal")
         }
+        return Text(day.pending == 0 ? "Resuelto" : "\(day.pending) \(day.pending == 1 ? "pendiente" : "pendientes")")
+    }
+}
+
+/// What was eaten outside the plan's meals, compact: name, time and amount, kcal.
+/// Long-press one to move it into a meal or change its amount; swipe to delete.
+private struct ExtrasCard: View {
+    let extras: [MealEntry]
+    let moveTargets: [PlanSlot]
+    let onMove: ([MealEntry], PlanSlot) -> Void
+    let onDelete: ([MealEntry]) -> Void
+    @Environment(\.dishActions) private var dishActions
+    @State private var editing: MealEntry?
+
+    private var items: [LoggedItem] { LoggedItem.group(extras.sorted { $0.eatenAt < $1.eatenAt }) }
+    private var kcal: Double { extras.reduce(0) { $0 + $1.kcal } }
+
+    var body: some View {
+        Card {
+            HStack(alignment: .firstTextBaseline) {
+                CardTitle(text: "Extras", systemImage: "cup.and.saucer")
+                Spacer(minLength: 4)
+                Text("\(Int(kcal).formatted()) kcal")
+                    .font(.caption.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText(value: kcal))
+            }
+            .lineLimit(1)
+            VStack(spacing: 0) {
+                ForEach(items) { item in
+                    switch item {
+                    case .food(let meal):
+                        SwipeToDelete(onDelete: { onDelete([meal]) }, actions: actions(for: meal)) { ExtraRow(meal: meal) }
+                    case .dish(let dish, let parts):
+                        DishRow(dish: dish, parts: parts) { onDelete([$0]) }
+                    }
+                    if item.id != items.last?.id { Divider() }
+                }
+            }
+        }
+        .sheet(item: $editing) { meal in
+            ComponentAmountSheet(meal: meal) { factor in await dishActions.update(meal, factor) }
+                .presentationDetents([.medium])
+        }
+    }
+
+    private func actions(for meal: MealEntry) -> [RowAction] {
+        [RowAction(title: "Cambiar la cantidad", systemImage: "slider.horizontal.3") { editing = meal }]
+            + moveTargets.map { slot in
+                RowAction(title: "Mover a \(slot.slot.title.lowercased())", systemImage: slot.slot.systemImage) { onMove([meal], slot) }
+            }
+    }
+}
+
+/// "Coca-Cola Zero / 17:30 · 355 ml" and its kcal.
+private struct ExtraRow: View {
+    let meal: MealEntry
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(meal.name).font(.subheadline).lineLimit(2)
+                HStack(spacing: 4) {
+                    Text(Date(timeIntervalSince1970: meal.eatenAt / 1000), format: .dateTime.hour().minute())
+                    Text("·")
+                    Text(foodAmountText(meal.quantity, meal.unit, measure: meal.measure))
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text("\(Int(meal.kcal).formatted()) kcal")
+                .font(.subheadline.weight(.semibold).monospacedDigit()).fontDesign(.rounded)
+                .contentTransition(.numericText(value: meal.kcal))
+                .layoutPriority(1)
+        }
+        .padding(.vertical, 8)
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -381,9 +467,18 @@ struct MealRow: View {
     }
 }
 
-/// Swipe left to reveal a delete button; long-press offers it too.
+/// One more thing a row's long-press offers, next to Eliminar.
+struct RowAction: Identifiable {
+    let title: String
+    let systemImage: String
+    let run: () -> Void
+    var id: String { title }
+}
+
+/// Swipe left to reveal a delete button; long-press offers it too, after `actions`.
 struct SwipeToDelete<Content: View>: View {
     let onDelete: () -> Void
+    var actions: [RowAction] = []
     @ViewBuilder var content: Content
     @State private var offset: CGFloat = 0
     private let reveal: CGFloat = 76
@@ -416,6 +511,7 @@ struct SwipeToDelete<Content: View>: View {
                 )
         }
         .contextMenu {
+            ForEach(actions) { Button($0.title, systemImage: $0.systemImage, action: $0.run) }
             Button("Eliminar", systemImage: "trash", role: .destructive, action: onDelete)
         }
         .sensoryFeedback(.impact(weight: .light), trigger: offset == -reveal)
@@ -456,18 +552,101 @@ private let previewWater = WaterDay(date: "2026-10-01", totalMl: 250, goalMl: 37
     }
 }
 
-#Preview("Hoy · plan · 375 pt · XXL") {
-    NarrowPreview(dynamicType: .xxLarge) {
-        Card { MacroHero(summary: previewNutritionSummary) {} }
-        TodayPlanCard(day: previewHorizon.days[0], horizon: previewHorizon, meals: [], extras: Array(previewMeals.suffix(2)), showPlan: {},
-                      onAction: { _, _ in }) { _ in }
+// A day like a real one: breakfast and lunch changed, the snack as planned, dinner pending, two extras.
+
+private func previewTime(_ hour: Int, _ minute: Int) -> Double {
+    let base = NutritionDate.date("2026-10-01")!
+    return (base.addingTimeInterval(Double(hour * 3600 + minute * 60)).timeIntervalSince1970 * 1000).rounded()
+}
+
+private func previewItem(_ id: String, _ name: String, _ quantity: Double, _ unit: FoodUnit, _ kcal: Double) -> DietPlanItem {
+    DietPlanItem(id: id, name: name, quantity: quantity, unit: unit, kcal: kcal, protein: kcal * 0.07, carbs: kcal * 0.1, fat: kcal * 0.03, fiber: 2)
+}
+
+private func previewEntry(_ id: String, _ slotId: String?, _ slot: MealSlot, _ name: String, _ quantity: Double, _ unit: FoodUnit,
+                          _ kcal: Double, _ p: Double, _ c: Double, _ f: Double, at time: Double, dish: DishRef? = nil,
+                          measure: Measure? = nil) -> MealEntry {
+    MealEntry(id: id, date: "2026-10-01", eatenAt: time, slot: slot, name: name, quantity: quantity, unit: unit, kcal: kcal,
+              protein: p, carbs: c, fat: f, fiber: 1, source: "manual", slotId: slotId, measure: measure, dish: dish)
+}
+
+private let tortitas = DishRef(id: "d1", name: "Tortitas de carne con queso y arroz", savedDishId: nil)
+
+private let previewDayMeals = [
+    previewEntry("e1", "t1", .desayuno, "Vualá Big relleno de chocolate", 75, .g, 369, 5, 41, 21, at: previewTime(11, 11),
+                 measure: Measure(amount: 1, unit: .unidad)),
+    previewEntry("e2", nil, .snack, "Coca-Cola Zero", 355, .ml, 1, 0, 0, 0, at: previewTime(12, 30)),
+    previewEntry("e3", "t2", .comida, "Tortitas de carne de res", 160, .g, 390, 32, 2, 28, at: previewTime(14, 41), dish: tortitas),
+    previewEntry("e4", "t2", .comida, "Queso amarillo", 40, .g, 150, 9, 1, 12, at: previewTime(14, 41), dish: tortitas),
+    previewEntry("e5", "t2", .comida, "Arroz blanco", 180, .g, 230, 4, 50, 1, at: previewTime(14, 41), dish: tortitas),
+    previewEntry("e6", "t3", .merienda, "Proteína whey", 30, .g, 120, 24, 3, 2, at: previewTime(17, 6)),
+    previewEntry("e7", "t3", .merienda, "Fresas", 150, .g, 48, 1, 11, 0, at: previewTime(17, 6)),
+    previewEntry("e8", "t3", .merienda, "Leche descremada", 250, .ml, 179, 17, 25, 1, at: previewTime(17, 6)),
+    previewEntry("e9", nil, .snack, "Coca-Cola Zero", 355, .ml, 1, 0, 0, 0, at: previewTime(18, 40)),
+]
+
+private func previewReal(_ ids: [String], label: String, asPlanned: Bool) -> RealMeal {
+    let parts = previewDayMeals.filter { ids.contains($0.id) }
+    return RealMeal(label: label, entryIds: ids,
+                    macros: NutritionMacros(kcal: parts.reduce(0) { $0 + $1.kcal }, protein: parts.reduce(0) { $0 + $1.protein },
+                                            carbs: parts.reduce(0) { $0 + $1.carbs }, fat: parts.reduce(0) { $0 + $1.fat }, fiber: 3),
+                    eatenAt: parts.first?.eatenAt ?? 0, asPlanned: asPlanned)
+}
+
+private let previewDaySlots = [
+    PlanSlot(id: "t1", date: "2026-10-01", slot: .desayuno, kind: .items, name: "Sándwich de huevo y pavo", items: [
+        previewItem("a", "Pan integral", 60, .g, 150), previewItem("b", "Huevos enteros", 100, .g, 143),
+        previewItem("c", "Jamón de pavo", 60, .g, 66), previewItem("d", "Queso panela", 30, .g, 75),
+    ], macros: NutritionMacros(kcal: 434, protein: 33, carbs: 26, fat: 20, fiber: 4), status: .replaced, entryIds: ["e1"],
+             real: previewReal(["e1"], label: "Vualá Big relleno de chocolate", asPlanned: false)),
+    PlanSlot(id: "t2", date: "2026-10-01", slot: .comida, kind: .recipe, name: "Pasta boloñesa", recipeId: "r1", items: [
+        previewItem("e", "Pasta boloñesa", 1, .serving, 640),
+    ], macros: NutritionMacros(kcal: 640, protein: 38, carbs: 78, fat: 18, fiber: 6), status: .replaced, entryIds: ["e3", "e4", "e5"],
+             cookMinutes: 30, real: previewReal(["e3", "e4", "e5"], label: tortitas.name, asPlanned: false)),
+    PlanSlot(id: "t3", date: "2026-10-01", slot: .merienda, kind: .items, name: "Batido de proteína con fresas", items: [
+        previewItem("f", "Proteína whey", 30, .g, 120), previewItem("g", "Fresas", 150, .g, 48), previewItem("h", "Leche descremada", 250, .ml, 179),
+    ], macros: NutritionMacros(kcal: 347, protein: 42, carbs: 39, fat: 3, fiber: 3), status: .eaten, entryIds: ["e6", "e7", "e8"],
+             real: previewReal(["e6", "e7", "e8"], label: "Batido de proteína con fresas", asPlanned: true)),
+    PlanSlot(id: "t4", date: "2026-10-01", slot: .cena, kind: .items, name: "Quesadillas de pollo", items: [
+        previewItem("i", "Tortillas de maíz", 3, .serving, 180), previewItem("j", "Pechuga de pollo", 120, .g, 198),
+        previewItem("k", "Queso Oaxaca", 40, .g, 155),
+    ], macros: NutritionMacros(kcal: 533, protein: 44, carbs: 40, fat: 20, fiber: 5), status: .planned, entryIds: []),
+]
+
+private let previewPlanDay = DietDay(date: "2026-10-01", label: "Día A", slots: previewDaySlots,
+                                     planned: NutritionMacros(kcal: 1_954, protein: 157, carbs: 183, fat: 61, fiber: 18),
+                                     shiftKcal: 0, goalKcal: 2_000,
+                                     asPlanned: NutritionMacros(kcal: 1_925, protein: 150, carbs: 180, fat: 60, fiber: 18),
+                                     real: NutritionMacros(kcal: 1_525, protein: 92, carbs: 133, fat: 65, fiber: 10),
+                                     extraIds: ["e2", "e9"])
+
+/// Hoy with a plan as the screen lays it out: hero with water, the meals, the extras.
+private struct PreviewPlanDay: View {
+    var body: some View {
+        let summary = NutritionSummary(date: "2026-10-01", totals: previewPlanDay.real!, targets: previewNutritionSummary.targets,
+                                       remaining: nil, bySlot: [:], entries: previewDayMeals.count)
+        Card { MacroHero(summary: summary) {}.padding(.vertical, 6) }
+        WaterCard(water: previewWater, onAdd: { _ in }, onUndo: {}, onCustom: {}, onSettings: {}, onShowEntries: {})
+        TodayPlanCard(day: previewPlanDay, horizon: nil, meals: previewDayMeals, showPlan: {}, onAction: { _, _ in },
+                      onMove: { _, _ in }) { _ in }
+        ExtrasCard(extras: previewDayMeals.filter { $0.slotId == nil }, moveTargets: previewDaySlots, onMove: { _, _ in }) { _ in }
     }
 }
 
-#Preview("Hoy · plan · claro") {
-    NarrowPreview {
-        TodayPlanCard(day: previewHorizon.days[0], horizon: previewHorizon, meals: [], showPlan: {}, onAction: { _, _ in }) { _ in }
+#Preview("Hoy · plan") {
+    NarrowPreview { PreviewPlanDay() }
+}
+
+#Preview("Hoy · plan · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) { PreviewPlanDay() }
+}
+
+#Preview("Hoy · plan · 440 pt · claro") {
+    ScrollView {
+        VStack(spacing: 16) { PreviewPlanDay() }.padding()
     }
+    .frame(width: 440)
+    .background(Color(.systemGroupedBackground))
     .preferredColorScheme(.light)
 }
 
