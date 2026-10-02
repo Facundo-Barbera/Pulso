@@ -4,7 +4,7 @@ import type { AgentMessage, AgentProduct, AgentThread, CoachBrief } from "@pulso
 import { useSyncExternalStore } from "react";
 import type { CoachThreadView } from "@/src/web/coach";
 import { rememberLocal, type Photo } from "./photos";
-import { applyEvent, readEvents } from "./stream";
+import { applyEvent, keepIds, readEvents } from "./stream";
 
 /**
  * The web Coach's client state, outside React like iOS's ChatStore: one live
@@ -118,10 +118,11 @@ export class Chat {
   }
 
   private take(view: CoachThreadView, silent = false) {
-    const last = view.messages.at(-1);
+    const saved = keepIds(this.state.messages, view.messages);
+    const last = saved.at(-1);
     const attach = view.running && last?.role === "assistant" && last.status === "streaming";
     // The re-attached stream replays the turn from its start.
-    const messages = attach ? [...view.messages.slice(0, -1), { ...last, text: "", tools: [] }] : view.messages;
+    const messages = attach ? [...saved.slice(0, -1), { ...last, text: "", tools: [] }] : saved;
     this.pendingAttach = attach;
     this.set({ title: view.thread.title, messages, loaded: true, streaming: attach }, silent);
   }
@@ -215,13 +216,14 @@ export class Chat {
         continue;
       }
       const view = (await detail.json()) as CoachThreadView;
-      const last = view.messages.at(-1);
+      const saved = keepIds(this.state.messages, view.messages);
+      const last = saved.at(-1);
       if (!view.running || last?.status !== "streaming") {
-        this.set({ title: view.thread.title, messages: view.messages });
+        this.set({ title: view.thread.title, messages: saved });
         finished = true;
         break;
       }
-      this.set({ title: view.thread.title, messages: [...view.messages.slice(0, -1), { ...last, text: "", tools: [] }] });
+      this.set({ title: view.thread.title, messages: [...saved.slice(0, -1), { ...last, text: "", tools: [] }] });
       attempts = 0;
       request = () => fetch(`${API}/threads/${id}/turn`, { cache: "no-store" });
     }

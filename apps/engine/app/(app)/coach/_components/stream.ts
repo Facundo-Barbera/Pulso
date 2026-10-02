@@ -22,6 +22,18 @@ export async function* readEvents(body: ReadableStream<Uint8Array>): AsyncGenera
   }
 }
 
+/**
+ * The saved conversation, keeping the ids of rows already on screen. A local
+ * placeholder and the message the Mac saved for it are the same row, matched by
+ * position and role, so re-reading the thread never re-keys (remounts) the list.
+ */
+export function keepIds(shown: AgentMessage[], saved: AgentMessage[]): AgentMessage[] {
+  return saved.map((message, i) => {
+    const row = shown[i];
+    return row && row.role === message.role && row.id.startsWith("local-") ? { ...message, id: row.id } : message;
+  });
+}
+
 /** One event applied to the reply being written: a new message, never a mutation (React state). */
 export function applyEvent(message: AgentMessage, event: AgentStreamEvent): AgentMessage {
   switch (event.type) {

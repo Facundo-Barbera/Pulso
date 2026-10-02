@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { AgentMessage, AgentStreamEvent } from "@pulso/contract";
-import { applyEvent, readEvents } from "./stream";
+import { applyEvent, keepIds, readEvents } from "./stream";
 import { toolLook } from "./tools";
 
 function body(chunks: string[]): ReadableStream<Uint8Array> {
@@ -45,4 +45,24 @@ test("tools read in the person's words", () => {
   expect(toolLook("plan_training_week").label).toBe("Actualizando tu entrenamiento");
   expect(toolLook("WebSearch").label).toBe("Buscando en la web");
   expect(toolLook("something_new").label).toBe("Consultando tus datos");
+});
+
+const message = (id: string, role: AgentMessage["role"], text = ""): AgentMessage => ({
+  id, threadId: "t", role, text, attachments: [], products: [], tools: [], status: "done", error: null, createdAt: 0,
+});
+
+test("a re-read thread keeps the local placeholders' ids for what the Mac saved", () => {
+  const shown = [message("m1", "user"), message("m2", "assistant"), message("local-a", "user", "hola"), message("local-b", "assistant")];
+  const saved = [message("m1", "user"), message("m2", "assistant"), message("m3", "user", "hola"), message("m4", "assistant", "¡Hola!")];
+  const kept = keepIds(shown, saved);
+  expect(kept.map((m) => m.id)).toEqual(["m1", "m2", "local-a", "local-b"]);
+  // Everything else is the Mac's.
+  expect(kept.at(-1)?.text).toBe("¡Hola!");
+});
+
+test("a re-read thread takes the server's ids where the rows don't line up", () => {
+  // A send the Mac never saved: nothing to keep.
+  expect(keepIds([message("m1", "user"), message("local-a", "assistant")], [message("m1", "user")]).map((m) => m.id)).toEqual(["m1"]);
+  expect(keepIds([message("local-a", "assistant")], [message("m1", "user"), message("m2", "assistant")]).map((m) => m.id)).toEqual(["m1", "m2"]);
+  expect(keepIds([], [message("m1", "user")]).map((m) => m.id)).toEqual(["m1"]);
 });
