@@ -16,7 +16,7 @@ struct TodayItem: Identifiable, Equatable {
     var at: String?
     /// When it is due: "A las 9:00", "Con la comida · 14:00", "Después de entrenar", "Cuando haga falta".
     var when: String
-    /// How it stands: "Tomada a las 9:56", "Toca ahora", "Se pasó hace 2 h", "Toca el domingo"…
+    /// How it stands: "Tomada a las 9:56", "Toca ahora", "Se pasó hace 2 h", "próxima: dom 4 oct"…
     var line: String
     /// The slot to log against; nil for as-needed, extra intakes and days off.
     var slot: DoseSlot?
@@ -74,7 +74,7 @@ struct TodayItem: Identifiable, Equatable {
                 items.append(TodayItem(id: intake.id, medication: med, state: .tomada, at: at, when: "Fuera de horario", line: "Tomada a las \(LocalClock.display(at))", intakes: [intake]))
             }
             if own.isEmpty && intakes.isEmpty && !(med.endDate.map { date > $0 } ?? false) {
-                items.append(TodayItem(id: med.id, medication: med, state: .noToca, at: nil, when: med.schedule.line, line: offLine(med, date: date, calendar: calendar)))
+                items.append(TodayItem(id: med.id, medication: med, state: .noToca, at: nil, when: offWhen(med.schedule), line: offLine(med, date: date, calendar: calendar)))
             }
         }
         func rank(_ item: TodayItem) -> Int {
@@ -130,23 +130,52 @@ struct TodayItem: Identifiable, Equatable {
         return late <= dueNowMinutes ? (.ahora, "Toca ahora") : (.atrasada, "Se pasó hace \(gap(late))")
     }
 
+    /// When a med is due, read on a day it isn't: "Jueves · cualquier hora", "Después de entrenar", "Cada 3 días · 8:00".
+    private static func offWhen(_ schedule: MedicationSchedule) -> String {
+        let weekly = schedule.days.count == 1 && schedule.interval == nil && schedule.monthDay == nil
+        let frequency = weekly ? WeekdayNames.long(schedule.days[0]) : schedule.frequencyLine
+        let text = [frequency, schedule.summary.isEmpty ? nil : schedule.summary].compactMap { $0 }.joined(separator: " · ")
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+
+    /// Why not today, to follow `offWhen`: "hoy es descanso", "próxima: mañana", "próxima: jue 8 oct".
     private static func offLine(_ med: Medication, date: String, calendar: Calendar) -> String {
-        guard let today = LocalClock.day(date) else { return "Hoy no toca" }
+        guard let today = LocalClock.day(date) else { return "hoy no toca" }
         if let start = LocalClock.day(med.startDate), start > today {
-            return "Empieza el \(start.formatted(.dateTime.day().month(.wide)))"
+            return "empieza el \(start.formatted(.dateTime.day().month(.wide)))"
         }
         if !med.schedule.isDue(on: date) {
             // Monthly and every-N schedules can be weeks away; a year covers every frequency.
             let next = (1...366).lazy
                 .compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
                 .first { day in med.schedule.isDue(on: LocalClock.date(day)) && !(med.endDate.map { LocalClock.date(day) > $0 } ?? false) }
-            guard let next else { return "Hoy no toca" }
+            guard let next else { return "hoy no toca" }
             let offset = calendar.dateComponents([.day], from: today, to: next).day ?? 0
-            if offset == 1 { return "Toca mañana" }
-            return offset < 7 ? "Toca el \(WeekdayNames.names[LocalClock.isoWeekday(next, calendar: calendar) - 1])" : "Toca el \(next.formatted(.dateTime.day().month(.wide)))"
+            return offset == 1 ? "próxima: mañana" : "próxima: \(shortDay(next))"
         }
-        if let training = med.schedule.training, training.restDayTime == nil { return "Hoy descansas · solo los días de entreno" }
-        return "Hoy no toca"
+        if let training = med.schedule.training, training.restDayTime == nil { return "hoy es descanso" }
+        return "hoy no toca"
+    }
+
+    /// "jue 8 oct".
+    static func shortDay(_ day: Date) -> String {
+        "\(day.formatted(.dateTime.weekday(.abbreviated))) \(day.formatted(.dateTime.day().month(.abbreviated)))"
+    }
+
+    /// As-needed meds taken most days and not yet today, by name: the engine's daily
+    /// suggestions, plus any taken on `usualDays` of the last seven.
+    static let usualDays = 4
+    static func usual(_ items: [TodayItem], nudges: [ScheduleNudge], history: [DoseEvent], now: Date = .now, calendar: Calendar = .current) -> [String] {
+        let today = LocalClock.date(now)
+        let weekAgo = LocalClock.date(calendar.date(byAdding: .day, value: -7, to: now) ?? now)
+        let suggested = Set(nudges.filter { $0.cadence == .daily }.map(\.medicationId))
+        return items.filter { item in
+            guard item.state == .aDemanda, item.intakes.isEmpty else { return false }
+            if suggested.contains(item.medication.id) { return true }
+            let days = Set(history.filter { $0.medicationId == item.medication.id && $0.status == .tomada && $0.date >= weekAgo && $0.date < today }.map(\.date))
+            return days.count >= usualDays
+        }
+        .map(\.medication.name)
     }
 
     /// "ayer", "el domingo" (within the week), "el 12 de septiembre".

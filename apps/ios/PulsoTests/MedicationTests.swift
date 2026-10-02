@@ -243,10 +243,31 @@ final class MedicationTests: XCTestCase {
         let items = TodayItem.build(medications: meds, day: day, history: history, now: now, calendar: calendar)
         XCTAssertEqual(items.map(\.medication.name), ["Magnesio", "Levotiroxina", "Omega 3", "Zinc", "Semaglutida", "Creatina", "Hierro"])
         XCTAssertEqual(items.map(\.state), [.atrasada, .aDemanda, .ahora, .pendiente, .aDemanda, .noToca, .noToca])
-        XCTAssertEqual(items.map(\.line)[2...], ["Toca ahora", "En 3 h", "Última el domingo", "Hoy descansas · solo los días de entreno", "Toca el domingo"])
+        let sunday = TodayItem.shortDay(LocalClock.day("2026-10-04")!)
+        XCTAssertEqual(items.map(\.line)[2...], ["Toca ahora", "En 3 h", "Última el domingo", "hoy es descanso", "próxima: \(sunday)"])
+        XCTAssertEqual(items[5...].map(\.when), ["Después de entrenar", "Domingo · \(LocalClock.display("10:00"))"])
         XCTAssertEqual(items[0].line, "Se pasó hace 4 h")
         XCTAssertEqual(items[1].at, "09:56")
         XCTAssertEqual(items.filter(\.isLeft).map(\.medication.name), ["Magnesio", "Omega 3", "Zinc"])
+    }
+
+    func testUsualAsNeededMedsAreNamedUntilTaken() {
+        let today = "2026-10-02"
+        let now = at(today, "10:30")
+        let meds = [item("Levotiroxina", .asNeededOnly), item("Ibuprofeno", .asNeededOnly), item("Semaglutida", .asNeededOnly)]
+        let taken = { (id: String, date: String) in DoseEvent(id: "\(id)\(date)", medicationId: id, date: date, scheduledTime: nil, status: .tomada, takenAt: nil) }
+        let history = ["2026-09-26", "2026-09-28", "2026-09-30", "2026-10-01"].map { taken("Levotiroxina", $0) } + [taken("Ibuprofeno", "2026-09-30")]
+        let nudge = ScheduleNudge(medicationId: "Semaglutida", name: "Semaglutida", cadence: .weekly, title: "", detail: "", schedule: .asNeededOnly)
+        let items = TodayItem.build(medications: meds, day: nil, history: history, now: now, calendar: calendar)
+        XCTAssertEqual(TodayItem.usual(items, nudges: [nudge], history: history, now: now, calendar: calendar), ["Levotiroxina"])
+
+        // A daily suggestion counts on its own; a dose taken today takes it off.
+        var daily = nudge
+        daily.cadence = .daily
+        XCTAssertEqual(TodayItem.usual(items, nudges: [daily], history: history, now: now, calendar: calendar), ["Levotiroxina", "Semaglutida"])
+        let after = history + [DoseEvent(id: "now", medicationId: "Levotiroxina", date: today, scheduledTime: nil, status: .tomada, takenAt: now.timeIntervalSince1970 * 1000)]
+        let later = TodayItem.build(medications: meds, day: nil, history: after, now: now, calendar: calendar)
+        XCTAssertEqual(TodayItem.usual(later, nudges: [], history: after, now: now, calendar: calendar), [])
     }
 
     // MARK: Flexible schedules
@@ -339,7 +360,8 @@ final class MedicationTests: XCTestCase {
 
         let tomorrow = TodayItem.build(medications: [sema], day: MedicationDay(date: "2026-10-02", slots: [], asNeeded: [], next: nil), history: [],
                                        now: at("2026-10-02", "09:00"), calendar: calendar)
-        XCTAssertEqual(tomorrow.first?.line, "Toca el jueves")
+        XCTAssertEqual(tomorrow.first?.when, "Jueves · cualquier hora")
+        XCTAssertEqual(tomorrow.first?.line, "próxima: \(TodayItem.shortDay(LocalClock.day("2026-10-08")!))")
     }
 }
 
