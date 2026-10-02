@@ -24,7 +24,7 @@ app/
     admin/                Mac-only: pair codes, device list, revoke
     me/                   who is asking; DELETE forgets this browser
     hoy/                  TodayOverview as JSON
-    coach/                threads, turns (NDJSON), stop, briefs: the phone's runner, cookie-authed
+    coach/                the conversation (feed, turns as NDJSON, stop, contexts), briefs: the phone's runner, cookie-authed
 src/web/                  view assemblers: one function per page that reads the feature stores
 ```
 
@@ -69,7 +69,7 @@ src/web/                  view assemblers: one function per page that reads the 
 
 ## The Coach
 
-`coach/layout.tsx` keeps the thread list mounted beside the chat (on the phone, `/coach` is the list and a chat is its own page). `/coach/nuevo` is a new chat (`?q=` sends a prompt, `?responder=<brief id>` answers a brief); `/coach/<id>` a thread. The client state lives outside React in `_components/chat-store.ts`, one live chat per thread like iOS's `ChatStore`: a reply keeps streaming while the person moves around, and a reload re-attaches to the turn in flight (`GET …/turn`). Turns run in `src/agent/runner.ts`, the same as the phone's; stop is `DELETE …/turn`.
+`/coach` is the Coach's one conversation (`?q=` sends a prompt, `?responder=<brief id>` quotes a brief into it; old `/coach/nuevo` and `/coach/<id>` links redirect there). It is split into contexts, one SDK session each, with quiet dividers in the feed; the «Contexto» menu starts a new one or goes back (`src/agent/conversation.ts`). The client state lives outside React in `_components/chat-store.ts`, like iOS's `ConversationStore`: the latest page plus older ones loaded on scroll up, a reply that keeps streaming while the person moves around, and a reload that re-attaches to the turn in flight (`GET …/conversation/turn`). Turns run in `src/agent/runner.ts`, the same as the phone's; stop is `DELETE …/conversation/turn`. The hourly summary, transcript pruning and the one-time distillation of the old threads are in `src/agent/upkeep.ts`.
 
 ## Security
 
