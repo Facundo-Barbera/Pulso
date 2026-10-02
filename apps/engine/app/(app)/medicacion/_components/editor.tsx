@@ -1,9 +1,10 @@
 "use client";
 
 import { DAY_PART_RANGES, DEFAULT_ANY_TIME_REMINDER, type DayPart, type DoseMeal, type DoseWindow, type Medication, type MedicationInput, type MedicationKind, type MedicationSchedule } from "@pulso/contract";
-import { BedDouble, CalendarCheck, Clock, Dumbbell, Plus, Sun, Trash2, Utensils, X, type LucideIcon } from "lucide-react";
+import { BedDouble, CalendarCheck, CalendarClock, Clock, Dumbbell, Plus, Sun, Trash2, Utensils, X, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useContext, useState } from "react";
+import { readBack } from "@/src/web/read-back";
 import { cn } from "../../../_ui/cn";
 import { Button, Field, FieldGroup, inputClass, Segmented, Toggle, WeekdayPicker } from "../../../_ui/fields";
 import { send } from "../../../_ui/send";
@@ -72,7 +73,7 @@ type Draft = {
   everyUnit: "day" | "week";
   intervalStart: string;
   monthDay: number;
-  /** Which «¿A qué hora?» parts are on; their settings are kept while off so toggling back loses nothing. */
+  /** Which «¿Cuándo durante el día?» part is on: one, chosen fresh (`chooseTiming`); a schedule from the Coach may bring several. */
   useTimes: boolean;
   times: string[];
   useTraining: boolean;
@@ -129,7 +130,8 @@ const draftOf = (m: Medication | null, kind: MedicationKind, today: string): Dra
     useWindows: !!s?.windows.length,
     windows: s?.windows.length ? s.windows : [{ part: "manana", ...DAY_PART_RANGES.manana }],
     anyTime: s?.anyTime ?? false,
-    remind: s ? !s.anyTime || s.reminder !== null : true,
+    // Any time starts without a reminder: it is an optional nudge, not the dose's hour.
+    remind: !!s?.anyTime && s.reminder !== null,
     reminder: s?.reminder ?? DEFAULT_ANY_TIME_REMINDER,
     days: m?.schedule.days ?? [],
     startDate: m?.startDate ?? today,
@@ -178,6 +180,38 @@ function applyPreset(d: Draft, p: Preset): Draft {
   };
 }
 
+/** Step 2, «¿Cuándo durante el día?». */
+type Timing = "times" | "windows" | "anyTime" | "training" | "meals" | "bedtime";
+
+const TIMINGS: { value: Timing; label: string; icon: LucideIcon }[] = [
+  { value: "times", label: "A una hora", icon: Clock },
+  { value: "windows", label: "En la mañana…", icon: Sun },
+  { value: "anyTime", label: "Cualquier hora", icon: CalendarCheck },
+  { value: "training", label: "Después de entrenar", icon: Dumbbell },
+  { value: "meals", label: "Con una comida", icon: Utensils },
+  { value: "bedtime", label: "Antes de dormir", icon: BedDouble },
+];
+
+const timingOn = (d: Draft, t: Timing): boolean =>
+  ({ times: d.useTimes, windows: d.useWindows, anyTime: d.anyTime, training: d.useTraining, meals: d.useMeals, bedtime: d.bedtime })[t];
+
+const TIMING_KEYS = ["useTimes", "times", "useTraining", "withinMinutes", "restDay", "restDayTime", "useMeals", "meals", "bedtime", "useWindows", "windows", "anyTime", "remind", "reminder"] as const;
+
+/** Every timing setting back to a new medication's defaults (at a time, 09:00). */
+function freshTiming(d: Draft): Draft {
+  const fresh = draftOf(null, d.kind, d.startDate);
+  return { ...d, ...(Object.fromEntries(TIMING_KEYS.map((k) => [k, fresh[k]])) as Pick<Draft, (typeof TIMING_KEYS)[number]>) };
+}
+
+/** Picks one timing: the others go off and nothing of them is kept; the new one starts at its defaults. */
+function chooseTiming(d: Draft, t: Timing): Draft {
+  const base = timingOn(d, t) ? d : freshTiming(d);
+  return { ...base, useTimes: t === "times", useWindows: t === "windows", anyTime: t === "anyTime", useTraining: t === "training", useMeals: t === "meals", bedtime: t === "bedtime" };
+}
+
+/** ISO weekday (1 = lunes) of a "yyyy-mm-dd", so «Algunos días» starts on one and never reads as every day. */
+const weekdayOf = (date: string) => new Date(`${date}T12:00:00`).getDay() || 7;
+
 const UNITS: Record<MedicationKind, string[]> = {
   medicamento: ["mg", "g", "µg", "UI", "ml", "gotas", "comprimidos", "cápsulas", "sobres"],
   suplemento: ["g", "mg", "µg", "UI", "scoop", "cazo", "cápsula", "gomita", "ml"],
@@ -218,11 +252,11 @@ function problem(d: Draft): string | null {
   if (d.frequency !== "asNeeded") {
     if (d.frequency === "weekdays" && d.days.length === 0) return "Marca al menos un día.";
     if (d.frequency === "interval" && !(Number.isInteger(d.every) && d.every >= 1 && d.every <= 52)) return "Elige cada cuántos días o semanas (1 a 52).";
-    if (!d.useTimes && !d.useTraining && !d.useMeals && !d.bedtime && !d.useWindows && !d.anyTime) return "Elige a qué hora tomarlo; si no hay una hora fija, «Cualquier hora».";
+    if (!d.useTimes && !d.useTraining && !d.useMeals && !d.bedtime && !d.useWindows && !d.anyTime) return "Elige cuándo durante el día; si no hay una hora fija, «Cualquier hora».";
     if (d.useTimes && d.times.filter(Boolean).length === 0) return "Añade al menos una hora.";
     if (d.useWindows && d.windows.length === 0) return "Elige mañana, tarde o noche.";
     if (d.useWindows && d.windows.some((w) => !w.start || !w.end || w.start >= w.end)) return "Cada franja tiene que empezar antes de terminar.";
-    if (d.anyTime && d.remind && !d.reminder) return "Pon la hora del aviso, o elige «Sin aviso».";
+    if (d.anyTime && d.remind && !d.reminder) return "Pon la hora del recordatorio, o apágalo.";
     if (d.useMeals && d.meals.length === 0) return "Elige con qué comida.";
     if (d.useTraining && d.restDay === "time" && !d.restDayTime) return "Pon la hora para los días sin entreno, o elige «No tomar».";
   }
@@ -394,10 +428,17 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
         ))}
       </datalist>
 
+      <FieldGroup label="Horario">
+        <p className="bg-muted/40 border-border flex items-start gap-2 rounded-2xl border p-3.5 text-[14px] font-medium" aria-live="polite">
+          <CalendarClock className="mt-0.5 size-4 shrink-0" style={{ color: MED }} />
+          <span>{readBack(scheduleOf(draft))}</span>
+        </p>
+      </FieldGroup>
+
       <FieldGroup label="¿Cada cuándo?" hint={draft.frequency === "asNeeded" ? "No cuenta para la adherencia: anótala cuando la tomes." : undefined}>
         <div className="flex flex-wrap gap-2">
           {FREQUENCIES.map(({ value, label }) => (
-            <Chip key={value} on={draft.frequency === value} onClick={() => set("frequency", value)}>
+            <Chip key={value} on={draft.frequency === value} onClick={() => setDraft((d) => ({ ...(value === "asNeeded" ? freshTiming(d) : d), frequency: value, days: value === "weekdays" && !d.days.length ? [weekdayOf(d.startDate)] : d.days }))}>
               {label}
             </Chip>
           ))}
@@ -445,27 +486,14 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
       </FieldGroup>
 
       {draft.frequency !== "asNeeded" && (
-        <FieldGroup label="¿A qué hora?">
+        <FieldGroup label="¿Cuándo durante el día?" hint={TIMINGS.filter((t) => timingOn(draft, t.value)).length > 1 ? "Este horario combina varios momentos; elegir uno lo reemplaza." : undefined}>
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <Chip on={draft.useTimes} onClick={() => set("useTimes", !draft.useTimes)} icon={Clock}>
-                A una hora
-              </Chip>
-              <Chip on={draft.useWindows} onClick={() => set("useWindows", !draft.useWindows)} icon={Sun}>
-                En la mañana…
-              </Chip>
-              <Chip on={draft.anyTime} onClick={() => set("anyTime", !draft.anyTime)} icon={CalendarCheck}>
-                Cualquier hora
-              </Chip>
-              <Chip on={draft.useTraining} onClick={() => set("useTraining", !draft.useTraining)} icon={Dumbbell}>
-                Después de entrenar
-              </Chip>
-              <Chip on={draft.useMeals} onClick={() => set("useMeals", !draft.useMeals)} icon={Utensils}>
-                Con una comida
-              </Chip>
-              <Chip on={draft.bedtime} onClick={() => set("bedtime", !draft.bedtime)} icon={BedDouble}>
-                Antes de dormir
-              </Chip>
+              {TIMINGS.map(({ value, label, icon }) => (
+                <Chip key={value} on={timingOn(draft, value)} onClick={() => setDraft((d) => chooseTiming(d, value))} icon={icon}>
+                  {label}
+                </Chip>
+              ))}
             </div>
 
             {draft.useTimes && (
@@ -507,33 +535,43 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
                   const edit = (patch: Partial<DoseWindow>) => set("windows", draft.windows.map((x) => (x.part === w.part ? { ...x, ...patch } : x)));
                   const label = PARTS.find((p) => p.value === w.part)!.label;
                   return (
-                    <div key={w.part} className="flex flex-wrap items-center gap-2">
-                      <span className="w-16 text-[13px] font-medium">{label}</span>
-                      <TimeInput value={w.start} onChange={(start) => edit({ start })} label={`${label}: desde`} prefix="de" />
-                      <TimeInput value={w.end} onChange={(end) => edit({ end })} label={`${label}: hasta`} prefix="a" />
-                    </div>
+                    <details key={w.part} className="group">
+                      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 text-[13px]">
+                        <span className="font-medium">{label}</span>
+                        <span className="tabular text-muted-foreground">
+                          {w.start}–{w.end}
+                        </span>
+                        <span className="text-muted-foreground ml-auto text-[12px] group-open:hidden">Cambiar</span>
+                      </summary>
+                      <div className="flex flex-wrap items-center gap-2 pb-1">
+                        <TimeInput value={w.start} onChange={(start) => edit({ start })} label={`${label}: desde`} prefix="de" />
+                        <TimeInput value={w.end} onChange={(end) => edit({ end })} label={`${label}: hasta`} prefix="a" />
+                      </div>
+                    </details>
                   );
                 })}
               </Part>
             )}
 
             {draft.anyTime && (
-              <Part title="Cualquier hora" hint="Toca ese día, cuando quieras. Cuenta como olvidada solo si se acaba el día sin tomarla.">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Segmented<"on" | "off"> label="Aviso" value={draft.remind ? "on" : "off"} onChange={(v) => set("remind", v === "on")} options={[{ value: "on", label: "Avisar si no la tomé" }, { value: "off", label: "Sin aviso" }]} />
-                  {draft.remind && <TimeInput value={draft.reminder} onChange={(v) => set("reminder", v)} label="Hora del aviso" prefix="a las" />}
-                </div>
-              </Part>
+              <>
+                <Part title="Cualquier hora" hint="Toca ese día, sin hora: cuando quieras. Solo cuenta como olvidada si se acaba el día sin tomarla." />
+                {/* The optional nudge apart, so its hour never reads as the dose's. */}
+                <Part title="Recordatorio">
+                  <Toggle checked={draft.remind} onChange={(on) => set("remind", on)} label="Recordatorio si no la has tomado" hint={draft.remind ? "Solo si a esa hora aún no la marcaste." : "Opcional. Sin él, Pulso no te avisa."} />
+                  {draft.remind && <TimeInput value={draft.reminder} onChange={(v) => set("reminder", v)} label="Hora del recordatorio" prefix="a las" />}
+                </Part>
+              </>
             )}
 
             {draft.useTraining && (
               <Part title="Después de entrenar" hint="Cuando termina una sesión de Pulso o un entreno de Salud. Si tienes una sesión en el Calendario, espera a que acabe.">
-                <FieldGroup label="Tómala dentro de">
-                  <Segmented<string> label="Tómala dentro de" value={String(draft.withinMinutes)} onChange={(v) => set("withinMinutes", Number(v))} options={windows.map((m) => ({ value: String(m), label: fmtWindow(m) }))} className="w-full" />
+                <FieldGroup label="Dentro de">
+                  <Segmented<string> label="Dentro de" value={String(draft.withinMinutes)} onChange={(v) => set("withinMinutes", Number(v))} options={windows.map((m) => ({ value: String(m), label: fmtWindow(m) }))} className="w-full" />
                 </FieldGroup>
-                <FieldGroup label="En días sin entreno">
+                <FieldGroup label="Días sin entreno">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Segmented<RestDay> label="En días sin entreno" value={draft.restDay} onChange={(v) => set("restDay", v)} options={[{ value: "time", label: "A una hora" }, { value: "none", label: "No tomar" }]} />
+                    <Segmented<RestDay> label="Días sin entreno" value={draft.restDay} onChange={(v) => set("restDay", v)} options={[{ value: "none", label: "No tomar" }, { value: "time", label: "A una hora" }]} />
                     {draft.restDay === "time" && <TimeInput value={draft.restDayTime} onChange={(v) => set("restDayTime", v)} label="Hora en días sin entreno" prefix="a las" />}
                   </div>
                 </FieldGroup>
