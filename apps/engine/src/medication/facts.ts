@@ -5,6 +5,8 @@
  *
  * - A workout is a saved Pulso session or a Health workout (not a duplicate of
  *   another recording, not a walk, at least 10 minutes), dated by when it ended.
+ *   A Health workout recorded during a session is that session: the session
+ *   ends when the last of them does, and the workout adds no end of its own.
  * - A session is in progress when the live session started today.
  * - Planned sessions are the calendar's, still "planned" (skipped and moved ones don't wait).
  * - Meal times are the calendar's for that date; sleep time is its preference.
@@ -12,6 +14,7 @@
 import type { DoseMeal } from "@pulso/contract";
 import { getPreferences, listPlanned, mealTimesBetween } from "../calendar/store";
 import { db } from "../db";
+import { attachmentsBetween } from "../workouts-merge";
 import { addDays, type DayFacts, fromMinutes, localNow, toMinutes } from "./schedule";
 
 const MIN_WORKOUT_MS = 10 * 60_000;
@@ -29,15 +32,15 @@ export function dayFacts(from: string, to: string, today: string): (date: string
     const { date, time } = localNow(new Date(endedAt));
     ends.set(date, [...(ends.get(date) ?? []), time]);
   };
-  for (const r of db().query<{ ended_at: number }, [number, number]>("SELECT ended_at FROM training_sessions WHERE ended_at >= ? AND ended_at < ?").all(startMs, endMs)) {
-    addEnd(r.ended_at);
+  const merged = attachmentsBetween(startMs, endMs);
+  for (const s of merged.sessions) {
+    const end = Math.max(s.endedAt, ...(merged.bySession.get(s.id) ?? []).map((a) => a.workout.endedAt));
+    if (end >= startMs && end < endMs) addEnd(end);
   }
-  const workouts = db()
-    .query<{ ended_at: number }, [number, number, number, string]>(
-      `SELECT ended_at FROM workouts WHERE duplicate_of IS NULL AND ended_at >= ? AND ended_at < ? AND ended_at - started_at >= ? AND activity <> ?`,
-    )
-    .all(startMs, endMs, MIN_WORKOUT_MS, "walking");
-  for (const r of workouts) addEnd(r.ended_at);
+  for (const w of merged.workouts) {
+    if (merged.sessionOf.has(w.id) || merged.hidden.has(w.id)) continue;
+    if (w.endedAt >= startMs && w.endedAt < endMs && w.endedAt - w.startedAt >= MIN_WORKOUT_MS && w.activity !== "walking") addEnd(w.endedAt);
+  }
 
   const liveRow = db().query<{ data: string }, []>("SELECT data FROM live_sessions ORDER BY updated_at DESC LIMIT 1").get();
   const liveStart = liveRow ? (JSON.parse(liveRow.data) as { startedAt?: number }).startedAt : undefined;

@@ -131,8 +131,8 @@ test("the timeline merges every feature into one list", () => {
   expect(byKind("dose")).toEqual([expect.objectContaining({ title: "Vitamina D", subtitle: "Tomada · 1000 UI", start: `${day}T09:20`, status: "tomada" })]);
   expect(byKind("sleep")).toHaveLength(1);
   expect(byKind("body_scan")[0]).toMatchObject({ title: "InBody", subtitle: "80 kg · 15 % grasa", link: { tab: "cuerpo" } });
-  expect(byKind("training")[0]).toMatchObject({ title: "Brazos", status: "done", subtitle: "45 min" });
-  // The Health copy of the Pulso session is dropped; the run stays.
+  // The Health workout recorded during the Pulso session is merged into it (its kcal show there); the run stays.
+  expect(byKind("training")[0]).toMatchObject({ title: "Brazos", status: "done", subtitle: "45 min · 200 kcal" });
   expect(byKind("workout").map((i) => i.title)).toEqual(["Carrera"]);
   expect(byKind("busy")[0]).toMatchObject({ title: "Dentista", start: `${day}T12:00`, end: `${day}T13:00`, link: { tab: "calendario" } });
   expect(byKind("health")[0]).toMatchObject({ title: "Resfriado", allDay: true, subtitle: "Enfermedad · general · 2/5" });

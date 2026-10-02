@@ -56,7 +56,9 @@ test("the overview carries the active program's days with media, muscles and sug
   });
   const day1 = program.days[0]!;
   saveSession({ id: "web-entreno-1", programId: program.id, dayId: day1.id, name: "Torso A", startedAt: t - 3 * DAY, endedAt: t - 3 * DAY + 3_600_000, sets: [{ exerciseId: "press-banca", setIndex: 0, weightKg: 80, reps: 8, rpe: 8, doneAt: t - 3 * DAY }] });
-  upsertHealthKitWorkouts([{ externalId: "web-entreno-run", activity: "running", startedAt: t - DAY, endedAt: t - DAY + 1_800_000, energy: 320, distance: 5200, sourceName: "Apple Watch" }]);
+  // Away from any session (other test files log "yesterday" ones in the same database), so it stays a row of its own.
+  const runAt = t - DAY - 7 * 3_600_000;
+  upsertHealthKitWorkouts([{ externalId: "web-entreno-run", activity: "running", startedAt: runAt, endedAt: runAt + 1_800_000, energy: 320, distance: 5200, sourceName: "Apple Watch" }]);
 
   const view = entrenoOverview(now);
   expect(view.program).toMatchObject({ id: program.id, name: "Torso / Pierna", week: 1, weeks: 8, deload: false });
