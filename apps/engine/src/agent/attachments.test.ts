@@ -5,11 +5,11 @@ import { deflateSync } from "node:zlib";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { GET as mobilePhotoGET } from "@/app/api/mobile/agent/threads/[id]/attachments/[attachmentId]/route";
 import { POST as mobilePOST } from "@/app/api/mobile/agent/threads/[id]/messages/route";
-import { DELETE as webThreadDELETE } from "@/app/api/web/coach/threads/[id]/route";
-import { POST as webPOST } from "@/app/api/web/coach/threads/[id]/messages/route";
+import { POST as webPOST } from "@/app/api/web/coach/conversation/messages/route";
 import { dataDir } from "../db";
 import { createPairingCode, redeemPairing } from "../devices";
 import { attachmentPath, attachmentResponse, attachmentsDir, saveImages, sniffImage } from "./attachments";
+import { conversationThreadId } from "./conversation";
 import { recapPrompt, type QueryFn } from "./runner";
 import { sendMessage } from "./send";
 import { createThread, getMessage, getThread, listMessages } from "./threads";
@@ -148,20 +148,23 @@ test("a recap marks the photos a message carried", () => {
 test("the routes refuse too many photos, an empty message, and files that aren't photos", async () => {
   const thread = createThread();
   const id = { params: Promise.resolve({ id: thread.id }) };
+  const conversation = conversationThreadId();
+  const before = listMessages(conversation).length;
   const five = form("hola", Array.from({ length: 5 }, () => png(4, 4)));
-  const tooMany = await webPOST(five, id);
+  const tooMany = await webPOST(five);
   expect(tooMany.status).toBe(400);
   expect(((await tooMany.json()) as { message: string }).message).toContain("hasta 4 fotos");
-  expect((await webPOST(form("", []), id)).status).toBe(400);
+  expect((await webPOST(form("", []))).status).toBe(400);
   const notPhoto = new FormData();
   notPhoto.append("image", new Blob(["%PDF-1.7"], { type: "image/jpeg" }), "x.jpg");
-  expect((await webPOST(new Request("http://pulso.test/x", { method: "POST", body: notPhoto }), id)).status).toBe(400);
+  expect((await webPOST(new Request("http://pulso.test/x", { method: "POST", body: notPhoto }))).status).toBe(400);
+  expect(listMessages(conversation)).toHaveLength(before);
   // The phone needs its token.
   expect((await mobilePOST(form("hola", [png(4, 4)]), id)).status).toBe(401);
   expect(listMessages(thread.id)).toEqual([]);
 });
 
-test("a photo is served only within its own thread, and goes with the thread", async () => {
+test("a photo is served only within its own thread", async () => {
   const thread = createThread();
   const other = createThread();
   const result = await sendMessage(thread.id, form("mira", [png(6, 6)]), recordingQuery([]));
@@ -176,7 +179,4 @@ test("a photo is served only within its own thread, and goes with the thread", a
   expect((await mobilePhotoGET(new Request("http://pulso.test/x"), ctx(thread.id, photo.id))).status).toBe(401);
   expect((await mobilePhotoGET(authed, ctx(other.id, photo.id))).status).toBe(404);
   expect(attachmentResponse(thread.id, "../../pulso.sqlite")).toBeUndefined();
-
-  expect((await webThreadDELETE(new Request("http://pulso.test/x", { method: "DELETE" }), { params: Promise.resolve({ id: thread.id }) })).status).toBe(204);
-  expect(fs.existsSync(attachmentsDir(thread.id))).toBe(false);
 });

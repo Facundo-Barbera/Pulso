@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { FoodProduct } from "@pulso/contract";
-import { POST as webPOST } from "@/app/api/web/coach/threads/[id]/messages/route";
+import { POST as webPOST } from "@/app/api/web/coach/conversation/messages/route";
 import { db } from "../db";
+import { conversationThreadId } from "./conversation";
 import { recapPrompt, type QueryFn } from "./runner";
 import { sendMessage } from "./send";
 import { createThread, getMessage, getThread, listMessages } from "./threads";
@@ -69,13 +70,13 @@ test("a scan alone is a message, titled by the product; multipart carries barcod
 });
 
 test("bad or too many codes are refused before anything is stored", async () => {
-  const thread = createThread();
-  const id = { params: Promise.resolve({ id: thread.id }) };
-  const bad = await webPOST(post({ text: "hola", barcodes: ["12ab"] }), id);
+  const conversation = conversationThreadId();
+  const before = listMessages(conversation).length;
+  const bad = await webPOST(post({ text: "hola", barcodes: ["12ab"] }));
   expect(bad.status).toBe(400);
   expect(((await bad.json()) as { message: string }).message).toContain("código de barras");
-  expect((await webPOST(post({ text: "hola", barcodes: Array(5).fill(jar.barcode) }), id)).status).toBe(400);
-  expect(listMessages(thread.id)).toEqual([]);
+  expect((await webPOST(post({ text: "hola", barcodes: Array(5).fill(jar.barcode) }))).status).toBe(400);
+  expect(listMessages(conversation)).toHaveLength(before);
 });
 
 test("a recap names the products a message carried", () => {
