@@ -9,12 +9,12 @@ export function hidden(request: Request): Response | undefined {
 }
 
 /** Runs a store call, mapping validation and not-found errors to 400/404. */
-export function respond(run: () => unknown): Response {
+export function respond(run: () => unknown, status = 200): Response {
   try {
-    return json(run());
+    return json(run(), status);
   } catch (error) {
     if (error instanceof ZodError) return json({ code: "invalid_request", message: `Revisa los datos: ${error.issues.map((i) => i.path.join(".") || "cuerpo").join(", ")}.` }, 400);
-    if (error instanceof SubstanceError) return json({ code: error.code, message: "Ya no existe: recarga la página." }, 404);
+    if (error instanceof SubstanceError) return json({ code: error.code, message: error.code === "not_found" ? "Ya no existe: recarga la página." : error.message }, error.code === "not_found" ? 404 : 400);
     throw error;
   }
 }

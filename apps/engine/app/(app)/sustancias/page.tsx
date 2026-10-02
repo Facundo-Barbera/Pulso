@@ -1,8 +1,7 @@
 import type { Substance, SubstanceSummary } from "@pulso/contract";
-import { CalendarDays, Clock, EyeOff, Leaf, ListOrdered, Moon, Target } from "lucide-react";
+import { CalendarDays, Clock, EyeOff, Layers, Leaf, ListOrdered, Moon, Target } from "lucide-react";
 import { headers } from "next/headers";
 import Link from "next/link";
-import { SUBSTANCES } from "@/src/substances/store";
 import { substanceOverview } from "@/src/substances/summary";
 import { shownHere } from "@/src/substances/web";
 import { fromTailnet } from "@/src/tailnet-gate";
@@ -15,7 +14,8 @@ import { Sparkline } from "../../_ui/sparkline";
 import { LogButton } from "./_components/entry-sheet";
 import { EntryList } from "./_components/entries";
 import { GoalEditor } from "./_components/goal";
-import { COLOR, SUBSTANCE_LABEL } from "./_components/labels";
+import { COLOR, emojiOf } from "./_components/labels";
+import { ManageButton } from "./_components/manage";
 import { VisibilityToggle } from "./_components/visibility";
 
 export const dynamic = "force-dynamic";
@@ -25,8 +25,8 @@ const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"];
 const LEVEL_MIX = [0, 35, 65, 100];
 
 /**
- * Sustancias: a private log of cannabis (and alcohol or nicotine) use, to see
- * how often. Not in the sidebar: reached from Ajustes or ⌘K, and only on a
+ * Sustancias: a private log of cannabis, alcohol or the person's own
+ * substances, to see how often; per substance or all together (Todas). Not in the sidebar: reached from Ajustes or ⌘K, and only on a
  * browser where the person turned it on (the Mac by default).
  */
 export default async function Sustancias({ searchParams }: { searchParams: Promise<{ s?: string }> }) {
@@ -46,31 +46,42 @@ export default async function Sustancias({ searchParams }: { searchParams: Promi
     );
   }
 
-  const param = (await searchParams).s;
-  const substance: Substance = SUBSTANCES.includes(param as Substance) ? (param as Substance) : "cannabis";
-  const { summary, entries, settings } = substanceOverview(substance);
+  const { substances, summary, entries } = substanceOverview((await searchParams).s);
+  const active = substances.filter((s) => !s.archived);
+  const current = substances.find((s) => s.id === summary.substanceId) ?? null;
   const labels = Object.fromEntries(entries.map((e) => [e.date, fmtDayLabel(e.date)]));
   const never = summary.lastUse === null;
+  const tabs = [{ href: "/sustancias?s=all", label: "Todas", on: summary.substanceId === null }, ...active.map((s) => ({ href: `/sustancias?s=${s.id}`, label: [emojiOf(s), s.name].filter(Boolean).join(" "), on: s.id === summary.substanceId }))];
+  if (current?.archived) tabs.push({ href: `/sustancias?s=${current.id}`, label: `${current.name} (archivada)`, on: true });
 
   return (
     <Page>
-      <PageHeader title="Sustancias" subtitle="Sólo para ti: cuándo y cuánto, sin juicios." actions={<LogButton substance={substance} />} />
-      <nav aria-label="Sustancia" className="bg-muted/70 mb-5 inline-flex rounded-full p-1">
-        {SUBSTANCES.map((s) => (
+      <PageHeader
+        title="Sustancias"
+        subtitle="Sólo para ti: cuándo y cuánto, sin juicios."
+        actions={
+          <>
+            <ManageButton substances={substances} />
+            <LogButton substances={active} current={summary.substanceId} />
+          </>
+        }
+      />
+      <nav aria-label="Sustancia" className="bg-muted/70 mb-5 inline-flex max-w-full flex-wrap rounded-3xl p-1">
+        {tabs.map((t) => (
           <Link
-            key={s}
-            href={s === "cannabis" ? "/sustancias" : `/sustancias?s=${s}`}
-            aria-current={s === substance ? "page" : undefined}
-            className={cn("focus-visible:ring-ring min-h-9 rounded-full px-4 py-2 text-[13px] font-medium outline-none focus-visible:ring-2", s === substance ? "bg-card shadow-1" : "text-muted-foreground hover:text-foreground")}
+            key={t.href}
+            href={t.href}
+            aria-current={t.on ? "page" : undefined}
+            className={cn("focus-visible:ring-ring min-h-9 rounded-full px-4 py-2 text-[13px] font-medium outline-none focus-visible:ring-2", t.on ? "bg-card shadow-1" : "text-muted-foreground hover:text-foreground")}
           >
-            {SUBSTANCE_LABEL[s]}
+            {t.label}
           </Link>
         ))}
       </nav>
 
       {never ? (
         <Card>
-          <EmptyState icon={Leaf} color={COLOR} title={`Nada de ${SUBSTANCE_LABEL[substance].toLowerCase()} registrado`} line="Registra cuando consumas y aquí verás con qué frecuencia, a qué hora y cómo duermes esas noches." />
+          <EmptyState icon={Leaf} color={COLOR} title={current ? `Nada de ${current.name.toLowerCase()} registrado` : "Nada registrado todavía"} line="Registra cuando consumas y aquí verás con qué frecuencia, a qué hora y cómo duermes esas noches." />
         </Card>
       ) : (
         <>
@@ -79,19 +90,23 @@ export default async function Sustancias({ searchParams }: { searchParams: Promi
             <WeeksCard summary={summary} />
             <TimeCard summary={summary} />
             <SleepCard summary={summary} />
-            <Card delay={210}>
-              <CardTitle icon={Target} color={COLOR} title="Tu objetivo" />
-              {summary.goal && (
-                <p className="mb-4 text-[14px]">
-                  Esta semana: <span className="tabular font-semibold">{summary.goal.daysThisWeek}</span> de {summary.goal.maxDaysPerWeek} {summary.goal.maxDaysPerWeek === 1 ? "día" : "días"}.
-                </p>
-              )}
-              {!summary.goal && <p className="text-muted-foreground mb-4 text-[13px] leading-relaxed">Opcional. Si quieres, ponte un máximo de días por semana; nadie más lo ve.</p>}
-              <GoalEditor max={settings.maxDaysPerWeek} />
-            </Card>
+            {current ? (
+              <Card delay={210}>
+                <CardTitle icon={Target} color={COLOR} title="Tu objetivo" />
+                {summary.goal && (
+                  <p className="mb-4 text-[14px]">
+                    Esta semana: <span className="tabular font-semibold">{summary.goal.daysThisWeek}</span> de {summary.goal.maxDaysPerWeek} {summary.goal.maxDaysPerWeek === 1 ? "día" : "días"}.
+                  </p>
+                )}
+                {!summary.goal && <p className="text-muted-foreground mb-4 text-[13px] leading-relaxed">Opcional. Si quieres, ponte un máximo de días por semana; nadie más lo ve.</p>}
+                <GoalEditor key={current.id} substanceId={current.id} max={current.maxDaysPerWeek} />
+              </Card>
+            ) : (
+              <BySubstanceCard summary={summary} substances={substances} />
+            )}
             <Card delay={260} className="md:col-span-2">
               <CardTitle icon={ListOrdered} color={COLOR} title="Registros" />
-              {entries.length ? <EntryList entries={entries} labels={labels} /> : <p className="text-muted-foreground text-[13px]">Nada en los últimos 60 días.</p>}
+              {entries.length ? <EntryList entries={entries} labels={labels} substances={substances} showName={current === null} /> : <p className="text-muted-foreground text-[13px]">Nada en los últimos 60 días.</p>}
             </Card>
           </div>
         </>
@@ -212,6 +227,28 @@ function SleepCard({ summary }: { summary: SubstanceSummary }) {
         <p className="text-muted-foreground mt-4 text-[12px]">Aún sin datos suficientes: {waiting.map((c) => `${c.label.toLowerCase()} (${c.nWith} con · ${c.nWithout} sin)`).join(", ")}.</p>
       )}
       <p className="text-muted-foreground mt-4 text-[12px]">Promedios de tus propias noches; no dicen qué causa qué.</p>
+    </Card>
+  );
+}
+
+function BySubstanceCard({ summary, substances }: { summary: SubstanceSummary; substances: Substance[] }) {
+  const byId = new Map(substances.map((s) => [s.id, s]));
+  const max = Math.max(1, ...summary.bySubstance.map((b) => b.uses));
+  return (
+    <Card delay={210}>
+      <CardTitle icon={Layers} color={COLOR} title="Por sustancia" />
+      <ul className="space-y-2.5">
+        {summary.bySubstance.map((b) => (
+          <li key={b.substanceId} className="flex items-center gap-3 text-[13px]">
+            <span className="text-muted-foreground w-24 shrink-0 truncate">{byId.get(b.substanceId)?.name ?? "—"}</span>
+            <span className="bg-muted h-2.5 flex-1 overflow-hidden rounded-full">
+              <span className="block h-full rounded-full" style={{ width: `${(b.uses / max) * 100}%`, background: COLOR }} />
+            </span>
+            <span className="tabular w-6 text-right">{b.uses}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-muted-foreground mt-4 text-[12px]">Veces en las últimas 8 semanas. Los objetivos van por sustancia.</p>
     </Card>
   );
 }

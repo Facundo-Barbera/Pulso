@@ -1,16 +1,14 @@
-import type { Substance } from "@pulso/contract";
-import { logUse, SUBSTANCES } from "@/src/substances/store";
+import { logUse } from "@/src/substances/store";
 import { substanceOverview } from "@/src/substances/summary";
 import { body, hidden, respond } from "./respond";
 
 export const dynamic = "force-dynamic";
 
-/** `?s=cannabis|alcohol|nicotina` → `SubstanceOverview`. */
+/** `?s=<id|all>` → `SubstanceOverview`; default the first active substance. */
 export function GET(request: Request): Response {
   const refused = hidden(request);
   if (refused) return refused;
-  const param = new URL(request.url).searchParams.get("s");
-  return respond(() => substanceOverview(SUBSTANCES.includes(param as Substance) ? (param as Substance) : "cannabis"));
+  return respond(() => substanceOverview(new URL(request.url).searchParams.get("s")));
 }
 
 /** Body: `SubstanceEntryInput` → the new `SubstanceEntry`. */

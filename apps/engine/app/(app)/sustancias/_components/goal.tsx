@@ -6,15 +6,15 @@ import { useState } from "react";
 import { Button } from "../../../_ui/fields";
 import { send } from "../../../_ui/send";
 
-/** The person's own weekly limit, optional and never suggested. */
-export function GoalEditor({ max }: { max: number | null }) {
+/** The person's own weekly limit for one substance, optional and never suggested. */
+export function GoalEditor({ substanceId, max }: { substanceId: string; max: number | null }) {
   const router = useRouter();
   const [value, setValue] = useState(max ?? 2);
   const [error, setError] = useState<string | null>(null);
   const save = async (maxDaysPerWeek: number | null) => {
     setError(null);
     try {
-      await send("/api/web/sustancias/objetivo", "PATCH", { maxDaysPerWeek });
+      await send(`/api/web/sustancias/tipos/${substanceId}`, "PATCH", { maxDaysPerWeek });
       router.refresh();
     } catch (e) {
       setError((e as Error).message);
