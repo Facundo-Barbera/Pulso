@@ -224,7 +224,10 @@ export function RecentCard({ recent, delay }: { recent: RecentActivity[]; delay:
                 {item.kind === "session" ? <Dumbbell className="size-[18px]" /> : <Activity className="size-[18px]" />}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[14px] font-medium">{item.title}</span>
+                <span className="flex items-center gap-1.5 text-[14px] font-medium">
+                  <span className="truncate">{item.title}</span>
+                  {item.merged && <Watch className="text-heart size-3.5 shrink-0" aria-label="Con datos de Apple Watch" />}
+                </span>
                 <span className="text-muted-foreground block truncate text-[12px]">
                   {fmtShortDate(item.startedAt)} · {fmtMinutes((item.endedAt - item.startedAt) / 60_000)}
                   {item.detail && ` · ${item.detail}`}

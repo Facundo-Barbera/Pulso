@@ -34,7 +34,7 @@ export default async function Entreno() {
           <EmptyState icon={Dumbbell} color="var(--domain-training)" title="Aún no tienes rutina" line="Pídele al Coach un programa: lo verás aquí con los pesos sugeridos para cada día." action={{ href: "/coach", label: "Pedir rutina al Coach" }} />
         </Card>
         <div className="mt-5">
-          <HistoryCard history={view.history} delay={60} />
+          <HistoryCard history={view.history} delay={60} canEdit={edit} />
         </div>
       </Page>
     );
@@ -58,7 +58,7 @@ export default async function Entreno() {
         <Plan days={view.days} nextDayId={view.nextDayId} doneIds={doneIds} canEdit={edit} />
       </div>
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
-        <HistoryCard history={view.history} delay={60} className="lg:col-span-2" />
+        <HistoryCard history={view.history} delay={60} className="lg:col-span-2" canEdit={edit} />
         <ProgramCard program={program} days={view.days.length} delay={110} />
       </div>
     </Page>

@@ -3,7 +3,7 @@
  * body stores. The page, `GET /api/web/entreno` and the session logger share
  * these shapes. The numbers match the iPhone's plan screen (TrainingPlan.swift).
  */
-import type { ExerciseDetail, ExercisePerformance, JoinCandidate, LoadSuggestion, SessionRecording, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
+import type { ExerciseDetail, ExercisePerformance, HeartRatePoint, JoinCandidate, LoadSuggestion, SessionRecording, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
 import { listScans } from "../body/store";
 import { ANATOMY } from "../training/anatomy";
 import { e1rm } from "../training/math";
@@ -134,6 +134,8 @@ export type HistoryEntry = {
   recorded: SessionRecording | null;
   /** sessions: Health workouts nearby that could be joined ("Unir con…") */
   joinable: JoinCandidate[];
+  /** sessions: the Watch's heart rate, at most 60 points, labels "13:42" */
+  heartRate: { label: string; value: number }[];
 };
 
 export type EntrenoOverview = {
@@ -158,6 +160,14 @@ const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes
 /** 1 = Monday … 7 = Sunday, like `ProgramDay.weekday`. */
 const isoWeekday = (at: Date) => ((at.getDay() + 6) % 7) + 1;
 const number = new Intl.NumberFormat("es");
+const clock = new Intl.DateTimeFormat("es", { hour: "2-digit", minute: "2-digit" });
+const HR_POINTS = 60;
+
+/** Every nth reading, so a long session still draws as one light line. */
+function heartLine(series: HeartRatePoint[]): HistoryEntry["heartRate"] {
+  const step = Math.max(1, Math.ceil(series.length / HR_POINTS));
+  return series.filter((_, i) => i % step === 0).map((p) => ({ label: clock.format(p.at), value: Math.round(p.bpm) }));
+}
 
 function tagline(day: ProgramDay, isNext: boolean, now: Date): string | null {
   const next = isNext ? (day.weekday === isoWeekday(now) ? "Hoy toca" : "Siguiente") : null;
@@ -205,6 +215,7 @@ function sessionEntry(session: TrainingSession, records: Set<string>, units: Uni
     merged: !!session.merged,
     recorded: r,
     joinable: session.joinable ?? [],
+    heartRate: heartLine(r?.heartRate ?? []),
   };
 }
 
@@ -224,7 +235,7 @@ export function trainingHistory(limit = 12, sessions = listSessions(SESSIONS), u
   const workouts = standaloneWorkouts(limit).map((w): HistoryEntry => {
     const distanceKm = w.distance != null && w.distance > 0 ? Math.round(w.distance / 10) / 100 : null;
     const parts = [w.energy != null ? `${Math.round(w.energy)} kcal` : null, distanceKm != null ? `${number.format(distanceKm)} km` : null];
-    return { id: w.id, kind: "workout", title: activityLabel(w.activity), startedAt: w.startedAt, endedAt: w.endedAt, summary: parts.filter(Boolean).join(" · ") || null, exercises: [], source: w.sourceName ?? "Salud", energy: w.energy, distanceKm, merged: false, recorded: null, joinable: [] };
+    return { id: w.id, kind: "workout", title: activityLabel(w.activity), startedAt: w.startedAt, endedAt: w.endedAt, summary: parts.filter(Boolean).join(" · ") || null, exercises: [], source: w.sourceName ?? "Salud", energy: w.energy, distanceKm, merged: false, recorded: null, joinable: [], heartRate: [] };
   });
   return [...own, ...workouts].sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }
