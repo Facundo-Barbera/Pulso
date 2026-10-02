@@ -9,6 +9,8 @@ final class PulsoModel {
 
     private(set) var credentials: Credentials? = CredentialStore.load()
     private(set) var workouts: [Workout] = []
+    /// Sessions (with the Watch's workouts merged in) and Health workouts on their own; nil from an older engine.
+    private(set) var activity: [ActivityEntry]?
     private(set) var pairing = false
     private(set) var syncing = false
     var pairingError: String?
@@ -56,6 +58,7 @@ final class PulsoModel {
         CredentialStore.clear()
         credentials = nil
         workouts = []
+        activity = nil
         reachability = .unknown
         lastContact = nil
         latency = nil
@@ -89,7 +92,9 @@ final class PulsoModel {
     func refresh() async {
         guard let api else { return }
         do {
-            workouts = try await api.workouts()
+            let response = try await api.workouts()
+            workouts = response.workouts
+            activity = response.activity
             error = nil
         } catch {
             handle(error)
