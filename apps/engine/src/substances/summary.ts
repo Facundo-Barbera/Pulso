@@ -3,13 +3,13 @@
  * recovery. `buildSummary` is pure (tested with synthetic data);
  * `substanceSummary` gathers the signals from the other features' stores.
  */
-import type { DailyMetrics, Substance, SubstanceCorrelation, SubstanceEntry, SubstanceOverview, SubstanceSummary, SubstanceTimeBucket } from "@pulso/contract";
+import type { DailyMetrics, SubstanceCorrelation, SubstanceEntry, SubstanceOverview, SubstanceSummary, SubstanceTimeBucket } from "@pulso/contract";
 import { computeReadiness } from "../daily/readiness";
 import { listDailyMetrics } from "../daily/store";
 import { addDays, isoWeekday, localNow } from "../medication/schedule";
 import { listMeals } from "../nutrition/store";
 import { listSleepNights } from "../sleep/store";
-import { CONTEXTS, FORMS, firstUseDate, getSettings, lastUse, listUses } from "./store";
+import { CONTEXTS, firstUseDate, getSubstance, lastUse, listSubstances, listUses } from "./store";
 
 /** Fewer nights than this on either side and a comparison says nothing. */
 export const MIN_SAMPLE = 3;
@@ -54,6 +54,13 @@ const BUCKETS: { key: SubstanceTimeBucket["key"]; label: string }[] = [
   { key: "noche", label: "Noche" },
   { key: "madrugada", label: "Madrugada" },
 ];
+
+/** [value, count] by count, most first; nulls skipped. */
+function tally(values: (string | null)[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const v of values) if (v !== null) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1]);
+}
 
 const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null);
 const round = (value: number | null, decimals = 0) => (value === null ? null : Math.round(value * 10 ** decimals) / 10 ** decimals);
@@ -148,9 +155,10 @@ export function correlate(nights: NightSignals[], usedNights: Set<string>): Subs
 }
 
 export type SummaryInput = {
-  substance: Substance;
+  /** null = Todas. */
+  substanceId: string | null;
   today: string;
-  /** Every use of `substance` inside the window (any order). */
+  /** Every use of the substance (or of all of them) inside the window, any order. */
   entries: SubstanceEntry[];
   firstUse: string | null;
   lastUse: { date: string; time: string } | null;
@@ -198,7 +206,8 @@ export function buildSummary(input: SummaryInput): SubstanceSummary {
 
   const inWindow = entries.filter((e) => e.date >= from && e.date <= today);
   const timeOfDay = BUCKETS.map((b) => ({ ...b, uses: inWindow.filter((e) => bucketOf(e.time) === b.key).length }));
-  const byForm = FORMS.map((form) => ({ form, uses: inWindow.filter((e) => e.form === form).length })).filter((f) => f.uses > 0);
+  const byForm = tally(inWindow.map((e) => e.form)).map(([form, uses]) => ({ form, uses }));
+  const bySubstance = input.substanceId === null ? tally(inWindow.map((e) => e.substanceId)).map(([substanceId, uses]) => ({ substanceId, uses })) : [];
   const byContext = CONTEXTS.map((context) => ({ context, uses: inWindow.filter((e) => e.context === context).length })).filter((c) => c.uses > 0);
 
   const usedNights = new Set(entries.map((e) => nightOfUse(e.date, e.time)).filter((n): n is string => n !== null));
@@ -206,7 +215,7 @@ export function buildSummary(input: SummaryInput): SubstanceSummary {
   const nights = firstUse ? input.nights.filter((n) => n.night >= firstUse && n.night <= today) : [];
 
   return {
-    substance: input.substance,
+    substanceId: input.substanceId,
     today,
     days,
     weeks,
@@ -218,6 +227,7 @@ export function buildSummary(input: SummaryInput): SubstanceSummary {
     timeOfDay,
     byForm,
     byContext,
+    bySubstance,
     goal: input.maxDaysPerWeek === null ? null : { maxDaysPerWeek: input.maxDaysPerWeek, daysThisWeek, within: daysThisWeek <= input.maxDaysPerWeek },
     correlations: correlate(nights, usedNights),
     ...(input.drinkDays === undefined ? {} : { drinkDays: input.drinkDays }),
@@ -261,21 +271,28 @@ function drinkDaysBetween(from: string, to: string): number {
   return new Set(listMeals(from, to).filter((m) => (m.alcoholG ?? 0) > 0).map((m) => m.date)).size;
 }
 
-export function substanceSummary(substance: Substance = "cannabis", today = localNow().date): SubstanceSummary {
+/** The ids a summary covers: one substance, or Todas = every active one. */
+const scope = (substanceId: string | null) => (substanceId === null ? listSubstances({ includeArchived: false }).map((s) => s.id) : [getSubstance(substanceId).id]);
+
+/** One substance by id, or Todas (null). A night with use is one with any of them. */
+export function substanceSummary(substanceId: string | null, today = localNow().date): SubstanceSummary {
+  const ids = scope(substanceId);
   const from = addDays(weekStart(today), -7 * (WEEKS - 1));
   return buildSummary({
-    substance,
+    substanceId,
     today,
-    entries: listUses(from, today, substance),
-    firstUse: firstUseDate(substance),
-    lastUse: lastUse(substance),
-    maxDaysPerWeek: getSettings().maxDaysPerWeek,
+    entries: listUses(from, today, ids),
+    firstUse: firstUseDate(ids),
+    lastUse: lastUse(ids),
+    maxDaysPerWeek: substanceId === null ? null : getSubstance(substanceId).maxDaysPerWeek,
     nights: nightSignals(from, today),
-    drinkDays: substance === "alcohol" ? drinkDaysBetween(from, today) : undefined,
+    drinkDays: substanceId === "alcohol" ? drinkDaysBetween(from, today) : undefined,
   });
 }
 
-/** What the phone and the web page draw. */
-export function substanceOverview(substance: Substance = "cannabis", today = localNow().date): SubstanceOverview {
-  return { summary: substanceSummary(substance, today), entries: listUses(addDays(today, -59), today, substance), settings: getSettings() };
+/** What the phone and the web page draw. `which`: a substance id, "all" for Todas, or nothing for the first active one. */
+export function substanceOverview(which?: string | null, today = localNow().date): SubstanceOverview {
+  const substances = listSubstances();
+  const substanceId = which === "all" ? null : (substances.find((s) => s.id === which)?.id ?? substances.find((s) => !s.archived)?.id ?? null);
+  return { substances, summary: substanceSummary(substanceId, today), entries: listUses(addDays(today, -59), today, scope(substanceId)) };
 }

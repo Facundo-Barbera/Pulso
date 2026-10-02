@@ -3,7 +3,7 @@ import type { DailyMetricsInput, SubstanceEntry } from "@pulso/contract";
 import { upsertDailyMetrics } from "../daily/store";
 import { addDays } from "../medication/schedule";
 import { ownDatabase } from "../web/test-db";
-import { logUse, updateSettings } from "./store";
+import { createSubstance, logUse, updateSubstance } from "./store";
 import { buildSummary, MIN_SAMPLE, nightOfUse, type NightSignals, substanceOverview, weekStart } from "./summary";
 
 // Thursday; its week starts Monday 2026-09-28 and the 8-week window on 2026-08-10.
@@ -13,12 +13,12 @@ const FROM = "2026-08-10";
 let n = 0;
 const use = (date: string, time: string, amount: SubstanceEntry["amount"] = "normal"): SubstanceEntry => ({
   id: String(++n),
-  substance: "cannabis",
+  substanceId: "cannabis",
   date,
   time,
   form: "fumado",
   amount,
-  count: null,
+  quantity: null,
   thcMg: null,
   context: null,
   note: null,
@@ -59,7 +59,7 @@ describe("nightOfUse", () => {
 describe("buildSummary", () => {
   const entries = weekendPattern();
   const summary = buildSummary({
-    substance: "cannabis",
+    substanceId: "cannabis",
     today: TODAY,
     entries,
     firstUse: entries[0]!.date,
@@ -104,7 +104,7 @@ describe("buildSummary", () => {
 
   test("too few nights on one side says nothing", () => {
     const few = buildSummary({
-      substance: "cannabis",
+      substanceId: "cannabis",
       today: TODAY,
       entries: [use("2026-09-29", "21:00")],
       firstUse: "2026-09-29",
@@ -123,7 +123,7 @@ describe("buildSummary", () => {
   test("late eating compares shares of nights", () => {
     const entries = weekendPattern();
     const late = buildSummary({
-      substance: "cannabis",
+      substanceId: "cannabis",
       today: TODAY,
       entries,
       firstUse: entries[0]!.date,
@@ -137,7 +137,7 @@ describe("buildSummary", () => {
   });
 
   test("nothing logged yet: no streak, no average, no comparisons", () => {
-    const empty = buildSummary({ substance: "nicotina", today: TODAY, entries: [], firstUse: null, lastUse: null, maxDaysPerWeek: null, nights: nights(FROM, () => ({ sleepMinutes: 420 })) });
+    const empty = buildSummary({ substanceId: "x", today: TODAY, entries: [], firstUse: null, lastUse: null, maxDaysPerWeek: null, nights: nights(FROM, () => ({ sleepMinutes: 420 })) });
     expect(empty.daysWithout).toBeNull();
     expect(empty.longestWithout).toBe(0);
     expect(empty.avgDaysPerWeek).toBeNull();
@@ -175,12 +175,13 @@ describe("substanceOverview with the real stores", () => {
     }
     upsertDailyMetrics(days);
     for (const e of weekendPattern()) logUse({ date: e.date, time: e.time, amount: e.amount });
-    logUse({ substance: "alcohol", date: "2026-09-26", time: "21:00" });
-    updateSettings({ maxDaysPerWeek: 3 });
+    logUse({ substanceId: "alcohol", date: "2026-09-26", time: "21:00" });
+    updateSubstance("cannabis", { maxDaysPerWeek: 3 });
 
     const overview = substanceOverview("cannabis", TODAY);
-    expect(overview.settings).toEqual({ maxDaysPerWeek: 3 });
-    expect(overview.entries.every((e) => e.substance === "cannabis")).toBe(true);
+    expect(overview.substances.map((s) => s.name)).toEqual(["Cannabis", "Alcohol"]);
+    expect(overview.summary.substanceId).toBe("cannabis");
+    expect(overview.entries.every((e) => e.substanceId === "cannabis")).toBe(true);
     expect(overview.entries[0]).toMatchObject({ date: "2026-09-29", time: "21:00" });
     expect(overview.summary.weeks.map((w) => w.days)).toEqual([2, 2, 2, 2, 2, 2, 2, 1]);
     expect(overview.summary.goal).toEqual({ maxDaysPerWeek: 3, daysThisWeek: 1, within: true });
@@ -194,5 +195,31 @@ describe("substanceOverview with the real stores", () => {
     expect(alcohol.summary.daysThisWeek).toBe(0);
     expect(alcohol.summary.drinkDays).toBe(0);
     expect(alcohol.entries).toHaveLength(1);
+  });
+
+  test("Todas joins every active substance; a custom one has its own forms and goal", () => {
+    const tabaco = createSubstance({ name: "Tabaco", unit: "cigarros", forms: ["fumado", "vapeado"], maxDaysPerWeek: 4 });
+    logUse({ substanceId: tabaco.id, date: "2026-09-30", time: "08:30", quantity: 3 });
+
+    const own = substanceOverview(tabaco.id, TODAY);
+    expect(own.summary).toMatchObject({ substanceId: tabaco.id, daysThisWeek: 1, goal: { maxDaysPerWeek: 4, daysThisWeek: 1, within: true }, bySubstance: [] });
+    expect(own.summary.byForm).toEqual([{ form: "fumado", uses: 1 }]);
+    expect(own.entries[0]).toMatchObject({ substanceId: tabaco.id, form: "fumado", quantity: 3 });
+
+    const all = substanceOverview("all", TODAY);
+    expect(all.summary.substanceId).toBeNull();
+    expect(all.summary.goal).toBeNull();
+    // Cannabis on 09-29 and tabaco on 09-30 this week.
+    expect(all.summary.daysThisWeek).toBe(2);
+    expect(all.summary.bySubstance[0]).toEqual({ substanceId: "cannabis", uses: 15 });
+    expect(all.summary.bySubstance).toHaveLength(3);
+    expect(all.summary.bySubstance).toEqual(expect.arrayContaining([{ substanceId: "alcohol", uses: 1 }, { substanceId: tabaco.id, uses: 1 }]));
+    expect(all.entries.map((e) => e.substanceId)).toContain(tabaco.id);
+
+    // Archived: out of Todas, history still readable on its own.
+    updateSubstance(tabaco.id, { archived: true });
+    expect(substanceOverview("all", TODAY).summary.bySubstance.map((b) => b.substanceId)).not.toContain(tabaco.id);
+    expect(substanceOverview(tabaco.id, TODAY).entries).toHaveLength(1);
+    expect(substanceOverview(undefined, TODAY).summary.substanceId).toBe("cannabis");
   });
 });

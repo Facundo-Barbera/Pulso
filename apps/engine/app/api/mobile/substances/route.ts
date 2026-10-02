@@ -1,5 +1,4 @@
-import type { Substance } from "@pulso/contract";
-import { logUse, SUBSTANCES } from "@/src/substances/store";
+import { logUse } from "@/src/substances/store";
 import { substanceOverview } from "@/src/substances/summary";
 import { deviceOf, unpaired } from "../auth";
 import { asOf } from "../medication/respond";
@@ -7,11 +6,10 @@ import { body, respond } from "./respond";
 
 export const dynamic = "force-dynamic";
 
-/** `?substance=cannabis&date=&time=` → `SubstanceOverview` as of the phone's local day. */
+/** `?substance=<id|all>&date=&time=` → `SubstanceOverview` as of the phone's local day; default the first active substance. */
 export function GET(request: Request): Promise<Response> {
   if (!deviceOf(request)) return Promise.resolve(unpaired());
-  const param = new URL(request.url).searchParams.get("substance");
-  const substance: Substance = SUBSTANCES.includes(param as Substance) ? (param as Substance) : "cannabis";
+  const substance = new URL(request.url).searchParams.get("substance");
   return respond(() => substanceOverview(substance, asOf(request).date));
 }
 

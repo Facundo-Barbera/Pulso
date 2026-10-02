@@ -6,6 +6,7 @@ import { migrateDaily } from "./daily/schema";
 import { migrateDevices } from "./devices-schema";
 import { migrateMcp } from "./mcp/schema";
 import { SCHEMAS } from "./schemas";
+import { migrateSubstances } from "./substances/schema";
 import { migrateTraining } from "./training/schema";
 import { migrateWorkouts } from "./workouts-schema";
 
@@ -48,6 +49,7 @@ export function db(): Database {
     migrateDaily(database);
     migrateTraining(database);
     migrateMcp(database);
+    migrateSubstances(database);
     g[APPLIED] = { database, schemas: SCHEMAS };
   }
   return database;

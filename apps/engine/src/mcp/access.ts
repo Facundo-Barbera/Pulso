@@ -98,6 +98,8 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   update_shopping_item: "write",
   check_shopping_items: "write",
   remove_shopping_items: "write",
+  list_substances: "read",
+  create_substance: "write",
   log_substance_use: "write",
   list_substance_use: "read",
   substance_summary: "read",

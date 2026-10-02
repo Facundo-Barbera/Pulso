@@ -25,7 +25,7 @@ test("the Mac sees Sustancias by default and can log", async () => {
   expect(logged.status).toBe(200);
   const response = overviewGET(new Request(`${BASE}?s=cannabis`));
   expect(response.status).toBe(200);
-  expect((await response.json()).summary.substance).toBe("cannabis");
+  expect((await response.json()).summary.substanceId).toBe("cannabis");
 });
 
 test("a paired browser gets nothing until it turns Sustancias on for itself", async () => {
