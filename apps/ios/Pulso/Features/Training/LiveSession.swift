@@ -61,13 +61,50 @@ final class LiveSession {
     /// hold changes the engine never got, so it is pushed again.
     static func restore() -> LiveSession? {
         guard let data = try? Data(contentsOf: TrainingFiles.live), let state = LiveSessionState.decodeStored(data) else { return nil }
-        let session = LiveSession(state: state, clock: TrainingFiles.load(CardioClock.self, from: TrainingFiles.cardio))
-        session.activity = Activity<TrainingActivityAttributes>.activities.first
-        session.dirty = true
+        return resume(state, clock: TrainingFiles.load(CardioClock.self, from: TrainingFiles.cardio), unsent: true)
+    }
+
+    /// The session the engine still has when this phone lost its file (a reinstall).
+    static func restore(from remote: LiveSessionState) -> LiveSession {
+        resume(remote, clock: nil, unsent: false)
+    }
+
+    /// Picks up where the session was: the rest timer and cardio clock from their
+    /// timestamps (a rest that ran out meanwhile moves on, as it would have), and
+    /// the Live Activity it left running.
+    private static func resume(_ state: LiveSessionState, clock: CardioClock?, unsent: Bool) -> LiveSession {
+        let session = LiveSession(state: state, clock: clock)
+        if session.state.restEndedWhileAway() { session.mutate { $0.advanceIfDone() } }
         session.armRest()
         session.armCardio()
-        session.schedulePush(after: .seconds(2))
+        session.attachActivity()
+        if unsent {
+            session.dirty = true
+            session.schedulePush(after: .seconds(2))
+        }
         return session
+    }
+
+    // MARK: Sessions closed on this phone
+
+    private static let closedKey = "pulso.training.closedLive"
+
+    /// Ids of the last sessions finished or discarded here, so the engine's copy of
+    /// one (its DELETE didn't land) is never brought back as if still running.
+    static var closedIds: Set<String> { Set(UserDefaults.standard.stringArray(forKey: closedKey) ?? []) }
+
+    private static func rememberClosed(_ id: String) {
+        let ids = (UserDefaults.standard.stringArray(forKey: closedKey) ?? []).filter { $0 != id } + [id]
+        UserDefaults.standard.set(Array(ids.suffix(20)), forKey: closedKey)
+    }
+
+    /// A session older than this on the engine was abandoned, not interrupted.
+    nonisolated static let abandonedAfter: TimeInterval = 12 * 60 * 60
+
+    /// Whether the engine's session is one to resume on a phone that has none:
+    /// not closed here (`closed` also holds finished sessions waiting to upload) and touched recently.
+    nonisolated static func shouldRestore(_ remote: LiveSessionState, closed: Set<String>, now: Date) -> Bool {
+        !closed.contains(remote.id) && now.timeIntervalSince(remote.updatedAt) < abandonedAfter
     }
 
     /// Starts the Live Activity and gives the engine the new session (base version 0).
@@ -425,10 +462,15 @@ final class LiveSession {
         adopt(remote)
     }
 
-    /// Before the app is suspended: what the debounce hasn't sent yet.
+    /// Before the app is suspended: what the debounce hasn't sent yet, with the
+    /// background time to send it (the app may be killed next).
     func flush() {
         pushTask?.cancel()
-        Task { await push() }
+        let background = BackgroundTime("live-session")
+        Task {
+            await push()
+            background.end()
+        }
     }
 
     private func adopt(_ remote: LiveSessionState) {
@@ -494,6 +536,7 @@ final class LiveSession {
     /// or as a discard.
     func close() async {
         closed = true
+        Self.rememberClosed(state.id)
         pushTask?.cancel()
         restTask?.cancel()
         cardioTask?.cancel()
@@ -513,6 +556,26 @@ final class LiveSession {
     private func activityState() -> TrainingActivityAttributes.ContentState {
         let cardio = cardioIndex.map { ($0, CardioCue.status(state.exercises[$0], clock: clock, zones: TrainingStore.shared.hrZones)) }
         return state.activityState(cardio: cardio, unit: TrainingStore.shared.unit(for:))
+    }
+
+    /// Whether a Live Activity was started for `state` (ActivityKit's copy of the date may round).
+    nonisolated static func isActivity(_ attributes: TrainingActivityAttributes, of state: LiveSessionState) -> Bool {
+        abs(attributes.startedAt.timeIntervalSince(state.startedAt)) < 1
+    }
+
+    /// Adopts the Live Activity this session left running (after a relaunch it is
+    /// still on the lock screen) and brings it up to date; starts one if there is
+    /// none. Any other left over is ended, so there is never a duplicate.
+    /// Starting needs the foreground: called again when the app becomes active.
+    func attachActivity() {
+        guard !closed else { return }
+        let running = Activity<TrainingActivityAttributes>.activities.filter { $0.activityState != .ended && $0.activityState != .dismissed }
+        let mine = running.first { $0.id == activity?.id } ?? running.first { Self.isActivity($0.attributes, of: state) }
+        for other in running where other.id != mine?.id {
+            Task { await other.end(nil, dismissalPolicy: .immediate) }
+        }
+        activity = mine
+        if mine == nil { startActivity() } else { updateActivity() }
     }
 
     private func startActivity() {

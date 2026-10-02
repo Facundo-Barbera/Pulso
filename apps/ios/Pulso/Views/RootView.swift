@@ -12,6 +12,7 @@ struct RootView: View {
     private var launcher = CoachLauncher.shared
     private var training = TrainingStore.shared
     private var lock = AppLock.shared
+    private var notifications = NotificationRouter.shared
 
     init(model: PulsoModel) { self.model = model }
 
@@ -37,11 +38,24 @@ struct RootView: View {
         .onChange(of: launcher.tabRequest?.id) { _, id in if id != nil, let next = launcher.takeTab() { tab = next } }
         // A session started from Siri, a widget or another tab shows where it lives.
         .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
-        .onChange(of: lock.locked, initial: true) { _, locked in LockCover.shared.update(locked: locked) }
+        // A workout resumed after a relaunch opens on its live screen.
+        .onChange(of: training.liveRequested) { _, wanted in if wanted { tab = "entreno" } }
+        .onChange(of: notifications.pending) { openNotification() }
+        .onAppear {
+            if training.liveRequested { tab = "entreno" }
+            openNotification()
+        }
+        .onChange(of: lock.locked, initial: true) { _, locked in
+            LockCover.shared.update(locked: locked)
+            // A notification tapped while locked opens once Face ID lets them in.
+            if !locked { openNotification() }
+        }
         .task {
             await model.refresh()
             // A finished workout the Mac didn't get goes now, whatever tab opens first.
             await training.uploadPending()
+            // A workout the engine has but this phone lost (reinstall) comes back.
+            await training.restoreFromEngine()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -55,6 +69,7 @@ struct RootView: View {
                 }
                 // Replies the Mac kept writing while Pulso was away pick up where they were.
                 ChatStore.resumeAll()
+                openNotification()
             case .inactive:
                 // The Face ID sheet itself makes the scene inactive; no cover for that.
                 if !lock.authenticating { PrivacyShield.shared.show() }
@@ -86,6 +101,21 @@ struct RootView: View {
             }
         }
         .modifier(OfflineAccessory(model: model))
+    }
+
+    /// Opens what a tapped notification points to. Waits for the scene to be active:
+    /// a notification that launches the app arrives before there is anything to show.
+    private func openNotification() {
+        guard scenePhase == .active, !lock.locked, model.credentials != nil, let route = notifications.take() else { return }
+        switch route {
+        case .today:
+            tab = "hoy"
+        case .training:
+            tab = "entreno"
+            training.liveRequested = training.live != nil
+        case let .coach(threadId):
+            Task { await launcher.open(threadId: threadId) }
+        }
     }
 }
 

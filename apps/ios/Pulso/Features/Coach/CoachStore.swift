@@ -139,9 +139,9 @@ final class ChatStore {
         followTask?.cancel()
         streaming = true
         followTask = Task { [weak self] in
-            let background = await UIApplication.shared.beginBackgroundTask(withName: "coach-turn")
+            let background = BackgroundTime("coach-turn")
             await self?.follow(open())
-            await UIApplication.shared.endBackgroundTask(background)
+            background.end()
             self?.followTask = nil
         }
     }

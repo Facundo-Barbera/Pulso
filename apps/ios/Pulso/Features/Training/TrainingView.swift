@@ -85,6 +85,8 @@ struct TrainingView: View {
         }
         .refreshable { await load() }
         .task { await load() }
+        .onAppear(perform: openRequestedLive)
+        .onChange(of: store.liveRequested) { openRequestedLive() }
         .fullScreenCover(isPresented: $showLive, onDismiss: finishIfRequested) {
             if let live = store.live {
                 LiveSessionView(session: live, store: store)
@@ -159,6 +161,13 @@ struct TrainingView: View {
         await store.load()
         let ids = store.program?.days.flatMap { $0.exercises.map(\.exerciseId) } ?? []
         await ExerciseCatalog.shared.prefetch(ids, animations: store.nextDay?.exercises.map(\.exerciseId) ?? [])
+    }
+
+    /// A resumed session or a rest/cardio notification: the live screen, once.
+    private func openRequestedLive() {
+        guard store.liveRequested else { return }
+        store.liveRequested = false
+        if store.live != nil { showLive = true }
     }
 
     private func finishIfRequested() {

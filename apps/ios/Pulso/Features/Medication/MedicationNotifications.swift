@@ -5,7 +5,8 @@ import UserNotifications
 /// right on the notification. iOS keeps at most 64 pending requests, so the
 /// next week of doses is planned (capped) from the engine's resolved slots and
 /// re-planned on every refresh, every action and after every workout.
-final class MedicationNotifications: NSObject, UNUserNotificationCenterDelegate {
+/// `NotificationRouter` is the delegate and hands the actions to `respond(to:)`.
+final class MedicationNotifications {
     static let shared = MedicationNotifications()
 
     static let category = "pulso.medication.dose"
@@ -18,16 +19,17 @@ final class MedicationNotifications: NSObject, UNUserNotificationCenterDelegate 
     private let center = UNUserNotificationCenter.current()
     private var activated = false
 
-    /// Registers the actions and becomes the notification delegate. Must run at launch so
-    /// an action tapped while the app is closed reaches `didReceive`; idempotent.
+    /// Registers the actions and makes sure the delegate is set. Must run at launch so
+    /// an action tapped while the app is closed reaches it; idempotent.
+    @MainActor
     func activate() {
+        NotificationRouter.shared.activate()
         guard !activated else { return }
         activated = true
         let take = UNNotificationAction(identifier: Self.takeAction, title: "Tomada", options: [.authenticationRequired], icon: .init(systemImageName: "checkmark.circle.fill"))
         let snooze = UNNotificationAction(identifier: Self.snoozeAction, title: "Posponer \(Self.snoozeMinutes) min", options: [], icon: .init(systemImageName: "clock.arrow.circlepath"))
         let category = UNNotificationCategory(identifier: Self.category, actions: [take, snooze], intentIdentifiers: [], options: [])
         center.setNotificationCategories([category])
-        center.delegate = self
     }
 
     @discardableResult
@@ -178,13 +180,10 @@ final class MedicationNotifications: NSObject, UNUserNotificationCenterDelegate 
         UserDefaults.standard.set(Array(kept.union([slotId])), forKey: Self.nudgedKey)
     }
 
-    // MARK: Delegate
+    // MARK: Actions
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    /// "Tomada" logs the dose, "Posponer" asks again in 15 minutes; a plain tap does nothing here.
+    func respond(to response: UNNotificationResponse) async {
         let content = response.notification.request.content
         guard content.categoryIdentifier == Self.category,
               let medicationId = content.userInfo["medicationId"] as? String,
