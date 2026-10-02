@@ -60,6 +60,7 @@ struct NutritionView: View {
             .animation(.snappy, value: store.horizon)
             .animation(.snappy, value: section)
         }
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Dieta")
         .toolbar { toolbar }
@@ -122,7 +123,7 @@ struct NutritionView: View {
             NutritionTodaySection(day: day, store: store, sheet: $sheet, showPlan: { section = .plan },
                                   addWater: addWater, undoWater: { Task { await store.undoWater() } },
                                   copyPrevious: { Task { await copyPrevious() } }, draftForCoach: { askCoach($0, send: false) },
-                                  onAction: act)
+                                  onAction: act, onMove: move)
                 .transition(.opacity)
         case .plan:
             NutritionPlanSection(store: store, askCoach: { askCoach($0) }, onAction: act, onChange: showChange, selected: $planDate)
@@ -149,17 +150,22 @@ struct NutritionView: View {
         }
     }
 
-    /// The single floating action on Hoy. Short enough to never truncate, even at the largest text.
+    /// The single action on Hoy: a compact glass capsule at the trailing edge, under the right
+    /// thumb. It is a safe-area inset, so the last row always scrolls clear of it and the tab bar.
     private var registerButton: some View {
-        Button { sheet = .register } label: {
-            Label("Registrar", systemImage: "plus")
-                .font(.headline)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 14).padding(.vertical, 6)
+        HStack {
+            Spacer()
+            Button { sheet = .register } label: {
+                Label("Registrar", systemImage: "plus")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
         }
-        .buttonStyle(.glassProminent)
-        .controlSize(.large)
+        .padding(.horizontal)
         .padding(.bottom, 8)
     }
 
@@ -200,6 +206,12 @@ struct NutritionView: View {
         case .noCook:
             Task { if let change = await store.apply(.noTimeToCook(slot)) { showChange(change) } }
         }
+    }
+
+    /// "Mover a la cena": what was eaten now counts for that meal; the one it leaves settles.
+    private func move(_ meals: [MealEntry], to slot: PlanSlot) {
+        guard !meals.isEmpty else { return }
+        Task { if let change = await store.apply(.replace(slot, entryIds: meals.map(\.id))) { showChange(change) } }
     }
 
     /// The Mac's Spanish summary of a plan change, with "Deshacer" reverting that revision.
