@@ -1,7 +1,9 @@
-import { Bot, Link2, MonitorSmartphone, Palette } from "lucide-react";
+import { Bot, ChevronRight, CircleDashed, Link2, MonitorSmartphone, Palette } from "lucide-react";
+import Link from "next/link";
 import { headers } from "next/headers";
 import { callerOf } from "@/src/device-auth";
 import { listDevices } from "@/src/devices";
+import { shownHere } from "@/src/substances/web";
 import { fromTailnet } from "@/src/tailnet-gate";
 import { agentsOverview } from "@/src/web/agents";
 import { Card, CardTitle } from "../../_ui/card";
@@ -10,6 +12,7 @@ import { AgentsPanel } from "./_components/agents";
 import { AppearancePanel } from "./_components/appearance-panel";
 import { DeviceList, ThisBrowser } from "./_components/devices";
 import { PairPanel } from "./_components/pair-panel";
+import { VisibilityToggle } from "../sustancias/_components/visibility";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Ajustes" };
@@ -23,6 +26,7 @@ export default async function Ajustes() {
   const head = await headers();
   const local = !fromTailnet(head);
   const me = local ? undefined : callerOf(head).device;
+  const substances = shownHere(head);
   return (
     <Page>
       <PageHeader title="Ajustes" subtitle={local ? "Empareja el iPhone y otros navegadores, conecta otros agentes y elige cómo se ve Pulso." : "Este navegador está emparejado con la Mac que guarda tus datos."} />
@@ -49,7 +53,18 @@ export default async function Ajustes() {
             <p className="text-muted-foreground text-[14px] leading-relaxed">Sólo desde la Mac. Las llaves de otros agentes se crean, cambian y revocan en la ventana de Pulso de la Mac, en Ajustes › Agentes.</p>
           )}
         </Card>
-        <Card delay={180} className="lg:col-span-2">
+        <Card delay={180}>
+          <CardTitle icon={CircleDashed} color="var(--domain-medication)" title="Sustancias" />
+          <p className="text-muted-foreground mb-4 text-[13px] leading-relaxed">Un registro privado que no aparece en Hoy ni en el menú. Otros agentes no lo ven salvo que les des «Datos sensibles».</p>
+          <VisibilityToggle visible={substances} local={local} />
+          {substances && (
+            <Link href="/sustancias" className="hover:bg-muted/60 focus-visible:ring-ring -mx-2 mt-3 flex min-h-11 items-center rounded-xl px-2 text-[14px] font-medium outline-none focus-visible:ring-2">
+              Abrir Sustancias
+              <ChevronRight className="text-muted-foreground ml-auto size-4" />
+            </Link>
+          )}
+        </Card>
+        <Card delay={240}>
           <CardTitle icon={Palette} color="var(--pulso-rose)" title="Apariencia" />
           <AppearancePanel />
         </Card>

@@ -11,7 +11,8 @@ import { isActive, SECTIONS, type Section } from "./sections";
 
 export const SIDEBAR_COOKIE = "pulso_sidebar";
 
-export type Who = { local: boolean; name: string | null };
+/** `substances`: this browser shows Sustancias (it is in ⌘K only then). */
+export type Who = { local: boolean; name: string | null; substances: boolean };
 
 /**
  * The frame every page sits in: a sidebar on wide screens (collapsible to an
@@ -118,7 +119,7 @@ export function Shell({ collapsed: initiallyCollapsed, who, children }: { collap
       </main>
 
       <TabBar pathname={pathname} />
-      <CommandPalette open={palette} onClose={() => setPalette(false)} />
+      <CommandPalette open={palette} onClose={() => setPalette(false)} substances={who.substances} />
     </div>
   );
 }
