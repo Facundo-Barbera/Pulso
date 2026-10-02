@@ -3,7 +3,8 @@ import SwiftUI
 @main
 struct PulsoApp: App {
     init() {
-        // Dose reminder actions ("Tomada", "Posponer") tapped while the app is closed only arrive if the delegate is set at launch.
+        // A notification that launches the app (and the dose actions "Tomada", "Posponer") only arrives if the delegate is set at launch.
+        NotificationRouter.shared.activate()
         MedicationNotifications.shared.activate()
     }
 
