@@ -9,6 +9,7 @@ final class BodyStore {
     private(set) var scans: [BodyScan] = []
     private(set) var goals: [BodyGoal] = []
     private(set) var projections: [BodyMetric: BodyProjection] = [:]
+    private(set) var analysis: BodyAnalysis?
     private(set) var loaded = false
     private(set) var busy = false
     /// A one-line confirmation for the person ("3 mediciones importadas").
@@ -93,5 +94,6 @@ final class BodyStore {
         scans = dashboard.scans
         goals = dashboard.goals
         projections = Dictionary(uniqueKeysWithValues: dashboard.projections.map { ($0.metric, $0) })
+        analysis = dashboard.analysis
     }
 }

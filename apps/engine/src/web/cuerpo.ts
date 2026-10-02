@@ -1,11 +1,12 @@
 /**
  * What the web app's Cuerpo page draws: the latest scan with how it moved,
- * every scan for the history and trends, the four projections, goals and the
- * profile fields that describe the body. Read-only; the page and
+ * every scan for the history and trends, the four projections, goals, the
+ * profile fields that describe the body and the InBody-style analysis. Read-only; the page and
  * `GET /api/web/cuerpo` share it.
  */
-import { BODY_METRICS, type BodyGoal, type BodyMetric, type BodyProjection, type BodyScan, type Profile } from "@pulso/contract";
+import { BODY_METRICS, type BodyAnalysis, type BodyGoal, type BodyMetric, type BodyProjection, type BodyScan, type Profile } from "@pulso/contract";
 import { getProfile } from "../agent/profile";
+import { bodyAnalysis } from "../body/standards";
 import { listGoals, listScans, projections } from "../body/store";
 
 /** A metric's newest value across scans, and how it moved since the scan before that one that also measured it. */
@@ -26,6 +27,8 @@ export type BodyOverview = {
   projections: BodyProjection[];
   goals: BodyGoal[];
   profile: Profile;
+  /** InBody-style bars and segments against the standard for the height. */
+  analysis: BodyAnalysis;
 };
 
 const SCANS = 200;
@@ -42,12 +45,14 @@ export function bodyReadings(scans: BodyScan[]): BodyOverview["readings"] {
 
 export function bodyOverview(): BodyOverview {
   const scans = listScans(SCANS).map((scan) => ({ ...scan, raw: null }));
+  const profile = getProfile();
   return {
     latest: scans[0] ?? null,
     readings: bodyReadings(scans),
     scans,
     projections: projections(),
     goals: listGoals(),
-    profile: getProfile(),
+    profile,
+    analysis: bodyAnalysis(scans, profile),
   };
 }

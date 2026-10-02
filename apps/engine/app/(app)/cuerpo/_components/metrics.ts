@@ -1,11 +1,12 @@
-import type { BodyMetric } from "@pulso/contract";
+import type { BodyBand, BodyMetric } from "@pulso/contract";
+import { BicepsFlexed, Droplet, Percent, Scale, type LucideIcon } from "lucide-react";
 
-/** How each tracked metric reads: Spanish label, unit, domain colour, and which way is progress when there is no goal. */
-export const METRIC: Record<BodyMetric, { label: string; unit: string; color: string; lowerIsBetter: boolean }> = {
-  weight: { label: "Peso", unit: "kg", color: "var(--domain-body)", lowerIsBetter: true },
-  percentBodyFat: { label: "Grasa", unit: "%", color: "var(--domain-fat)", lowerIsBetter: true },
-  skeletalMuscleMass: { label: "Músculo", unit: "kg", color: "var(--domain-protein)", lowerIsBetter: false },
-  bodyFatMass: { label: "Masa grasa", unit: "kg", color: "var(--domain-carbs)", lowerIsBetter: true },
+/** How each tracked metric reads: Spanish label, unit, domain colour, icon, and which way is progress when there is no goal. */
+export const METRIC: Record<BodyMetric, { label: string; unit: string; color: string; icon: LucideIcon; lowerIsBetter: boolean }> = {
+  weight: { label: "Peso", unit: "kg", color: "var(--domain-body)", icon: Scale, lowerIsBetter: true },
+  percentBodyFat: { label: "Grasa", unit: "%", color: "var(--domain-fat)", icon: Percent, lowerIsBetter: true },
+  skeletalMuscleMass: { label: "Músculo", unit: "kg", color: "var(--domain-protein)", icon: BicepsFlexed, lowerIsBetter: false },
+  bodyFatMass: { label: "Masa grasa", unit: "kg", color: "var(--domain-fat)", icon: Droplet, lowerIsBetter: true },
 };
 
 export const METRIC_ORDER: BodyMetric[] = ["weight", "percentBodyFat", "skeletalMuscleMass", "bodyFatMass"];
@@ -16,6 +17,8 @@ export function isProgress(metric: BodyMetric, delta: number, now: number, goal?
   if (goal !== undefined) return Math.sign(goal - (now - delta)) === Math.sign(delta);
   return delta < 0 === METRIC[metric].lowerIsBetter;
 }
+
+export const BAND_LABEL: Record<BodyBand, string> = { low: "Bajo", normal: "Normal", high: "Alto" };
 
 /** "72,4" — one decimal at most, Spanish. */
 export const kg = (value: number, decimals = 1) => value.toLocaleString("es", { maximumFractionDigits: decimals });

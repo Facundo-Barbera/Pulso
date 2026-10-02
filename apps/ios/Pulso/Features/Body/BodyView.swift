@@ -1,7 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Cuerpo: latest scan as the hero, composition, trends with projection, goals and history.
+/// Cuerpo: latest scan as the hero, trends with projection and goals, composition, InBody-style
+/// segment, muscle-fat and obesity analyses, the evolution across scans, and history.
 struct BodyView: View {
     let model: PulsoModel
     @State private var store = BodyStore()
@@ -16,9 +17,12 @@ struct BodyView: View {
                     BodyHero(scan: latest, previous: store.previous)
                     BodyTrendCard(store: store, metric: $metric) { sheet = .goal(metric) }
                     CompositionCard(scan: latest)
-                    if latest.segmentalLean != nil || latest.segmentalFat != nil {
-                        SegmentalCard(scan: latest)
+                    if let analysis = store.analysis {
+                        if let segments = analysis.segments { SegmentFigureCard(segments: segments) }
+                        MuscleFatCard(analysis: analysis)
+                        if !analysis.obesity.isEmpty { ObesityCard(gauges: analysis.obesity) }
                     }
+                    BodyEvolutionCard(scans: store.scans)
                     BodyHistoryCard(scans: store.scans) { scan in Task { await store.delete(scan) } }
                 } else if store.loaded {
                     BodyEmptyState(scan: { sheet = .scanner }, manual: { sheet = .entry(nil) }, importCSV: { importing = true })

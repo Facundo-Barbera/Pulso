@@ -115,6 +115,53 @@ export type BodyProjection = {
   note: string;
 };
 
+/** Where a value sits against its normal range, as InBody's sheet bands it. */
+export type BodyBand = "low" | "normal" | "high";
+
+/** One horizontal bar of InBody's Muscle-Fat or Obesity analysis, laid out by the engine. */
+export type BodyGauge = {
+  metric: "weight" | "skeletalMuscleMass" | "bodyFatMass" | "bmi" | "percentBodyFat" | "visceralFatLevel";
+  /** Epoch ms of the scan the value is from */
+  measuredAt: number;
+  /** In `unit` */
+  value: number;
+  /** The scan before that measured it, in `unit` */
+  previous: number | null;
+  unit: "kg" | "kg/m²" | "%" | "nivel";
+  /** The normal range, in `unit` */
+  normal: { low: number; high: number };
+  band: BodyBand;
+  /** Value as % of the person's standard, for the bars InBody draws in % (weight, muscle, fat mass) */
+  percent: number | null;
+  /** Positions along the bar, 0–1, so every client draws the same thing */
+  at: { value: number; previous: number | null; low: number; high: number };
+  /** Evenly spaced labels, as printed on the sheet (% of standard, or the raw scale) */
+  ticks: string[];
+};
+
+export type SegmentKey = keyof Segmental;
+
+/** One segment's mass against the standard for it. */
+export type SegmentValue = { kg: number; percent: number | null; band: BodyBand | null };
+
+export type BodyAnalysis = {
+  /** What the standards were computed from; null when there is no height (profile, or weight ÷ BMI of a scan). */
+  basis: { heightCm: number; heightFrom: "profile" | "scan"; sex: "male" | "female" | null; standardWeight: number } | null;
+  /** Weight, skeletal muscle and fat mass vs the standard for the height, from the newest scan that has all three. */
+  muscleFat: { measuredAt: number; gauges: BodyGauge[] } | null;
+  /** BMI and % fat (and the visceral level when measured), newest of each. */
+  obesity: BodyGauge[];
+  /** From the newest scan with segmental values. `basis` "height" compares with the standard for the height, "weight" with the person's own weight. */
+  segments: {
+    measuredAt: number;
+    basis: "height" | "weight";
+    lean: Record<SegmentKey, SegmentValue> | null;
+    fat: Record<SegmentKey, SegmentValue> | null;
+    /** Spanish, short: "Brazos equilibrados", "Pierna izq. 4 % menos" */
+    balance: { text: string; even: boolean }[];
+  } | null;
+};
+
 /** What the QR parser returns to the phone before anything is saved. */
 export type InBodyParse =
   | { ok: true; scan: BodyScanInput }

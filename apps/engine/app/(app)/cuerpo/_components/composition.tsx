@@ -1,22 +1,21 @@
-import type { BodyScan, BodyScanValues, Segmental } from "@pulso/contract";
-import { PersonStanding, PieChart } from "lucide-react";
+import type { BodyScan, BodyScanValues } from "@pulso/contract";
+import { Activity, Beef, BicepsFlexed, Droplets, Flame, Gauge, Gem, PieChart, Ruler, ScanSearch, Shell, Waves, type LucideIcon } from "lucide-react";
 import { Card, CardTitle } from "../../../_ui/card";
-import { cn } from "../../../_ui/cn";
 import { kg } from "./metrics";
 
 /** The other numbers on an InBody sheet, in the order the person reads them. Only the ones the scan carries are shown. */
-const DETAILS: { key: keyof BodyScanValues; label: string; unit?: string; decimals?: number }[] = [
-  { key: "bmi", label: "IMC", unit: "kg/m²" },
-  { key: "visceralFatLevel", label: "Grasa visceral", unit: "nivel", decimals: 0 },
-  { key: "bmr", label: "Metabolismo basal", unit: "kcal", decimals: 0 },
-  { key: "totalBodyWater", label: "Agua corporal", unit: "L" },
-  { key: "protein", label: "Proteína", unit: "kg" },
-  { key: "mineral", label: "Minerales", unit: "kg", decimals: 2 },
-  { key: "ecwRatio", label: "Ratio AEC/ACT", decimals: 3 },
-  { key: "smi", label: "Índice músculo-esquelético", unit: "kg/m²" },
-  { key: "waistHipRatio", label: "Cintura-cadera", decimals: 2 },
-  { key: "visceralFatArea", label: "Área de grasa visceral", unit: "cm²", decimals: 0 },
-  { key: "phaseAngle", label: "Ángulo de fase", unit: "°" },
+const DETAILS: { key: keyof BodyScanValues; label: string; icon: LucideIcon; unit?: string; decimals?: number }[] = [
+  { key: "bmi", label: "IMC", icon: Gauge, unit: "kg/m²" },
+  { key: "visceralFatLevel", label: "Grasa visceral", icon: Shell, unit: "nivel", decimals: 0 },
+  { key: "bmr", label: "Metabolismo basal", icon: Flame, unit: "kcal", decimals: 0 },
+  { key: "totalBodyWater", label: "Agua corporal", icon: Droplets, unit: "L" },
+  { key: "protein", label: "Proteína", icon: Beef, unit: "kg" },
+  { key: "mineral", label: "Minerales", icon: Gem, unit: "kg", decimals: 2 },
+  { key: "ecwRatio", label: "Ratio AEC/ACT", icon: Waves, decimals: 3 },
+  { key: "smi", label: "Índice músculo-esquelético", icon: BicepsFlexed, unit: "kg/m²" },
+  { key: "waistHipRatio", label: "Cintura-cadera", icon: Ruler, decimals: 2 },
+  { key: "visceralFatArea", label: "Área de grasa visceral", icon: ScanSearch, unit: "cm²", decimals: 0 },
+  { key: "phaseAngle", label: "Ángulo de fase", icon: Activity, unit: "°" },
 ];
 
 export const hasBreakdown = (scan: BodyScan) => scan.weight != null && scan.bodyFatMass != null && scan.skeletalMuscleMass != null;
@@ -78,11 +77,16 @@ export function CompositionCard({ breakdown, sheet, delay }: { breakdown: Dated;
       {details.length > 0 ? (
         <dl className={slices.length ? "border-border mt-5 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-4" : "grid grid-cols-2 gap-x-4 gap-y-3"}>
           {details.map((d) => (
-            <div key={d.key} className="min-w-0">
-              <dt className="text-muted-foreground truncate text-[12px]">{d.label}</dt>
-              <dd className="tabular text-[15px] font-semibold">
-                {kg(sheet!.scan[d.key]!, d.decimals ?? 1)} {d.unit && <span className="text-muted-foreground text-[12px] font-normal">{d.unit}</span>}
-              </dd>
+            <div key={d.key} className="flex min-w-0 items-center gap-2.5">
+              <span className="bg-muted text-muted-foreground grid size-7 shrink-0 place-items-center rounded-lg">
+                <d.icon className="size-3.5" strokeWidth={2.2} aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <dt className="text-muted-foreground truncate text-[12px]">{d.label}</dt>
+                <dd className="tabular text-[15px] leading-tight font-semibold">
+                  {kg(sheet!.scan[d.key]!, d.decimals ?? 1)} {d.unit && <span className="text-muted-foreground text-[12px] font-normal">{d.unit}</span>}
+                </dd>
+              </div>
             </div>
           ))}
         </dl>
@@ -90,55 +94,6 @@ export function CompositionCard({ breakdown, sheet, delay }: { breakdown: Dated;
         slices.length === 0 && <p className="text-muted-foreground text-[13px] leading-relaxed">Esta medición sólo trae el peso. Un escaneo de InBody añade músculo, grasa, agua y el resto.</p>
       )}
       {provenance && <p className="text-muted-foreground mt-4 text-[12px]">{provenance}</p>}
-    </Card>
-  );
-}
-
-const SEGMENTS: { key: keyof Segmental; label: string; area: string }[] = [
-  { key: "rightArm", label: "Brazo der.", area: "ra" },
-  { key: "trunk", label: "Tronco", area: "tr" },
-  { key: "leftArm", label: "Brazo izq.", area: "la" },
-  { key: "rightLeg", label: "Pierna der.", area: "rl" },
-  { key: "leftLeg", label: "Pierna izq.", area: "ll" },
-];
-
-/** Lean and fat mass per segment, laid out like the body (right side on the left, as the InBody sheet draws it). */
-export function SegmentalCard({ lean, fat, date, delay }: { lean: Segmental | null; fat: Segmental | null; date?: string; delay: number }) {
-  const balance = lean ? Math.abs(lean.rightArm - lean.leftArm) / Math.max(lean.rightArm, lean.leftArm) : 0;
-  return (
-    <Card delay={delay}>
-      <CardTitle icon={PersonStanding} color="var(--domain-body)" title="Por segmento" />
-      <div className="text-muted-foreground mb-3 flex gap-4 text-[12px]">
-        {lean && (
-          <span className="flex items-center gap-1.5">
-            <span className="legend-dot bg-foreground size-2 rounded-full" /> Masa magra
-          </span>
-        )}
-        {fat && (
-          <span className="flex items-center gap-1.5">
-            <span className="legend-dot size-2 rounded-full" style={{ background: "var(--domain-fat)" }} /> Grasa
-          </span>
-        )}
-      </div>
-      <div className="grid gap-2" style={{ gridTemplateAreas: '"ra tr la" "rl tr ll"', gridTemplateColumns: "1fr 1fr 1fr" }}>
-        {SEGMENTS.map((s) => (
-          <div key={s.key} className={cn("bg-muted/60 min-w-0 rounded-2xl p-3", s.key === "trunk" && "flex flex-col justify-center")} style={{ gridArea: s.area }}>
-            <p className="text-muted-foreground truncate text-[12px] font-medium">{s.label}</p>
-            {lean && (
-              <p className="tabular mt-1 text-[16px] font-semibold whitespace-nowrap">
-                {kg(lean[s.key])} <span className="text-muted-foreground text-[11px] font-normal">kg</span>
-              </p>
-            )}
-            {fat && (
-              <p className="tabular text-[13px] whitespace-nowrap" style={{ color: "var(--domain-fat)" }}>
-                {kg(fat[s.key])} <span className="text-muted-foreground text-[11px]">kg grasa</span>
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
-      {date && <p className="text-muted-foreground mt-3 text-[12px]">Del escaneo del {date}.</p>}
-      {lean && <p className="text-muted-foreground mt-2 text-[12px]">{balance < 0.05 ? "Brazos equilibrados: menos de un 5 % de diferencia." : `Un brazo tiene un ${Math.round(balance * 100)} % más de masa magra que el otro.`}</p>}
     </Card>
   );
 }

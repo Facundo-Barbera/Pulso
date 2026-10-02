@@ -26,7 +26,10 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
         </div>
         <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-end lg:gap-8">
           <div className="min-w-0 lg:w-[38%]">
-            <p className="text-muted-foreground text-[14px] font-medium">Peso</p>
+            <p className="text-muted-foreground flex items-center gap-2 text-[14px] font-medium">
+              <Tint metric="weight" />
+              Peso
+            </p>
             <p className="mt-1 flex items-baseline gap-2">
               <span className="tabular text-[64px] leading-none font-semibold tracking-tight md:text-[72px]">{readings.weight ? kg(readings.weight.value) : "—"}</span>
               <span className="text-muted-foreground text-[20px] font-medium">kg</span>
@@ -36,9 +39,9 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
           <ul className="grid flex-1 grid-cols-3 gap-2 sm:gap-3">
             {tiles.map((metric) => (
               <li key={metric} className="bg-muted/60 min-w-0 rounded-2xl p-3 sm:p-4">
-                <p className="text-muted-foreground flex items-center gap-1.5 truncate text-[12px] font-medium">
-                  <span className="legend-dot size-2 shrink-0 rounded-full" style={{ background: METRIC[metric].color }} />
-                  {METRIC[metric].label}
+                <p className="text-muted-foreground flex min-w-0 flex-col items-start gap-1 text-[12px] font-medium sm:flex-row sm:items-center sm:gap-1.5">
+                  <Tint metric={metric} />
+                  <span className="max-w-full truncate">{METRIC[metric].label}</span>
                 </p>
                 <p className="mt-1.5 flex items-baseline gap-1">
                   <span className="tabular text-[22px] leading-none font-semibold tracking-tight sm:text-[28px]">{readings[metric] ? kg(readings[metric].value) : "—"}</span>
@@ -56,6 +59,16 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
         )}
       </div>
     </Card>
+  );
+}
+
+/** The metric's icon on a soft disc of its colour: identity by shape and label, not hue alone. */
+function Tint({ metric }: { metric: BodyMetric }) {
+  const { icon: Icon, color } = METRIC[metric];
+  return (
+    <span className="grid size-5 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in oklab, ${color} 18%, transparent)`, color }}>
+      <Icon className="size-3" strokeWidth={2.4} aria-hidden />
+    </span>
   );
 }
 

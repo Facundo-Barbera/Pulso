@@ -139,6 +139,86 @@ struct BodyDashboard: Decodable {
     var scans: [BodyScan]
     var goals: [BodyGoal]
     var projections: [BodyProjection]
+    /// Nil from an engine older than the InBody-style analysis.
+    var analysis: BodyAnalysis?
+}
+
+/// Where a value sits against its normal range (`BodyBand`).
+enum BodyBand: String, Codable {
+    case low, normal, high
+
+    var title: String {
+        switch self {
+        case .low: "Bajo"
+        case .normal: "Normal"
+        case .high: "Alto"
+        }
+    }
+}
+
+/// One bar of InBody's Muscle-Fat or Obesity analysis, laid out by the engine (`BodyGauge`).
+struct BodyGauge: Codable, Equatable, Identifiable {
+    struct Range: Codable, Equatable { var low: Double; var high: Double }
+    struct Positions: Codable, Equatable { var value: Double; var previous: Double?; var low: Double; var high: Double }
+
+    var metric: String
+    var measuredAt: Double
+    var value: Double
+    var previous: Double?
+    var unit: String
+    var normal: Range
+    var band: BodyBand
+    /// % of the person's standard, for weight, muscle and fat mass.
+    var percent: Double?
+    /// 0–1 along the bar.
+    var at: Positions
+    var ticks: [String]
+
+    var id: String { metric }
+    var date: Date { Date(timeIntervalSince1970: measuredAt / 1000) }
+}
+
+/// One segment's mass against its standard (`SegmentValue`).
+struct SegmentValue: Codable, Equatable {
+    var kg: Double
+    var percent: Double?
+    var band: BodyBand?
+}
+
+struct SegmentValues: Codable, Equatable {
+    var rightArm: SegmentValue
+    var leftArm: SegmentValue
+    var trunk: SegmentValue
+    var rightLeg: SegmentValue
+    var leftLeg: SegmentValue
+}
+
+/// InBody-style analysis from the engine (`BodyAnalysis`): standards for the height, the bars and the segments.
+struct BodyAnalysis: Codable, Equatable {
+    struct Basis: Codable, Equatable {
+        var heightCm: Double
+        var heightFrom: String
+        var sex: String?
+        var standardWeight: Double
+    }
+    struct MuscleFat: Codable, Equatable {
+        var measuredAt: Double
+        var gauges: [BodyGauge]
+    }
+    struct Segments: Codable, Equatable {
+        struct Balance: Codable, Equatable, Hashable { var text: String; var even: Bool }
+        var measuredAt: Double
+        /// "height" against the standard for the height, "weight" against the person's own weight.
+        var basis: String
+        var lean: SegmentValues?
+        var fat: SegmentValues?
+        var balance: [Balance]
+    }
+
+    var basis: Basis?
+    var muscleFat: MuscleFat?
+    var obesity: [BodyGauge]
+    var segments: Segments?
 }
 
 struct BodyImport: Decodable {
