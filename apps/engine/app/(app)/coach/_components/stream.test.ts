@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { AgentMessage, AgentStreamEvent } from "@pulso/contract";
 import { applyEvent, readEvents } from "./stream";
-import { toolLook } from "./tools";
+import { isAction, placeOf, toolLook } from "./tools";
 
 function body(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -45,4 +45,23 @@ test("tools read in the person's words", () => {
   expect(toolLook("plan_training_week").label).toBe("Actualizando tu entrenamiento");
   expect(toolLook("WebSearch").label).toBe("Buscando en la web");
   expect(toolLook("something_new").label).toBe("Consultando tus datos");
+});
+
+test("tools keep whether they read or wrote, and the card's place wins over its tab", () => {
+  const start: AgentMessage = { id: "a", threadId: "t", role: "assistant", text: "", attachments: [], products: [], tools: [], status: "streaming", error: null, createdAt: 0 };
+  const result = { title: "Perfil actualizado", detail: null, tab: "cuerpo" as const, place: "perfil" as const, undo: "available" as const };
+  const end = [
+    { type: "tool", name: "get_profile", status: "running", access: "read" },
+    { type: "tool", name: "get_profile", status: "done", access: "read" },
+    { type: "tool", name: "update_profile", status: "running", access: "write" },
+    { type: "tool", name: "update_profile", status: "done", access: "write", result },
+  ].reduce((m, e) => applyEvent(m, e as AgentStreamEvent), start);
+  expect(end.tools).toEqual([
+    { name: "get_profile", status: "done", access: "read" },
+    { name: "update_profile", status: "done", access: "write", result },
+  ]);
+  expect(end.tools.map(isAction)).toEqual([false, true]);
+  // Older messages have no access: a card still means it changed something.
+  expect(isAction({ name: "log_meal", status: "done", result })).toBe(true);
+  expect(placeOf(result).href).toBe("/cuerpo#perfil");
 });

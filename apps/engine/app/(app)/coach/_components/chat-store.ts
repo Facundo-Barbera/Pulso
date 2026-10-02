@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentMessage, AgentProduct, AgentThread, CoachBrief } from "@pulso/contract";
+import type { AgentMessage, AgentProduct, AgentThread, AgentUndoResponse, CoachBrief } from "@pulso/contract";
 import { useSyncExternalStore } from "react";
 import type { CoachThreadView } from "@/src/web/coach";
 import { rememberLocal, type Photo } from "./photos";
@@ -58,6 +58,8 @@ export class Chat {
   private pendingAttach = false;
   /** Bumped by `forget`: a follow loop from before stops touching state. */
   private generation = 0;
+  /** Replies written in this browser keep a local id (stable rows); the Mac's id, from `start`, is what undo names. */
+  private serverIds = new Map<string, string>();
 
   constructor(threadId: string | null, replyTo: CoachBrief | null = null) {
     this.state = {
@@ -165,6 +167,18 @@ export class Chat {
     if (response && !response.ok && response.status !== 404) this.set({ error: await problem(response) });
   }
 
+  /** Deshacer on an action card: the Mac puts the change back and the card shows it undone. Null, or what went wrong. */
+  async undo(message: AgentMessage, index: number): Promise<string | null> {
+    const id = this.state.threadId;
+    if (!id) return "Esta conversación todavía no está en la Mac.";
+    const messageId = this.serverIds.get(message.id) ?? message.id;
+    const response = await fetch(`${API}/threads/${id}/messages/${messageId}/tools/${index}/undo`, { method: "POST" }).catch(() => null);
+    if (!response?.ok) return response ? await problem(response) : "No se pudo hablar con la Mac.";
+    const saved = ((await response.json()) as AgentUndoResponse).message;
+    this.set((s) => ({ messages: s.messages.map((m) => (m.id === message.id ? { ...saved, id: m.id } : m)) }));
+    return null;
+  }
+
   /** Nothing reached the Mac: take the two placeholders back. */
   private failSend(message: string) {
     this.set((s) => ({ streaming: false, messages: s.messages.slice(0, -2), error: message }));
@@ -197,6 +211,10 @@ export class Chat {
         try {
           for await (const event of readEvents(response.body)) {
             if (!current()) return;
+            if (event.type === "start") {
+              const last = this.state.messages.at(-1);
+              if (last?.role === "assistant") this.serverIds.set(last.id, event.messageId);
+            }
             this.patchLast((m) => applyEvent(m, event));
             // The first message titles the thread on the Mac.
             if (event.type === "start") void this.refreshTitle();
