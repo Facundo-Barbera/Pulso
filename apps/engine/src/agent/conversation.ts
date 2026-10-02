@@ -82,6 +82,12 @@ export function contextMessages(contextId: string): AgentMessage[] {
   return withExtras(db().query<MessageRow, [string]>("SELECT * FROM agent_messages WHERE context_id = ? ORDER BY created_at, rowid").all(contextId));
 }
 
+const lastMarker = (threadId: string) =>
+  db().query<MarkerRow, [string]>("SELECT * FROM agent_feed_markers WHERE thread_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(threadId) ?? undefined;
+
+const latestMessageAt = (threadId: string) =>
+  db().query<{ at: number | null }, [string]>("SELECT MAX(created_at) AS at FROM agent_messages WHERE thread_id = ?").get(threadId)?.at ?? 0;
+
 const lastMessageAt = (contextId: string) =>
   db().query<{ at: number | null }, [string]>("SELECT MAX(created_at) AS at FROM agent_messages WHERE context_id = ?").get(contextId)?.at ?? null;
 
@@ -118,6 +124,9 @@ export function switchContext(id: string, now = Date.now()): ContextRow | undefi
   if (conversation.active_context_id === id) return context;
   db().transaction(() => {
     db().query("UPDATE agent_conversation SET active_context_id = ? WHERE id = 1").run(id);
+    // Back and forth with nothing said in between leaves one line, not a stack of them.
+    const last = lastMarker(conversation.thread_id);
+    if (last?.kind === "switch" && last.created_at >= latestMessageAt(conversation.thread_id)) db().query("DELETE FROM agent_feed_markers WHERE id = ?").run(last.id);
     addMarker(conversation.thread_id, id, "switch", now);
   })();
   return context;
@@ -132,11 +141,8 @@ export function recordCompaction(contextId: string, at = Date.now(), markerAt = 
   const context = getContext(contextId);
   if (!context) return;
   db().query("UPDATE agent_contexts SET compacted_at = ? WHERE id = ?").run(at, contextId);
-  const last = db()
-    .query<{ kind: string; created_at: number }, [string]>("SELECT kind, created_at FROM agent_feed_markers WHERE thread_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
-    .get(context.thread_id);
-  const latestMessage = db().query<{ at: number | null }, [string]>("SELECT MAX(created_at) AS at FROM agent_messages WHERE thread_id = ?").get(context.thread_id)?.at ?? 0;
-  if (last?.kind === "compacted" && last.created_at >= latestMessage) return;
+  const last = lastMarker(context.thread_id);
+  if (last?.kind === "compacted" && last.created_at >= latestMessageAt(context.thread_id)) return;
   addMarker(context.thread_id, contextId, "compacted", markerAt);
 }
 

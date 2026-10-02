@@ -336,3 +336,13 @@ test("a live-workout thread keeps its own session and workspace", async () => {
   expect(calls[0]!.options.cwd).toBe(path.join(dataDir(), "threads", gym.id));
   expect(listMessages(gym.id).every((m) => m.contextId === null)).toBe(true);
 });
+
+test("switching back and forth with nothing said in between leaves one line", () => {
+  const [a, b] = listContexts();
+  const switches = () => feedPage().items.filter((i) => i.type === "marker" && i.marker.kind === "switch").length;
+  const before = switches();
+  switchContext(b!.id);
+  switchContext(a!.id);
+  switchContext(b!.id);
+  expect(switches()).toBe(before + 1);
+});
