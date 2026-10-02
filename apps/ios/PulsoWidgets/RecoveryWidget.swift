@@ -66,7 +66,7 @@ struct RecoveryWidgetView: View {
                         .minimumScaleFactor(0.6)
                 }
                 .frame(maxWidth: .infinity)
-                Text(recovery.levelLabel)
+                Label(recovery.levelLabel, systemImage: WidgetStyle.recoverySymbol(score))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(color)
                     .lineLimit(1)

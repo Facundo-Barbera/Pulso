@@ -1,14 +1,31 @@
 import Charts
 import SwiftUI
 
+extension Theme {
+    /// Heart rate wherever it's drawn (resting pulse, a cardio log's average), apart from protein's blue.
+    static let heart = Color(light: 0xD6336C, dark: 0xFF6B9A)
+}
+
 // MARK: - Readiness hero
 
 extension Readiness {
     var color: Color { Self.color(score: score) }
+    var symbol: String { Self.symbol(score: score) }
 
+    /// State colours, never green against red; `symbol` and `word` carry the same step without hue.
     static func color(score: Int?) -> Color {
         guard let score else { return .secondary }
-        return score >= 75 ? Theme.body : score >= 50 ? Theme.carbs : Theme.protein
+        return score >= 75 ? Theme.good : score >= 50 ? Theme.fair : Theme.caution
+    }
+
+    static func symbol(score: Int?) -> String {
+        guard let score else { return "circle.dashed" }
+        return score >= 75 ? "checkmark.circle.fill" : score >= 50 ? "minus.circle.fill" : "exclamationmark.circle.fill"
+    }
+
+    static func word(score: Int?) -> String {
+        guard let score else { return "Sin datos" }
+        return score >= 75 ? "Bien" : score >= 50 ? "Normal" : "Atención"
     }
 
     var title: String {
@@ -41,7 +58,16 @@ struct ReadinessHero: View {
             .frame(width: 180, height: 180)
 
             VStack(spacing: 6) {
-                Text(readiness?.title ?? "Calculando…").font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+                Label {
+                    Text(readiness?.title ?? "Calculando…").multilineTextAlignment(.center)
+                } icon: {
+                    if let readiness, readiness.score != nil {
+                        Image(systemName: readiness.symbol)
+                            .foregroundStyle(readiness.color)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+                .font(.title3.weight(.semibold))
                 if let explanation = readiness?.explanation {
                     Text(explanation)
                         .font(.subheadline)
@@ -78,7 +104,14 @@ private struct FactorPill: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Image(systemName: symbol).font(.caption).foregroundStyle(Readiness.color(score: factor.score))
+            // The factor's own symbol, then its state as a shape: checkmark, minus or exclamation.
+            HStack(spacing: 3) {
+                Image(systemName: symbol)
+                if factor.score != nil { Image(systemName: Readiness.symbol(score: factor.score)).imageScale(.small) }
+            }
+            .font(.caption)
+            .foregroundStyle(Readiness.color(score: factor.score))
+            .accessibilityLabel(Readiness.word(score: factor.score))
             // A third of a 375 pt card is ~95 pt: "7 h 45 min" at large text has to shrink, not wrap.
             Text(value).font(.subheadline.weight(.semibold)).fontDesign(.rounded).contentTransition(.numericText())
                 .lineLimit(1).minimumScaleFactor(0.7)
@@ -234,10 +267,10 @@ struct SleepCard<Destination: View>: View {
     private var stages: [Stage]? {
         guard let day, day.sleepDeep != nil || day.sleepCore != nil || day.sleepRem != nil else { return nil }
         return [
-            Stage(label: "Profundo", minutes: day.sleepDeep ?? 0, color: Theme.training),
-            Stage(label: "Básico", minutes: day.sleepCore ?? 0, color: Theme.fat),
-            Stage(label: "REM", minutes: day.sleepRem ?? 0, color: Theme.body),
-            Stage(label: "Despierto", minutes: day.sleepAwake ?? 0, color: Theme.energy),
+            Stage(label: "Profundo", minutes: day.sleepDeep ?? 0, kind: .deep),
+            Stage(label: "Básico", minutes: day.sleepCore ?? 0, kind: .core),
+            Stage(label: "REM", minutes: day.sleepRem ?? 0, kind: .rem),
+            Stage(label: "Despierto", minutes: day.sleepAwake ?? 0, kind: .awake),
         ]
     }
 }
@@ -248,14 +281,17 @@ extension SleepCard where Destination == EmptyView {
     }
 }
 
+/// Same colours and shapes as the sleep deep dive (`SleepStage`).
 struct Stage {
     var label: String
     var minutes: Double
-    var color: Color
+    var kind: SleepStage
+    var color: Color { kind.color }
 }
 
 private struct StagesBar: View {
     let stages: [Stage]
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -264,9 +300,15 @@ private struct StagesBar: View {
                 let gaps = CGFloat(stages.count - 1) * 3
                 HStack(spacing: 3) {
                     ForEach(stages, id: \.label) { stage in
+                        let width = max(0, geo.size.width - gaps) * stage.minutes / total
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(stage.color.gradient)
-                            .frame(width: max(0, geo.size.width - gaps) * stage.minutes / total)
+                            .overlay {
+                                if differentiate && width >= 16 {
+                                    Image(systemName: stage.kind.symbol).font(.system(size: 8, weight: .bold)).foregroundStyle(.background)
+                                }
+                            }
+                            .frame(width: width)
                     }
                 }
             }
@@ -292,7 +334,7 @@ private struct StagesBar: View {
 
     private func legend(_ stage: Stage) -> some View {
         HStack(spacing: 6) {
-            Circle().fill(stage.color).frame(width: 8, height: 8)
+            StageMarker(stage: stage.kind)
             Text(stage.label).foregroundStyle(.secondary)
             Text(Format.duration(minutes: stage.minutes)).fontDesign(.rounded).fontWeight(.medium)
         }
@@ -312,7 +354,7 @@ struct TrendsCard: View {
             Sparkline(title: "VFC", unit: "ms", points: store.trend(14) { $0.hrv }, baseline: baseline("hrv"), color: Theme.body)
             Divider()
             Sparkline(
-                title: "Pulso en reposo", unit: "lpm", points: store.trend(14) { $0.restingHeartRate }, baseline: baseline("resting_hr"), color: Theme.protein,
+                title: "Pulso en reposo", unit: "lpm", points: store.trend(14) { $0.restingHeartRate }, baseline: baseline("resting_hr"), color: Theme.heart,
                 estimatedDays: Set(store.days.filter { $0.restingHeartRateEstimated == true }.compactMap { DayKey.date($0.date) })
             )
             let vo2 = store.days.last { $0.vo2max != nil }?.vo2max

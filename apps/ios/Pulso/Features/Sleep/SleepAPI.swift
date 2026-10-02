@@ -26,6 +26,19 @@ enum SleepStage: String, Codable, CaseIterable {
         case .asleep: Theme.sleep
         }
     }
+
+    /// A shape per stage for legends and lane labels when the person asks to
+    /// differentiate without colour.
+    var symbol: String {
+        switch self {
+        case .inBed: "rectangle.fill"
+        case .awake: "triangle.fill"
+        case .rem: "diamond.fill"
+        case .core: "circle.fill"
+        case .deep: "square.fill"
+        case .asleep: "hexagon.fill"
+        }
+    }
 }
 
 /// What the phone sends: one HealthKit sample. Times are epoch ms.
@@ -153,13 +166,14 @@ extension PulsoAPI {
 }
 
 extension Theme {
-    /// Sleep stages, close to Apple's Sleep palette.
-    static let sleep = Color(red: 0.42, green: 0.45, blue: 0.98)
-    static let sleepAwake = Color(red: 1.00, green: 0.50, blue: 0.40)
-    static let sleepREM = Color(red: 0.38, green: 0.80, blue: 0.98)
-    static let sleepCore = Color(red: 0.22, green: 0.50, blue: 0.98)
-    static let sleepDeep = Color(red: 0.36, green: 0.26, blue: 0.86)
-    static let sleepInBed = Color(red: 0.55, green: 0.60, blue: 0.75)
+    /// Sleep stages. Deep → core → REM step up in lightness so they read apart without hue
+    /// (red-green colour blindness); awake is the one warm stage.
+    static let sleep = Color(light: 0x5A5FE0, dark: 0x7B80FF)
+    static let sleepAwake = Color(light: 0xE8650F, dark: 0xFFA24D)
+    static let sleepREM = Color(light: 0x5FBFF0, dark: 0xA8DEFF)
+    static let sleepCore = Color(light: 0x3C7FF0, dark: 0x4D9BFF)
+    static let sleepDeep = Color(light: 0x2F3FB8, dark: 0x4B5BEA)
+    static let sleepInBed = Color(light: 0x8A8F98, dark: 0x9AA0AA)
 }
 
 /// "7 h 20 min", "45 min".

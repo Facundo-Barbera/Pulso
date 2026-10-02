@@ -159,6 +159,7 @@ private struct SleepHero: View {
 
 private struct HypnogramCard: View {
     let night: SleepNight
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
 
     private var segments: [SleepSegment] {
         let staged = night.segments.filter { $0.stage != .inBed }
@@ -181,6 +182,12 @@ private struct HypnogramCard: View {
                 )
                 .foregroundStyle(segment.stage.color.gradient)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                // Without colour, long stretches carry their stage's shape too.
+                .annotation(position: .overlay) {
+                    if differentiate && segment.end - segment.start >= 20 * 60_000 {
+                        Image(systemName: segment.stage.symbol).font(.system(size: 7, weight: .bold)).foregroundStyle(.background)
+                    }
+                }
             }
             .chartYScale(domain: lanes.map(\.label))
             .chartXAxis {
@@ -189,7 +196,15 @@ private struct HypnogramCard: View {
                 }
             }
             .chartYAxis {
-                AxisMarks { _ in AxisValueLabel() }
+                AxisMarks { value in
+                    AxisValueLabel {
+                        if let name = value.as(String.self), let stage = lanes.first(where: { $0.label == name }), differentiate {
+                            Label(name, systemImage: stage.symbol)
+                        } else if let name = value.as(String.self) {
+                            Text(name)
+                        }
+                    }
+                }
             }
             .frame(height: 170)
 
@@ -227,7 +242,7 @@ private struct StageStat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
-                Circle().fill(stage.color).frame(width: 7, height: 7)
+                StageMarker(stage: stage, size: 7)
                 Text(stage.label).font(.caption).foregroundStyle(.secondary)
             }
             Text(sleepDuration(minutes))
@@ -241,6 +256,25 @@ private struct StageStat: View {
         }
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A stage's legend key: a dot, or the stage's own shape when the person asks to
+/// differentiate without colour. Hoy's sleep card uses it too.
+struct StageMarker: View {
+    let stage: SleepStage
+    var size: CGFloat = 8
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
+
+    var body: some View {
+        if differentiate {
+            Image(systemName: stage.symbol)
+                .font(.system(size: size + 2))
+                .foregroundStyle(stage.color)
+                .frame(width: size + 2, height: size + 2)
+        } else {
+            Circle().fill(stage.color).frame(width: size, height: size)
+        }
     }
 }
 
@@ -534,13 +568,22 @@ private struct DebtCard: View {
         }
     }
 
+    /// Two hours or more owed is flagged with a symbol, not only the warm colour.
     private var debt: some View {
-        Text(summary.debtMin < 1 ? "Al día" : sleepDuration(summary.debtMin))
-            .font(.system(.largeTitle, design: .rounded).weight(.bold))
-            .foregroundStyle(summary.debtMin >= 120 ? Theme.sleepAwake : .primary)
-            .contentTransition(.numericText())
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
+        let high = summary.debtMin >= 120
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if high {
+                Image(systemName: "exclamationmark.circle.fill").font(.title2).accessibilityLabel("Deuda alta")
+            } else if summary.debtMin < 1 {
+                Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(Theme.good).accessibilityHidden(true)
+            }
+            Text(summary.debtMin < 1 ? "Al día" : sleepDuration(summary.debtMin))
+                .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                .contentTransition(.numericText())
+        }
+        .foregroundStyle(high ? Theme.caution : .primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
     }
 
     private var nightsCaption: some View {

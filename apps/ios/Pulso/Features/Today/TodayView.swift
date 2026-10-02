@@ -88,7 +88,7 @@ struct TodayView: View {
         }
         .font(.caption)
         .lineLimit(1)
-        .foregroundStyle(model.error != nil ? AnyShapeStyle(Theme.protein) : AnyShapeStyle(.secondary))
+        .foregroundStyle(model.error != nil ? AnyShapeStyle(Theme.caution) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .glassEffect(.regular, in: .capsule)
