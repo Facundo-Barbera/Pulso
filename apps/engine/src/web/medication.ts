@@ -9,6 +9,7 @@
 import type { AdherenceReport, DayPart, DoseEvent, DoseMoment, DoseSlot, Medication, MedicationDay, MedicationSchedule, ScheduleNudge, TrainingSlot } from "@pulso/contract";
 import { addDays, isDueOn, isoWeekday, localNow, TIME, toMinutes } from "../medication/schedule";
 import { adherence, dosesBetween, listMedications, medicationDay, nudges } from "../medication/store";
+import { frequencyLine } from "./read-back";
 
 export type HistoryEntry = DoseEvent & { name: string; dose: number; unit: string };
 
@@ -212,18 +213,6 @@ const list = (items: string[]) => new Intl.ListFormat("es", { type: "conjunction
 /** A logged slot key as words: "las 09:00", "después de entrenar", "con el desayuno"… */
 export function slotLabel(key: string): string {
   return key in MOMENT_TITLE ? lower(MOMENT_TITLE[key as keyof typeof MOMENT_TITLE]) : `las ${key}`;
-}
-
-const DAY_LETTERS = ["L", "M", "X", "J", "V", "S", "D"];
-
-/** Which days, in words: "Semanal · jueves", "L X V", "Cada 3 días", "Cada 2 semanas · lunes", "Cada mes · día 5"; null for every day. */
-export function frequencyLine(s: Pick<MedicationSchedule, "days" | "interval" | "monthDay">): string | null {
-  const days = s.days.length === 1 ? WEEKDAY_NAMES[s.days[0]! - 1]! : s.days.map((d) => DAY_LETTERS[d - 1]).join(" ");
-  if (s.monthDay) return `Cada mes · día ${s.monthDay}`;
-  if (s.interval?.unit === "day") return `Cada ${s.interval.every} días`;
-  if (s.interval) return `Cada ${s.interval.every} semanas · ${days}`;
-  if (s.days.length === 1) return `Semanal · ${days}`;
-  return s.days.length ? days : null;
 }
 
 /**
