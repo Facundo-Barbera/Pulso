@@ -74,7 +74,8 @@ extension NutrientZone {
 }
 
 /// One ring in the manner of Apple's Activity rings: a tinted track, the arc from 12 o'clock with the
-/// symbol centred on its start, and past a full lap a darker second lap whose end casts a shadow on the first. The frame holds the whole stroke; `content` sits in the hole.
+/// symbol centred on its start, and past a full lap a lighter second lap whose end casts a shadow on
+/// the first. The frame holds the whole stroke; `content` sits in the hole.
 struct ActivityRing<Content: View>: View {
     let progress: Double
     let color: Color
@@ -98,11 +99,11 @@ struct ActivityRing<Content: View>: View {
             }
             if second > 0 {
                 RingCap(fraction: second, lineWidth: lineWidth)
-                    .fill(color)
+                    .fill(color.mix(with: .white, by: 0.2))
                     .shadow(color: .black.opacity(0.5), radius: lineWidth / 5)
                 Circle()
                     .trim(from: 0, to: second)
-                    .stroke(color.mix(with: .black, by: 0.22), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(color.mix(with: .white, by: 0.2), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
             }
         }
         .rotationEffect(.degrees(-90))
