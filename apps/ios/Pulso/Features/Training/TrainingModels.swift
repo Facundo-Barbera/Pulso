@@ -406,13 +406,27 @@ struct NextAdjustment: Codable, Identifiable, Hashable {
     var applies: Bool { status == "ready" && !noChange && !dismissed && !changes.isEmpty }
 }
 
+/// One stretch of a set at one load: a set where the load dropped mid-set has several.
+struct SetSegment: Codable, Hashable {
+    var weightKg: Double
+    var reps: Int
+}
+
 struct SetLog: Codable, Hashable {
     var exerciseId: String
     var setIndex: Int
+    /// The top segment's load and reps; records and progression read only these.
     var weightKg: Double
     var reps: Int
     var rpe: Double?
     var doneAt: Double
+    /// Every segment, top first (the engine always sends them; older engines don't). Nil = one segment.
+    var segments: [SetSegment]? = nil
+
+    /// The segments after the top one: where the load dropped to finish the set.
+    var drops: [SetSegment] { Array((segments ?? []).dropFirst()).filter { $0.reps > 0 } }
+    /// kg × reps over every segment.
+    var volumeKg: Double { ([SetSegment(weightKg: weightKg, reps: reps)] + drops).reduce(0) { $0 + $1.weightKg * Double($1.reps) } }
 }
 
 struct TrainingSession: Codable, Identifiable, Hashable {
@@ -429,7 +443,7 @@ struct TrainingSession: Codable, Identifiable, Hashable {
 
     var start: Date { Date(timeIntervalSince1970: startedAt / 1000) }
     var duration: TimeInterval { (endedAt - startedAt) / 1000 }
-    var volumeKg: Double { sets.reduce(0) { $0 + $1.weightKg * Double($1.reps) } }
+    var volumeKg: Double { sets.reduce(0) { $0 + $1.volumeKg } }
 }
 
 struct TrainingRecord: Codable, Hashable {
@@ -472,8 +486,13 @@ extension SetLog {
         set.reps = max(0, reps)
         set.rpe = rpe?.finite
         set.doneAt = doneAt.finite ?? 0
+        set.segments = segments.map { _ in [SetSegment(weightKg: set.weightKg, reps: set.reps)] + drops.map(\.sanitized) }
         return set
     }
+}
+
+extension SetSegment {
+    var sanitized: SetSegment { SetSegment(weightKg: max(0, weightKg.finite ?? 0), reps: max(0, reps)) }
 }
 
 extension CardioLog {

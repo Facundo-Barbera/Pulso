@@ -155,6 +155,18 @@ final class LiveSession {
     func addSet(exercise e: Int) { mutate { $0.addSet(exercise: e) } }
     func removeSet(exercise e: Int, set s: Int) { mutate { $0.removeSet(exercise: e, set: s) } }
 
+    /// A drop added to the set just done restarts its rest, so the rest re-arms.
+    func addDrop(exercise e: Int, set s: Int, _ drop: SetSegment) {
+        mutate { $0.addDrop(exercise: e, set: s, drop, unit: unit(e)) }
+        armRest()
+    }
+    func nextDrop(exercise e: Int, set s: Int) -> SetSegment? { state.nextDrop(exercise: e, set: s, unit: unit(e)) }
+    func removeDrop(exercise e: Int, set s: Int, drop d: Int) { mutate { $0.removeDrop(exercise: e, set: s, drop: d) } }
+    func stepDropWeight(exercise e: Int, set s: Int, drop d: Int, up: Bool) { mutate { $0.stepDropWeight(exercise: e, set: s, drop: d, up: up, unit: unit(e)) } }
+    /// `value` as typed, in the exercise's unit.
+    func setDropWeight(exercise e: Int, set s: Int, drop d: Int, to value: Double) { mutate { $0.setDropWeight(exercise: e, set: s, drop: d, to: value, unit: unit(e)) } }
+    func setDropReps(exercise e: Int, set s: Int, drop d: Int, to reps: Int) { mutate { $0.setDropReps(exercise: e, set: s, drop: d, to: reps) } }
+
     /// After a unit change: each exercise `unit(for:)` names gets its open sets on that unit's steps.
     func snapOpenSets(_ unit: (String) -> WeightUnit?) {
         mutate { state in

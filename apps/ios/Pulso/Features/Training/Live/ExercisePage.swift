@@ -14,6 +14,8 @@ struct ExercisePage: View {
     var history: [TrainingSession]? = nil
     let swap: () -> Void
     @State private var editing: SetEditing?
+    /// "¿Bajaste el peso para terminarla?" under a set just done short of the target.
+    @State private var offer: DropOffer?
     @State private var info = false
     @FocusState private var field: SetField?
 
@@ -51,6 +53,7 @@ struct ExercisePage: View {
                 .padding(.bottom, 24)
                 .animation(.snappy, value: exercise.sets)
                 .animation(.snappy, value: editing)
+                .animation(.snappy, value: offer)
                 .animation(.snappy, value: exercise.skipped)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -88,7 +91,25 @@ struct ExercisePage: View {
                     perform(action, set: s, id: set.id)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
+                if let offer, offer.setId == set.id, set.done, set.drops.isEmpty {
+                    DropPrompt(drop: offer.drop, unit: unit) {
+                        withAnimation(.snappy) {
+                            session.addDrop(exercise: index, set: s, offer.drop)
+                            self.offer = nil
+                            // Open on the new segment, so a different load is one tap away.
+                            editing = SetEditing(id: set.id, value: .dropWeight(0))
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
+        }
+        // Quiet and brief: it goes by itself after a few seconds.
+        .task(id: offer) {
+            guard offer != nil else { return }
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            withAnimation(.snappy) { offer = nil }
         }
     }
 
@@ -99,6 +120,9 @@ struct ExercisePage: View {
             withAnimation(.snappy) {
                 session.toggle(exercise: index, set: s)
                 editing = nil
+                offer = done(s).flatMap { set in
+                    SetDrop.offer(for: set, repMin: exercise?.repMin ?? 0, unit: session.unit(index)).map { DropOffer(setId: id, drop: $0) }
+                }
             }
         case .expand: withAnimation(.snappy) { editing = SetEditing(id: id) }
         case .edit(let value):
@@ -109,10 +133,35 @@ struct ExercisePage: View {
             withAnimation(.snappy) { editing = nil }
         case .step(.weight, let up): withAnimation(.snappy) { session.stepWeight(exercise: index, set: s, up: up) }
         case .step(.reps, let up): withAnimation(.snappy) { session.adjustReps(exercise: index, set: s, by: up ? 1 : -1) }
+        case .step(.dropWeight(let d), let up): withAnimation(.snappy) { session.stepDropWeight(exercise: index, set: s, drop: d, up: up) }
+        case .step(.dropReps(let d), let up):
+            let reps = exercise?.sets[s].drops[safe: d]?.reps ?? 1
+            withAnimation(.snappy) { session.setDropReps(exercise: index, set: s, drop: d, to: reps + (up ? 1 : -1)) }
         case .setWeight(let value): session.setWeight(exercise: index, set: s, to: value)
         case .setReps(let reps): session.setReps(exercise: index, set: s, to: reps)
+        case .setDropWeight(let d, let value): session.setDropWeight(exercise: index, set: s, drop: d, to: value)
+        case .setDropReps(let d, let reps): session.setDropReps(exercise: index, set: s, drop: d, to: reps)
+        case .addDrop:
+            field = nil
+            guard let drop = session.nextDrop(exercise: index, set: s) else { return }
+            let d = exercise?.sets[s].drops.count ?? 0
+            withAnimation(.snappy) {
+                session.addDrop(exercise: index, set: s, drop)
+                editing = SetEditing(id: id, value: .dropWeight(d))
+            }
+        case .removeDrop(let d):
+            field = nil
+            withAnimation(.snappy) {
+                session.removeDrop(exercise: index, set: s, drop: d)
+                editing = SetEditing(id: id)
+            }
         case .remove: withAnimation(.snappy) { session.removeSet(exercise: index, set: s) }
         }
+    }
+
+    /// Set `s` of this exercise, when it is done.
+    private func done(_ s: Int) -> LiveSet? {
+        exercise.flatMap { $0.sets.indices.contains(s) && $0.sets[s].done ? $0.sets[s] : nil }
     }
 
     private func actions(_ exercise: LiveExercise) -> some View {
@@ -403,12 +452,29 @@ private struct BestCard: View {
 enum SetField: Hashable {
     case weight(String)
     case reps(String)
+    case dropWeight(String, Int)
+    case dropReps(String, Int)
 }
 
-/// The value of a set being changed.
+/// The value of a set being changed: the top segment's, or a drop's (by index).
 enum SetValue: Hashable {
     case weight
     case reps
+    case dropWeight(Int)
+    case dropReps(Int)
+
+    var drop: Int? {
+        switch self {
+        case .dropWeight(let d), .dropReps(let d): d
+        case .weight, .reps: nil
+        }
+    }
+}
+
+/// The lighter segment offered under a set just done short of the target.
+struct DropOffer: Equatable {
+    var setId: String
+    var drop: SetSegment
 }
 
 /// A row opened for editing (any but the current one, which is always open), and the value whose −/+ shows.
@@ -426,7 +492,51 @@ enum SetAction {
     /// In the exercise's unit.
     case setWeight(Double)
     case setReps(Int)
+    /// A drop's load, in the exercise's unit.
+    case setDropWeight(Int, Double)
+    case setDropReps(Int, Int)
+    /// "Otro peso": one more, lighter segment.
+    case addDrop
+    case removeDrop(Int)
     case remove
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+/// "¿Bajaste el peso para terminarla?" with the lighter load and the reps
+/// missing, one tap to add them. Quiet: a line, not a card.
+private struct DropPrompt: View {
+    let drop: SetSegment
+    let unit: WeightUnit
+    let accept: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.training)
+            Text("¿Bajaste el peso para terminarla?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: accept) {
+                Text(SetDrop.text([drop], unit: unit))
+                    .font(.footnote.weight(.semibold))
+                    .fontDesign(.rounded)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .buttonStyle(.glass)
+            .tint(Theme.training)
+            .accessibilityLabel("Sí, añadir \(SetDrop.text([drop], unit: unit))")
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .accessibilityElement(children: .contain)
+    }
 }
 
 /// A set. Open (the current one, or one tapped): one horizontal row with the
@@ -465,7 +575,11 @@ struct SetRowView: View {
         }
         .sensoryFeedback(.selection, trigger: set.weightKg)
         .sensoryFeedback(.selection, trigger: set.reps)
+        .sensoryFeedback(.selection, trigger: set.drops)
     }
+
+    /// A drop's load in kg, as read and logged: on the unit's steps until the set is done.
+    private func kg(_ drop: SetSegment) -> Double { self.set.done ? drop.weightKg : unit.snapKg(drop.weightKg) }
 
     // MARK: Compact
 
@@ -476,12 +590,16 @@ struct SetRowView: View {
                     .font(.footnote.bold())
                     .frame(width: 18)
                     .foregroundStyle(.tertiary)
-                Text(weightText)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(set.done ? .primary : .secondary)
-                Text(TrainingText.repetitions(set.reps))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if set.drops.isEmpty {
+                    Text(weightText)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(set.done ? .primary : .secondary)
+                    Text(TrainingText.repetitions(set.reps))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    segmentsLine
+                }
                 Spacer(minLength: 4)
                 Image(systemName: set.done ? "checkmark.circle.fill" : "circle")
                     .font(.body)
@@ -498,9 +616,28 @@ struct SetRowView: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Serie \(number): \(TrainingText.load(set.weightKg, reps: set.reps, unit: unit))")
+        .accessibilityLabel("Serie \(number): \(set.drops.isEmpty ? TrainingText.load(set.weightKg, reps: set.reps, unit: unit) : SetDrop.text(set.segments, unit: unit))")
         .accessibilityValue(set.done ? "Hecha" : "Pendiente")
         .accessibilityHint("Abre la serie para cambiarla")
+    }
+
+    /// "80 × 5 → 60 × 3 kg": each segment, a small arrow between them, the unit once.
+    private var segmentsLine: some View {
+        HStack(spacing: 5) {
+            ForEach(Array(set.segments.enumerated()), id: \.offset) { i, segment in
+                if i > 0 {
+                    Image(systemName: "arrow.right")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+                Text(SetDrop.short([SetSegment(weightKg: kg(segment), reps: segment.reps)], unit: unit))
+                    .font(.subheadline.weight(i == 0 ? .semibold : .regular))
+                    .foregroundStyle(i == 0 && set.done ? .primary : .secondary)
+            }
+            if set.weightKg > 0 {
+                Text(unit.rawValue).font(.caption).foregroundStyle(.tertiary)
+            }
+        }
     }
 
     // MARK: Full
@@ -517,6 +654,9 @@ struct SetRowView: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
+                    ForEach(Array(set.drops.enumerated()), id: \.offset) { d, drop in
+                        dropLine(d, drop)
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(caption)
                         if weight > 0 {
@@ -596,6 +736,39 @@ struct SetRowView: View {
         }
     }
 
+    /// "↳ 60 kg  3 repeticiones": a drop, each number opening its own −/+.
+    private func dropLine(_ d: Int, _ drop: SetSegment) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.training)
+                .accessibilityHidden(true)
+            valueButton(.dropWeight(d)) {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(WeightUnit.number(unit.shown(kg(drop))))
+                        .font(.title3.bold())
+                        .contentTransition(.numericText())
+                    Text(unit.rawValue).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Bajó a \(unit.format(kg(drop)))")
+            }
+            valueButton(.dropReps(d)) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(drop.reps)")
+                        .font(.title3.bold())
+                        .contentTransition(.numericText())
+                    Text(drop.reps == 1 ? "repetición" : "repeticiones").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .fontDesign(.rounded)
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+    }
+
     private var repsLabel: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text("\(set.reps)")
@@ -644,16 +817,46 @@ struct SetRowView: View {
             case .reps:
                 ValueStepper(label: "Repeticiones", unit: "", value: Double(set.reps), text: { "\(Int($0))" }, field: .reps(set.id), focus: field, keyboard: .numberPad,
                              stepLabel: "1", step: { act(.step(.reps, up: $0 > 0)) }, commit: { act(.setReps(Int($0))) })
+            case .dropWeight(let d):
+                ValueStepper(label: "Bajaste a", unit: unit.rawValue, value: unit.shown(kg(set.drops[safe: d] ?? set.top)), text: WeightUnit.number, field: .dropWeight(set.id, d), focus: field,
+                             keyboard: .decimalPad, stepLabel: "un disco", step: { act(.step(value, up: $0 > 0)) }, commit: { act(.setDropWeight(d, $0)) })
+            case .dropReps(let d):
+                ValueStepper(label: "Repeticiones después de bajar", unit: "", value: Double(set.drops[safe: d]?.reps ?? 1), text: { "\(Int($0))" }, field: .dropReps(set.id, d), focus: field,
+                             keyboard: .numberPad, stepLabel: "1", step: { act(.step(value, up: $0 > 0)) }, commit: { act(.setDropReps(d, Int($0))) })
             }
             HStack {
                 if value == .weight { UnitPicker(exerciseId: exerciseId) }
+                if let d = value.drop {
+                    Button("Quitar", systemImage: "trash", role: .destructive) { act(.removeDrop(d)) }
+                        .font(.subheadline)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHint("Quita este peso de la serie")
+                }
                 Spacer(minLength: 8)
                 Button("Listo") { act(.close) }
                     .font(.subheadline.weight(.semibold))
                     .buttonStyle(.glass)
             }
+            // Bottom and small: a set where the load dropped is the exception, not a field on every row.
+            if value.drop == nil && set.drops.count < Self.maxDrops {
+                Button { act(.addDrop) } label: {
+                    Label("otro peso", systemImage: "plus")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.training)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minHeight: 32)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Otro peso")
+                .accessibilityHint("Añade un tramo con menos peso, si la bajaste para terminar la serie")
+            }
         }
     }
+
+    /// Segments after the top one a set can have.
+    static let maxDrops = 3
 }
 
 /// −  80 kg  +  with 56 pt buttons. Tapping the number types it in.

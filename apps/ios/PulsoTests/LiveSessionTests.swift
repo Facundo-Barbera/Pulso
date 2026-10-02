@@ -70,7 +70,8 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(exercises[0]["skipped"] as? Bool, false)
 
         let sets = try XCTUnwrap(exercises[0]["sets"] as? [[String: Any]])
-        XCTAssertEqual(Set(sets[0].keys), ["id", "weightKg", "reps", "rpe", "doneAt"])
+        XCTAssertEqual(Set(sets[0].keys), ["id", "weightKg", "reps", "rpe", "doneAt", "segments"])
+        XCTAssertEqual((sets[0]["segments"] as? [[String: Any]])?.count, 1, "A plain set is one segment, the top")
         XCTAssertEqual(sets[0]["doneAt"] as? Double, 1_060_000)
         XCTAssertEqual(sets[0]["rpe"] as? Double, 8)
         XCTAssertTrue(sets[1]["doneAt"] is NSNull)

@@ -4,15 +4,21 @@ import Foundation
 // `LiveSession` (epoch-ms times, explicit nulls), both on disk and to the engine,
 // so the Coach can read and change it. Dates are `Date` in Swift.
 
-/// One set. `doneAt` is nil until checked off.
+/// One set. `doneAt` is nil until checked off. `weightKg`/`reps` are the top
+/// segment; `drops` the lighter ones the load dropped to, to finish it.
 struct LiveSet: Identifiable, Hashable {
     var id: String = LiveSessionState.newId()
     var weightKg: Double
     var reps: Int
     var rpe: Double? = nil
     var doneAt: Date? = nil
+    var drops: [SetSegment] = []
 
     var done: Bool { doneAt != nil }
+    var top: SetSegment { SetSegment(weightKg: weightKg, reps: reps) }
+    /// Every segment, top first: the contract's `segments`.
+    var segments: [SetSegment] { [top] + drops }
+    var volumeKg: Double { segments.reduce(0) { $0 + $1.weightKg * Double($1.reps) } }
 }
 
 /// A cardio block the Coach ended early ("terminar antes"): done, not skipped.
@@ -194,7 +200,7 @@ struct LiveSessionState: Hashable {
     /// Sets of the exercises still planned, plus any done in a skipped one.
     var setsTotal: Int { exercises.reduce(0) { $0 + ($1.skipped ? $1.sets.filter(\.done).count : $1.sets.count) } }
     var setsDone: Int { exercises.reduce(0) { $0 + $1.sets.filter(\.done).count } }
-    var volumeKg: Double { exercises.flatMap(\.sets).filter(\.done).reduce(0) { $0 + $1.weightKg * Double($1.reps) } }
+    var volumeKg: Double { exercises.flatMap(\.sets).filter(\.done).reduce(0) { $0 + $1.volumeKg } }
     var cardioLogs: [CardioLog] { exercises.compactMap(\.cardioLog) }
     /// Anything worth saving: a set or a cardio block.
     var hasWork: Bool { setsDone > 0 || !cardioLogs.isEmpty }
@@ -268,6 +274,7 @@ struct LiveSessionState: Hashable {
         }
         exercises[e].sets[s].doneAt = now
         exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
+        exercises[e].sets[s].drops = exercises[e].sets[s].drops.map { SetSegment(weightKg: unit.snapKg($0.weightKg), reps: $0.reps) }
         exercises[e].skipped = false
         let weight = exercises[e].sets[s].weightKg
         for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
@@ -367,6 +374,52 @@ struct LiveSessionState: Hashable {
 
     private func has(_ e: Int, _ s: Int) -> Bool {
         exercises.indices.contains(e) && exercises[e].sets.indices.contains(s)
+    }
+
+    private func has(_ e: Int, _ s: Int, drop d: Int) -> Bool {
+        has(e, s) && exercises[e].sets[s].drops.indices.contains(d)
+    }
+
+    // MARK: Drops (the load lowered mid-set)
+
+    /// One more segment on a set, on the unit's steps. The rest starts after the
+    /// last segment: one added to the set just done, while resting, restarts it.
+    mutating func addDrop(exercise e: Int, set s: Int, _ drop: SetSegment, now: Date = .now, unit: WeightUnit = .kg) {
+        guard has(e, s), !exercises[e].isCardio else { return }
+        exercises[e].sets[s].drops.append(SetSegment(weightKg: unit.snapKg(max(0, drop.weightKg)), reps: max(0, drop.reps)))
+        guard let doneAt = exercises[e].sets[s].doneAt, resting(at: now) else { return }
+        let latest = exercises.flatMap(\.sets).compactMap(\.doneAt).max()
+        if doneAt == latest { startRest(after: e, now: now) }
+    }
+
+    /// The suggested next segment for a set: about 15 % lighter, for the reps still missing.
+    func nextDrop(exercise e: Int, set s: Int, unit: WeightUnit = .kg) -> SetSegment? {
+        guard has(e, s) else { return nil }
+        let set = exercises[e].sets[s]
+        return SetDrop.next(top: set.top, drops: set.drops, repMin: exercises[e].repMin, unit: unit)
+    }
+
+    mutating func removeDrop(exercise e: Int, set s: Int, drop d: Int) {
+        guard has(e, s, drop: d) else { return }
+        exercises[e].sets[s].drops.remove(at: d)
+    }
+
+    mutating func stepDropWeight(exercise e: Int, set s: Int, drop d: Int, up: Bool, unit: WeightUnit = .kg) {
+        guard has(e, s, drop: d) else { return }
+        let value = unit.snap(exercises[e].sets[s].drops[d].weightKg)
+        exercises[e].sets[s].drops[d].weightKg = unit.fromUnit(up ? unit.stepUp(value) : unit.stepDown(value))
+    }
+
+    /// Typed in `unit`, to the quarter, kept as its exact kg.
+    mutating func setDropWeight(exercise e: Int, set s: Int, drop d: Int, to value: Double, unit: WeightUnit = .kg) {
+        guard has(e, s, drop: d) else { return }
+        exercises[e].sets[s].drops[d].weightKg = unit.fromUnit(max(0, (value * 4).rounded() / 4))
+    }
+
+    /// A drop keeps at least one rep: to get rid of it, remove it.
+    mutating func setDropReps(exercise e: Int, set s: Int, drop d: Int, to reps: Int) {
+        guard has(e, s, drop: d) else { return }
+        exercises[e].sets[s].drops[d].reps = max(1, reps)
     }
 
     // MARK: Rest
@@ -557,6 +610,10 @@ struct LiveSessionState: Hashable {
                 if merged.exercises[e].sets[s].doneAt == nil, let mine = localSets[id], mine.done {
                     merged.exercises[e].sets[s] = mine
                     kept = true
+                } else if merged.exercises[e].sets[s].drops.isEmpty, let mine = localSets[id], !mine.drops.isEmpty {
+                    // A drop logged here that the engine's copy doesn't have yet.
+                    merged.exercises[e].sets[s].drops = mine.drops
+                    kept = true
                 }
             }
             if merged.exercises[e].cardioLog == nil, let log = localExercises[merged.exercises[e].id]?.cardioLog {
@@ -634,7 +691,7 @@ struct LiveSessionState: Hashable {
         let logs = sets.map { exerciseId, set, doneAt in
             let index = counts[exerciseId, default: 0]
             counts[exerciseId] = index + 1
-            return SetLog(exerciseId: exerciseId, setIndex: index, weightKg: set.weightKg, reps: set.reps, rpe: set.rpe, doneAt: Self.ms(doneAt))
+            return SetLog(exerciseId: exerciseId, setIndex: index, weightKg: set.weightKg, reps: set.reps, rpe: set.rpe, doneAt: Self.ms(doneAt), segments: set.segments)
         }
         let cardio = cardioLogs
         return TrainingSession(
@@ -660,10 +717,12 @@ struct LiveSessionState: Hashable {
         let set = ex.sets[s]
         let weightUnit = unit(ex.exerciseId)
         let kg = weightUnit.snapKg(set.weightKg)
+        // A set planned with a drop: the top segment now, the lighter one after it.
+        let drops = set.drops.isEmpty ? "" : " → " + SetDrop.text(set.drops, unit: weightUnit)
         return .init(
             exerciseName: ex.name,
             setLabel: "Serie \(s + 1) de \(ex.sets.count)",
-            target: TrainingText.load(kg, reps: set.reps, unit: weightUnit),
+            target: TrainingText.load(kg, reps: set.reps, unit: weightUnit) + drops,
             setsDone: setsDone,
             setsTotal: setsTotal,
             restStartedAt: resting ? restStartedAt : nil,
@@ -679,7 +738,7 @@ struct LiveSessionState: Hashable {
 // MARK: - Contract JSON
 
 extension LiveSet: Codable {
-    private enum CodingKeys: String, CodingKey { case id, weightKg, reps, rpe, doneAt }
+    private enum CodingKeys: String, CodingKey { case id, weightKg, reps, rpe, doneAt, segments }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -688,6 +747,8 @@ extension LiveSet: Codable {
         reps = try c.decode(Int.self, forKey: .reps)
         rpe = try c.decodeIfPresent(Double.self, forKey: .rpe)
         doneAt = try c.decodeIfPresent(Double.self, forKey: .doneAt).map(LiveSessionState.date)
+        // `segments[0]` is the top, which weightKg/reps already are (and win over).
+        drops = Array(((try? c.decodeIfPresent([SetSegment].self, forKey: .segments)) ?? []).dropFirst()).filter { $0.reps > 0 }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -698,6 +759,7 @@ extension LiveSet: Codable {
         try c.encode(reps, forKey: .reps)
         try c.encode(rpe.flatMap { $0.isFinite ? $0 : nil }, forKey: .rpe)
         try c.encode(doneAt.map(LiveSessionState.ms), forKey: .doneAt)
+        try c.encode(segments.map(\.sanitized), forKey: .segments)
     }
 }
 
