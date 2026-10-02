@@ -188,114 +188,82 @@ struct TodayItem: Identifiable, Equatable {
     }
 }
 
-/// Today as one timeline: by the clock with a «now» mark, then what can wait and what isn't due.
-struct TodayTimeline: View {
+/// Today in sections, one header each: what is left, as-needed, what isn't due, what is done.
+/// Each section is its own card; empty ones are left out.
+struct TodaySections: View {
     let items: [TodayItem]
     let store: MedicationStore
-    var now: Date = .now
 
     var body: some View {
-        let clock = items.filter { $0.at != nil || $0.state == .entreno }
-        let anyTime = items.filter { $0.state == .dia }
-        let whenNeeded = items.filter { $0.state == .aDemanda && $0.at == nil }
-        let off = items.filter { $0.state == .noToca }
-        let time = LocalClock.time(now)
-        let nowAt = clock.firstIndex { $0.state == .entreno || ($0.at ?? "") > time } ?? clock.count
-        VStack(alignment: .leading, spacing: 18) {
-            if !clock.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(clock.prefix(nowAt)) { TimelineRow(item: $0, store: store) }
-                    NowMark()
-                    ForEach(clock.dropFirst(nowAt)) { TimelineRow(item: $0, store: store) }
+        section("Pendiente", systemImage: "clock", items.filter(\.isLeft), hint: "Mantén pulsada una toma para omitirla.")
+        section("Cuando haga falta", systemImage: "hand.tap", items.filter { $0.state == .aDemanda })
+        section("Hoy no toca", systemImage: "moon.zzz", items.filter { $0.state == .noToca })
+        section("Tomado", systemImage: "checkmark.circle", items.filter { $0.state == .tomada || $0.state == .omitida },
+                hint: "Mantén pulsada una toma para deshacerla.")
+    }
+
+    @ViewBuilder private func section(_ title: String, systemImage: String, _ rows: [TodayItem], hint: String? = nil) -> some View {
+        if !rows.isEmpty {
+            Card {
+                CardTitle(text: title, systemImage: systemImage)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(rows) { row in
+                        TimelineRow(item: row, store: store)
+                        if row.id != rows.last?.id { Divider().padding(.leading, TimelineRow.textInset) }
+                    }
                 }
-                .background(alignment: .leading) {
-                    // The rail through the markers.
-                    Rectangle().fill(.quaternary).frame(width: 1.5).padding(.leading, TimelineRow.railX).padding(.vertical, 18)
+                if let hint {
+                    Text(hint).font(.caption2).foregroundStyle(.tertiary)
                 }
             }
-            if !anyTime.isEmpty { section("Hoy, cuando quieras", anyTime) }
-            if !whenNeeded.isEmpty { section("Cuando haga falta", whenNeeded) }
-            if !off.isEmpty { section("Hoy no toca", off) }
-        }
-    }
-
-    private func section(_ title: String, _ rows: [TodayItem]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            ForEach(rows) { TimelineRow(item: $0, store: store) }
         }
     }
 }
 
-private struct NowMark: View {
-    var body: some View {
-        HStack(spacing: 10) {
-            Text("Ahora")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: TimelineRow.timeWidth, alignment: .trailing)
-            Circle().fill(Color.accentColor).frame(width: 9, height: 9).frame(width: TimelineRow.markerSize)
-            Rectangle()
-                .fill(LinearGradient(colors: [Color.accentColor, .clear], startPoint: .leading, endPoint: .trailing))
-                .frame(height: 1)
-        }
-        .frame(height: 22)
-        .accessibilityLabel("Ahora")
-    }
-}
-
-/// One dose of today: the time, a marker on the rail, what and when, and its one action.
+/// One dose of today: a state marker on the card's leading edge, the name on its own
+/// line with the details under it, and one compact action.
 struct TimelineRow: View {
     let item: TodayItem
     let store: MedicationStore
 
-    static let timeWidth: CGFloat = 46
     static let markerSize: CGFloat = 24
-    static var railX: CGFloat { timeWidth + 10 + markerSize / 2 }
+    static let spacing: CGFloat = 12
+    /// Where the text starts, for dividers.
+    static var textInset: CGFloat { markerSize + spacing }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(item.at.map(LocalClock.display) ?? "")
-                .font(.footnote.weight(item.state == .atrasada ? .semibold : .regular))
-                .fontDesign(.rounded)
-                .monospacedDigit()
-                .foregroundStyle(item.state == .atrasada ? AnyShapeStyle(Theme.caution) : AnyShapeStyle(.secondary))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: Self.timeWidth, alignment: .trailing)
+        HStack(spacing: Self.spacing) {
             marker.frame(width: Self.markerSize)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(item.medication.name).font(.body.weight(.medium)).lineLimit(1)
-                    Text(item.medication.doseText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
+                Text(item.medication.name)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(item.state == .noToca ? .secondary : .primary)
                 Text(detail)
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
                     .contentTransition(.opacity)
             }
-            .opacity(item.state == .noToca ? 0.6 : 1)
             .strikethrough(item.state == .omitida, color: .secondary)
-            Spacer(minLength: 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
             trailing
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .contentShape(.rect)
         .contextMenu { menu }
     }
 
-    /// "A las 17:30 · Se pasó hace 2 h · con agua", with the state in its color.
+    /// "1 comprimido · A las 17:30 · Se pasó hace 2 h · con agua", with the state in its color.
+    /// As-needed and any-time rows skip the when (their line says it); days off are one short line.
     private var detail: AttributedString {
-        var text = AttributedString(item.when)
-        if !item.isTaken && item.state != .omitida {
-            var line = AttributedString(" · \(item.line)")
-            if item.state == .atrasada { line.foregroundColor = Theme.caution }
-            if item.state == .ahora { line.foregroundColor = Color.accentColor }
-            text += line
-        }
-        if let instructions = item.medication.instructions, item.state != .noToca { text += AttributedString(" · \(instructions)") }
-        return text
+        var parts: [AttributedString] = []
+        if item.state != .noToca { parts.append(AttributedString(item.medication.doseText)) }
+        if item.state != .aDemanda && item.state != .dia { parts.append(AttributedString(item.when)) }
+        var line = AttributedString(item.line)
+        if item.state == .atrasada { line.foregroundColor = Theme.caution }
+        if item.state == .ahora { line.foregroundColor = Color.accentColor }
+        parts.append(line)
+        if let instructions = item.medication.instructions, item.state != .noToca { parts.append(AttributedString(instructions)) }
+        return parts.dropFirst().reduce(parts[0]) { $0 + AttributedString(" · ") + $1 }
     }
 
     @ViewBuilder private var marker: some View {
@@ -307,17 +275,17 @@ struct TimelineRow: View {
                 Image(systemName: "figure.strengthtraining.traditional")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.training)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 24, height: 24)
                     .background(Theme.training.opacity(0.15), in: .circle)
                     .symbolEffect(.pulse, isActive: item.slot?.training?.state == .training)
             case .dia:
                 Image(systemName: DoseMoment.dia.symbol)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 24, height: 24)
                     .background(Color.accentColor.opacity(0.15), in: .circle)
             case .ahora:
-                Circle().fill(Color.accentColor).frame(width: 14, height: 14)
+                Circle().fill(Color.accentColor).frame(width: 12, height: 12)
                     .background(Circle().fill(Color.accentColor.opacity(0.25)).frame(width: 22, height: 22))
             case .atrasada:
                 // An exclamation, not only the warm ring, so "late" reads without colour.
@@ -325,34 +293,29 @@ struct TimelineRow: View {
             case .omitida:
                 Image(systemName: "xmark.circle").font(.title3).foregroundStyle(.secondary)
             case .aDemanda:
-                Circle().strokeBorder(.secondary, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3])).frame(width: 18, height: 18)
+                Circle().strokeBorder(.secondary, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3])).frame(width: 20, height: 20)
             default:
-                Circle().strokeBorder(.secondary.opacity(item.state == .noToca ? 0.4 : 0.8), lineWidth: 1.5).background(Circle().fill(Color(.secondarySystemGroupedBackground))).frame(width: 18, height: 18)
+                Circle().strokeBorder(.secondary.opacity(item.state == .noToca ? 0.4 : 0.8), lineWidth: 1.5).frame(width: 20, height: 20)
             }
         }
     }
 
+    /// Icon-only so the name keeps the width; VoiceOver hears the words and the name.
     @ViewBuilder private var trailing: some View {
-        if let slot = item.slot {
-            if slot.isPending {
-                Button("Tomada", systemImage: "checkmark") { Task { await store.take(slot) } }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.small)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                    .sensoryFeedback(.success, trigger: slot.status)
-            } else if slot.status == .tomada {
-                Text("Tomada").font(.caption.weight(.semibold)).foregroundStyle(Theme.good)
-            }
+        if let slot = item.slot, slot.isPending {
+            Button("Tomada", systemImage: "checkmark") { Task { await store.take(slot) } }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Marcar \(item.medication.name) como tomada")
+                .sensoryFeedback(.success, trigger: slot.status)
         } else if item.state == .aDemanda {
             Button(item.intakes.isEmpty ? "Tomé una" : "Otra", systemImage: "plus") { Task { await store.takeNow(item.medication) } }
+                .labelStyle(.iconOnly)
                 .buttonStyle(.glass)
-                .controlSize(.small)
-                .lineLimit(1)
-                .layoutPriority(1)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(item.intakes.isEmpty ? "Tomé \(item.medication.name)" : "Tomé otra \(item.medication.name)")
                 .sensoryFeedback(.success, trigger: item.intakes.count)
-        } else if item.state == .tomada {
-            Text("Tomada").font(.caption.weight(.semibold)).foregroundStyle(Theme.good)
         }
     }
 
@@ -388,8 +351,8 @@ struct ScheduleNudgesCard: View {
                             Text(nudge.detail).font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    HStack {
-                        Spacer()
+                    // Side by side under the text, stacked when large type would squeeze them.
+                    AdaptiveStack(horizontalAlignment: .trailing) {
                         Button("Ahora no") { withAnimation(.snappy) { store.dismiss(nudge) } }
                             .buttonStyle(.borderless)
                             .controlSize(.small)
@@ -397,6 +360,7 @@ struct ScheduleNudgesCard: View {
                             .buttonStyle(.glassProminent)
                             .controlSize(.small)
                     }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 if nudge.id != nudges.last?.id { Divider() }
             }
