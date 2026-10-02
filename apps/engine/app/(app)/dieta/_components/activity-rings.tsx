@@ -19,12 +19,18 @@ export function ActivityRing({ progress, color, Icon, size, stroke, label, child
   const second = Math.min(Math.max(progress - 1, 0), 1);
   const point = (f: number) => ({ x: c + r * Math.cos(f * 2 * Math.PI), y: c + r * Math.sin(f * 2 * Math.PI) });
   const end = point(second);
-  // The shadow sits a hair ahead of the overflow's end; the overflow arc covers the rest of it.
-  const shade = point(second + 2.5 / circumference);
+  // Subtle: the same colour a touch lighter, and a soft diffuse shade at its tip.
+  const overflow = `color-mix(in oklab, ${color} 92%, white)`;
+  const shadeId = `ring-shade-${Math.round(size)}-${Math.round(stroke)}`;
 
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={label}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} shapeRendering="geometricPrecision" aria-hidden>
+        <defs>
+          <filter id={shadeId} x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="0" stdDeviation={stroke / 6} floodColor="#000" floodOpacity="0.28" />
+          </filter>
+        </defs>
         <g transform={`rotate(-90 ${c} ${c})`}>
           <circle className="activity-track" cx={c} cy={c} r={r} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={stroke} />
           {lap > 0 && (
@@ -44,9 +50,8 @@ export function ActivityRing({ progress, color, Icon, size, stroke, label, child
           )}
           {second > 0 && (
             <>
-              <circle cx={shade.x} cy={shade.y} r={stroke / 2 + 1.5} fill="rgb(0 0 0 / 0.5)" />
-              <circle cx={end.x} cy={end.y} r={stroke / 2} fill={`color-mix(in oklab, ${color} 80%, white)`} />
-              <circle cx={c} cy={c} r={r} fill="none" stroke={`color-mix(in oklab, ${color} 80%, white)`} strokeWidth={stroke} strokeDasharray={`${second * circumference} ${circumference}`} />
+              <circle cx={end.x} cy={end.y} r={stroke / 2} fill={overflow} filter={`url(#${shadeId})`} />
+              <circle cx={c} cy={c} r={r} fill="none" stroke={overflow} strokeWidth={stroke} strokeDasharray={`${second * circumference} ${circumference}`} />
             </>
           )}
         </g>

@@ -98,12 +98,13 @@ struct ActivityRing<Content: View>: View {
                     )
             }
             if second > 0 {
+                // Subtle: the same colour a touch lighter, and a soft diffuse shade at its tip.
                 RingCap(fraction: second, lineWidth: lineWidth)
-                    .fill(color.mix(with: .white, by: 0.2))
-                    .shadow(color: .black.opacity(0.5), radius: lineWidth / 5)
+                    .fill(color.mix(with: .white, by: 0.08))
+                    .shadow(color: .black.opacity(0.22), radius: lineWidth / 3)
                 Circle()
                     .trim(from: 0, to: second)
-                    .stroke(color.mix(with: .white, by: 0.2), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(color.mix(with: .white, by: 0.08), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
             }
         }
         .rotationEffect(.degrees(-90))
