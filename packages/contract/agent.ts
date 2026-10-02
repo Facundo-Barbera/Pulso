@@ -41,6 +41,7 @@ export type AgentToolResult = {
   lines?: AgentActionLine[];
   /**
    * `available`: Deshacer works (POST `…/threads/:id/messages/:messageId/tools/:index/undo`,
+   * or `…/conversation/messages/:messageId/tools/:index/undo` in the conversation;
    * `index` into the message's `tools`); `done`: it was undone. Absent: it can't be.
    */
   undo?: "available" | "done";
@@ -78,9 +79,16 @@ export type AgentProduct = { barcode: string; product: FoodProduct | null };
 /** At most this many scanned products per message. */
 export const MAX_AGENT_PRODUCTS = 4;
 
+/** A message the Coach didn't write in a turn but that the app put in the conversation: a brief or a training review the person answers. */
+export type AgentMessageSource = { kind: "brief" | "adjustment"; title: string };
+
 export type AgentMessage = {
   id: string;
   threadId: string;
+  /** In the perpetual conversation, the context (SDK session) the message belongs to; null elsewhere. */
+  contextId?: string | null;
+  /** Set on a brief or review quoted into the conversation. */
+  source?: AgentMessageSource | null;
   role: "user" | "assistant";
   /** Markdown for assistant messages. May be empty on a user message that only carries photos. */
   text: string;
@@ -109,7 +117,52 @@ export type AgentStreamEvent =
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: AgentToolUse["status"]; access?: AgentToolUse["access"]; result?: AgentToolResult }
   | { type: "done"; messageId: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** The SDK is summarizing the context to make room (`compacting`), or stopped (`null`). */
+  | { type: "status"; status: "compacting" | null }
+  /** The context was summarized: re-read the feed for its marker once the turn ends. */
+  | { type: "compacted" };
+
+/**
+ * One context of the perpetual conversation: one SDK session. «Contexto nuevo»
+ * starts another; going back makes an old one active again.
+ */
+export type AgentContext = {
+  id: string;
+  startedAt: number;
+  /** Latest message in it, or null when it has none yet. */
+  lastMessageAt: number | null;
+  messageCount: number;
+  active: boolean;
+};
+
+/**
+ * A quiet line in the feed: `context` a context started («Contexto nuevo · fecha»),
+ * `switch` the person went back to one, `compacted` the Coach summarized what came
+ * before to keep going, `distilled` the conversation started from a summary of
+ * the old ones.
+ */
+export type AgentFeedMarker = { id: string; kind: "context" | "switch" | "compacted" | "distilled"; contextId: string; createdAt: number };
+
+export type AgentFeedItem = { type: "message"; message: AgentMessage } | { type: "marker"; marker: AgentFeedMarker };
+
+/**
+ * GET `…/conversation[?before=<cursor>&limit=]`: the latest page of the one
+ * conversation, oldest first. `before` is the cursor for the page before this
+ * one (null when there is nothing older).
+ */
+export type AgentConversation = {
+  threadId: string;
+  activeContextId: string;
+  /** Newest first. */
+  contexts: AgentContext[];
+  items: AgentFeedItem[];
+  before: string | null;
+  /** A turn is in flight: re-attach with GET `…/conversation/turn`. */
+  running: boolean;
+  /** The hourly summary is running; sending waits for it. */
+  compacting: boolean;
+};
 
 /**
  * JSON `{ text, barcodes? }`, or multipart/form-data with a `text` field, up to
