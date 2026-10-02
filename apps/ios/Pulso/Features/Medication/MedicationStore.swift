@@ -15,6 +15,10 @@ final class MedicationStore {
     /// The last `historyDays` days of logged doses, newest first.
     private(set) var history: [DoseEvent] = []
     static let historyDays = 60
+    /// Schedule suggestions not dismissed on this phone.
+    private(set) var nudges: [ScheduleNudge] = []
+    private var dismissedNudges = Set(UserDefaults.standard.stringArray(forKey: MedicationStore.dismissedNudgesKey) ?? [])
+    private static let dismissedNudgesKey = "pulso.medication.nudges.dismissed"
     private(set) var loaded = false
     private(set) var loading = false
 
@@ -40,7 +44,10 @@ final class MedicationStore {
             let from = LocalClock.date(Calendar.current.date(byAdding: .day, value: -(Self.historyDays - 1), to: .now) ?? .now)
             async let doses = api.doses(from: from, to: LocalClock.date(.now))
             async let upcoming = api.upcomingMedication()
+            async let suggested = api.scheduleNudges()
             (medications, day, adherence) = try await (meds, today, report)
+            // An engine without `/nudges` simply suggests nothing.
+            nudges = ((try? await suggested) ?? []).filter { !dismissedNudges.contains($0.medicationId) }
             history = (try? await doses)?.sorted { ($0.takenAt ?? 0, $0.date, $0.scheduledTime ?? "") > ($1.takenAt ?? 0, $1.date, $1.scheduledTime ?? "") } ?? history
             loaded = true
             await replan(upcoming: try? await upcoming)
@@ -142,6 +149,13 @@ final class MedicationStore {
         day.slots[index].status = log.status
         day.slots[index].takenAt = log.takenAt
         self.day = day
+    }
+
+    /// «Ahora no»: hides a suggestion on this phone for good.
+    func dismiss(_ nudge: ScheduleNudge) {
+        dismissedNudges.insert(nudge.medicationId)
+        UserDefaults.standard.set(Array(dismissedNudges), forKey: Self.dismissedNudgesKey)
+        nudges.removeAll { $0.id == nudge.id }
     }
 
     // MARK: Medications

@@ -6,6 +6,7 @@ extension PulsoAPI {
     private struct MedicationsResponse: Decodable { var medications: [Medication] }
     private struct Ack: Decodable {}
     private struct DosesResponse: Decodable { var doses: [DoseEvent] }
+    private struct NudgesResponse: Decodable { var nudges: [ScheduleNudge] }
 
     private static func asOf(_ now: Date) -> [URLQueryItem] {
         [URLQueryItem(name: "date", value: LocalClock.date(now)), URLQueryItem(name: "time", value: LocalClock.time(now))]
@@ -49,6 +50,12 @@ extension PulsoAPI {
 
     func medicationAdherence(at now: Date = .now) async throws -> AdherenceReport {
         try await get("api/mobile/medication/adherence", query: Self.asOf(now))
+    }
+
+    /// As-needed meds that look scheduled, with a prefilled schedule to offer.
+    func scheduleNudges(at now: Date = .now) async throws -> [ScheduleNudge] {
+        let response: NudgesResponse = try await get("api/mobile/medication/nudges", query: Self.asOf(now))
+        return response.nudges
     }
 
     @discardableResult

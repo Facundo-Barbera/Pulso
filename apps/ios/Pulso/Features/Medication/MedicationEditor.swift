@@ -16,11 +16,18 @@ struct MedicationEditor: View {
     private static let moments = [("Mañana", "08:00", "sunrise"), ("Mediodía", "14:00", "sun.max"), ("Tarde", "18:00", "sun.haze"), ("Noche", "22:00", "moon.stars")]
     private static let windows = [30, 45, 60, 90]
 
-    init(store: MedicationStore, medication: Medication?, kind: MedicationKind = .medicamento) {
+    /// `suggestion` prefills the schedule of an existing med (from a `ScheduleNudge`), starting today
+    /// so past as-needed days don't count as missed doses. Nothing is saved until «Guardar».
+    init(store: MedicationStore, medication: Medication?, kind: MedicationKind = .medicamento, suggestion: ScheduleNudge? = nil) {
         self.store = store
         self.medication = medication
         var draft = medication.map(MedicationDraft.init) ?? MedicationDraft()
         if medication == nil && kind == .suplemento { draft.adopt(kind: .suplemento) }
+        if let suggestion, medication != nil {
+            draft.schedule = suggestion.schedule
+            draft.instructions = draft.instructions ?? suggestion.instructions
+            draft.startDate = LocalClock.date(.now)
+        }
         _draft = State(initialValue: draft)
     }
 
