@@ -114,7 +114,10 @@ struct LiveSessionView: View {
             .sensoryFeedback(.selection, trigger: state.focus)
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
-                case .active: Task { await session.pull() }
+                case .active:
+                    // Re-adopts (or starts, if iOS ended it) the Live Activity.
+                    session.attachActivity()
+                    Task { await session.pull() }
                 case .background: session.flush()
                 default: break
                 }

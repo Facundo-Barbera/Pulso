@@ -316,6 +316,36 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertTrue(s.exercises[2].sets.isEmpty, "Cardio has no sets")
     }
 
+    // MARK: Resuming after the app was killed
+
+    func testARestThatRanOutWhileAwayMovesOnWhenResumed() {
+        var s = state()
+        s.updatedAt = t0
+        s.restEndsAt = t0.addingTimeInterval(90)
+        XCTAssertFalse(s.restEndedWhileAway(at: t0.addingTimeInterval(60)), "still resting")
+        XCTAssertTrue(s.restEndedWhileAway(at: t0.addingTimeInterval(600)))
+        // The timer already moved on (a change saved after the rest ended): nothing to catch up.
+        s.updatedAt = t0.addingTimeInterval(91)
+        XCTAssertFalse(s.restEndedWhileAway(at: t0.addingTimeInterval(600)))
+        s.restEndsAt = nil
+        XCTAssertFalse(s.restEndedWhileAway(at: t0.addingTimeInterval(600)))
+    }
+
+    func testTheEngineCopyIsResumedOnlyWhenRecentAndNotClosedHere() {
+        var s = state()
+        s.updatedAt = t0
+        let soon = t0.addingTimeInterval(3600)
+        XCTAssertTrue(LiveSession.shouldRestore(s, closed: [], now: soon))
+        XCTAssertFalse(LiveSession.shouldRestore(s, closed: [s.id], now: soon), "finished or discarded here")
+        XCTAssertFalse(LiveSession.shouldRestore(s, closed: [], now: t0.addingTimeInterval(LiveSession.abandonedAfter + 1)), "abandoned")
+    }
+
+    func testTheLiveActivityLeftRunningIsRecognizedByItsStart() {
+        let s = state()
+        XCTAssertTrue(LiveSession.isActivity(TrainingActivityAttributes(sessionName: s.name, startedAt: s.startedAt.addingTimeInterval(0.4)), of: s))
+        XCTAssertFalse(LiveSession.isActivity(TrainingActivityAttributes(sessionName: s.name, startedAt: s.startedAt.addingTimeInterval(-3600)), of: s))
+    }
+
     // MARK: Editing
 
     func testReorderKeepsTheExerciseOnScreen() {

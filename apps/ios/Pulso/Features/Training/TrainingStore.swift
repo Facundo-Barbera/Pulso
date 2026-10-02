@@ -42,6 +42,9 @@ final class TrainingStore {
     private(set) var bodyWeightKg: Double?
     private(set) var finishing = false
     var live: LiveSession? = LiveSession.restore()
+    /// Set when a session comes back (a relaunch, the engine's copy) or a notification
+    /// asks for it: RootView shows Entreno and the tab opens the live screen.
+    var liveRequested = false
     var summary: SessionSummary?
     /// Set by the live screen as it closes; the tab finishes once the cover is gone,
     /// so the summary sheet never races the dismissal.
@@ -58,6 +61,10 @@ final class TrainingStore {
     /// The active program's block.
     var activeBlock: TrainingBlock? { blocks.first { $0.programId == program?.id } }
 
+    private init() {
+        liveRequested = live != nil
+    }
+
     /// What starting `day` uses: the Coach's adjusted copy of it when one applies.
     private func dayToStart(_ day: ProgramDay) -> (ProgramDay, [String: LoadSuggestion]) {
         if let adjustment, adjustment.dayId == day.id, adjustment.applies { return (adjustment.day, adjustment.suggestions) }
@@ -67,6 +74,7 @@ final class TrainingStore {
     func load() async {
         guard let api = PulsoModel.shared.api else { return }
         await uploadPending()
+        await restoreFromEngine()
         do {
             async let view = api.trainingProgram()
             async let recent = api.trainingSessions()
@@ -217,6 +225,17 @@ final class TrainingStore {
         let session = LiveSession(state: LiveSessionState(day: day, programId: program?.id, suggestions: suggestions))
         session.begin()
         live = session
+    }
+
+    /// A session in progress on the engine that this phone has no file for (the app
+    /// was reinstalled): resumed from the engine's copy. Not one finished or discarded
+    /// here whose DELETE didn't land, nor one abandoned long ago.
+    func restoreFromEngine() async {
+        guard live == nil, let api = PulsoModel.shared.api, let remote = try? await api.liveSession(), live == nil else { return }
+        let closed = LiveSession.closedIds.union(queue.items.map(\.id))
+        guard LiveSession.shouldRestore(remote, closed: closed, now: .now) else { return }
+        live = LiveSession.restore(from: remote)
+        liveRequested = true
     }
 
     /// Drops the session here and on the engine, saving nothing.

@@ -245,6 +245,13 @@ struct LiveSessionState: Hashable {
 
     func resting(at now: Date = .now) -> Bool { restEndsAt.map { $0 > now } ?? false }
 
+    /// The rest ran out with no change saved after it: the app was gone (killed)
+    /// when its timer would have moved on, so a resumed session does that now.
+    func restEndedWhileAway(at now: Date = .now) -> Bool {
+        guard let restEndsAt else { return false }
+        return restEndsAt <= now && restEndsAt > updatedAt
+    }
+
     // MARK: Sets
 
     /// Checks a set off (starting its rest) or un-checks it. Checking carries
