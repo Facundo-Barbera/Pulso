@@ -11,9 +11,14 @@ import { Sheet } from "../../../_ui/sheet";
 
 const MED = "var(--domain-medication)";
 
-type Editing = { medication: Medication | null; kind: MedicationKind } | null;
-type Open = (medication: Medication | null, kind?: MedicationKind) => void;
+/** What a suggestion fills in before the editor opens; nothing is saved until «Guardar». */
+export type Prefill = Pick<Medication, "schedule"> & { instructions: string | null };
+type Editing = { medication: Medication | null; kind: MedicationKind; prefill?: Prefill } | null;
+type Open = (medication: Medication | null, kind?: MedicationKind, prefill?: Prefill) => void;
 const EditorContext = createContext<Open>(() => {});
+
+/** Opens the page's editor: a medication (or null for a new one), optionally prefilled. */
+export const useMedicationEditor = () => useContext(EditorContext);
 
 const NEW_TITLE: Record<MedicationKind, string> = { medicamento: "Nuevo medicamento", suplemento: "Nuevo suplemento" };
 
@@ -22,10 +27,10 @@ export function MedicationEditorProvider({ today, children }: { today: string; c
   const [editing, setEditing] = useState<Editing>(null);
   const close = () => setEditing(null);
   return (
-    <EditorContext.Provider value={(medication, kind = "medicamento") => setEditing({ medication, kind: medication?.kind ?? kind })}>
+    <EditorContext.Provider value={(medication, kind = "medicamento", prefill) => setEditing({ medication, kind: medication?.kind ?? kind, prefill })}>
       {children}
       <Sheet open={editing !== null} onClose={close} title={editing?.medication ? editing.medication.name : NEW_TITLE[editing?.kind ?? "medicamento"]}>
-        {editing && <MedicationForm medication={editing.medication} kind={editing.kind} today={today} onKind={(kind) => setEditing((e) => e && { ...e, kind })} onDone={close} />}
+        {editing && <MedicationForm medication={editing.medication} prefill={editing.prefill} kind={editing.kind} today={today} onKind={(kind) => setEditing((e) => e && { ...e, kind })} onDone={close} />}
       </Sheet>
     </EditorContext.Provider>
   );
@@ -242,9 +247,10 @@ function Part({ title, hint, children }: { title: string; hint?: string; childre
 const WINDOWS = [30, 60, 90, 120];
 const fmtWindow = (min: number) => (min % 60 === 0 ? `${min / 60} h` : min > 60 ? `${Math.floor(min / 60)} h ${min % 60}` : `${min} min`);
 
-function MedicationForm({ medication, kind, today, onKind, onDone }: { medication: Medication | null; kind: MedicationKind; today: string; onKind: (kind: MedicationKind) => void; onDone: () => void }) {
+function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { medication: Medication | null; prefill?: Prefill; kind: MedicationKind; today: string; onKind: (kind: MedicationKind) => void; onDone: () => void }) {
   const router = useRouter();
-  const [draft, setDraft] = useState(() => draftOf(medication, kind, today));
+  // A suggested schedule starts today, so past as-needed days don't count as missed doses.
+  const [draft, setDraft] = useState(() => draftOf(medication && prefill ? { ...medication, schedule: prefill.schedule, instructions: medication.instructions ?? prefill.instructions, startDate: today } : medication, kind, today));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);

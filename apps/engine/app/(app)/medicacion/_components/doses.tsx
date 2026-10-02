@@ -69,13 +69,13 @@ export function DoseActions({ slot, takenLabel }: { slot: DoseSlot; takenLabel: 
 }
 
 /** «Tomé una» for an as-needed medication: logs an intake now. */
-export function TakeOneButton({ medicationId, date, name }: { medicationId: string; date: string; name: string }) {
+export function TakeOneButton({ medicationId, date, name, label = "Tomé una" }: { medicationId: string; date: string; name: string; label?: string }) {
   const { busy, error, run } = useAction();
   return (
     <span className="flex shrink-0 flex-col items-end gap-1">
       <Button onClick={() => run(() => send("/api/web/medicacion/tomas", "POST", { medicationId, date, scheduledTime: null, status: "tomada" }))} disabled={busy} aria-label={`Tomé una de ${name}`}>
         <Plus className="size-4" />
-        Tomé una
+        {label}
       </Button>
       {error && <span className="text-destructive text-[12px]">{error}</span>}
     </span>

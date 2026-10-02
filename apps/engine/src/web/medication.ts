@@ -1,13 +1,14 @@
 /**
- * What the web app's Medicación y suplementos page draws: today's slots
- * grouped by moment, the as-needed meds with today's count, adherence, every
- * medication (paused too) and the last 60 days of logged doses grouped by
- * day. Read-only, from the medication store, on the Mac's clock. Also the
- * Spanish wording of schedules and slots, which Hoy shares.
+ * What the web app's Medicación y suplementos page draws: one timeline of
+ * today (every active medication once per dose, with its state), suggestions
+ * to schedule as-needed meds taken on a rhythm, adherence, every medication
+ * (paused too) and the last 60 days of logged doses grouped by day.
+ * Read-only, from the medication store, on the Mac's clock. Also the Spanish
+ * wording of schedules and slots, which Hoy shares.
  */
-import type { AdherenceReport, DoseEvent, DoseMoment, DoseSlot, Medication, MedicationDay, MedicationSchedule, TrainingSlot } from "@pulso/contract";
-import { addDays, localNow, TIME } from "../medication/schedule";
-import { adherence, dosesBetween, listMedications, medicationDay } from "../medication/store";
+import type { AdherenceReport, DoseEvent, DoseMoment, DoseSlot, Medication, MedicationDay, MedicationSchedule, ScheduleNudge, TrainingSlot } from "@pulso/contract";
+import { addDays, isoWeekday, localNow, TIME, toMinutes } from "../medication/schedule";
+import { adherence, dosesBetween, listMedications, medicationDay, nudges } from "../medication/store";
 
 export type HistoryEntry = DoseEvent & { name: string; dose: number; unit: string };
 
@@ -15,8 +16,9 @@ export type MedicationPage = {
   date: string;
   time: string;
   day: MedicationDay;
-  /** Today's slots grouped by moment. */
-  groups: DoseGroup[];
+  /** Today, in order: what was taken, what is still to take, then what waits, can wait or isn't due. */
+  today: TodayItem[];
+  nudges: ScheduleNudge[];
   adherence: AdherenceReport;
   /** Active first, then paused. */
   medications: Medication[];
@@ -49,7 +51,117 @@ export function medicationPage(now = new Date()): MedicationPage {
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([date, entries]) => ({ date, entries: entries.sort((a, b) => moment(b) - moment(a)) }));
 
-  return { date, time, day, groups: groupSlots(day.slots, time), adherence: adherence(date, time), medications, asNeeded, history };
+  return { date, time, day, today: todayItems(medications, day, history, date, time), nudges: nudges(date), adherence: adherence(date, time), medications, asNeeded, history };
+}
+
+/**
+ * Where a dose stands today. `ahora`: due within the last hour (or a workout's window is open);
+ * `atrasada`: due longer ago; `entreno`: waiting for a workout; `no-toca`: scheduled, not today;
+ * `a-demanda`: as-needed, taken or not.
+ */
+export type TodayState = "tomada" | "omitida" | "ahora" | "atrasada" | "pendiente" | "entreno" | "a-demanda" | "no-toca";
+
+export type TodayItem = {
+  key: string;
+  medication: Medication;
+  state: TodayState;
+  /** "HH:MM" it sits at on the day: when taken, else when due; null when it has no time today. */
+  at: string | null;
+  /** When it is due, in words: "A las 09:00", "Con la comida · 14:00", "Después de entrenar", "Cuando haga falta". */
+  when: string;
+  /** How it stands: "Tomada a las 09:56", "Toca ahora", "Se pasó hace 2 h", "Al terminar tu sesión de las 18:00", "Toca el lunes"… */
+  line: string;
+  /** The slot to log against; null for as-needed, extra intakes and days off. */
+  slot: DoseSlot | null;
+  /** Intakes logged today outside a slot (as-needed or extra), newest first. */
+  intakes: HistoryEntry[];
+};
+
+/** Still to take today. */
+export const isLeft = (item: TodayItem) => item.state === "ahora" || item.state === "atrasada" || item.state === "pendiente" || item.state === "entreno";
+
+const DUE_NOW_MINUTES = 60;
+const WEEKDAY_NAMES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
+const clock = (ms: number) => localNow(new Date(ms)).time;
+
+function slotWhen(slot: DoseSlot): string {
+  if (slot.moment === "hora") return `A las ${slot.slot}`;
+  if (slot.moment === "entreno") return slot.training?.state === "rest" ? `Hoy descansas · ${slot.time}` : MOMENT_TITLE.entreno;
+  return `${MOMENT_TITLE[slot.moment]} · ${slot.time}`;
+}
+
+function slotState(slot: DoseSlot, now: string): { state: TodayState; line: string } {
+  if (slot.status === "tomada") return { state: "tomada", line: slot.takenAt ? `Tomada a las ${clock(slot.takenAt)}` : "Tomada" };
+  if (slot.status === "omitida") return { state: "omitida", line: "Omitida" };
+  const t = slot.training;
+  if (slot.time === null) return { state: "entreno", line: t ? trainingLine(t, now) : "Esperando" };
+  if (t?.state === "trained") return { state: now <= t.until! ? "ahora" : "atrasada", line: trainingLine(t, now) };
+  if (slot.time > now) return { state: "pendiente", line: slot.status === "pospuesta" ? "Pospuesta" : `En ${fmtGap(toMinutes(slot.time) - toMinutes(now))}` };
+  const late = toMinutes(now) - toMinutes(slot.time);
+  return late <= DUE_NOW_MINUTES ? { state: "ahora", line: "Toca ahora" } : { state: "atrasada", line: `Se pasó hace ${fmtGap(late)}` };
+}
+
+const fmtGap = (minutes: number) => (minutes < 60 ? `${minutes} min` : minutes % 60 === 0 || minutes >= 180 ? `${Math.round(minutes / 60)} h` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`);
+
+/** Why a scheduled med has nothing today, and when it does next. */
+function offLine(med: Medication, date: string): string {
+  const { schedule } = med;
+  if (date < med.startDate) return `Empieza el ${fmtDate(med.startDate)}`;
+  if (schedule.days.length > 0 && !schedule.days.includes(isoWeekday(date))) {
+    const next = Array.from({ length: 7 }, (_, i) => addDays(date, i + 1)).find((d) => schedule.days.includes(isoWeekday(d)))!;
+    return next === addDays(date, 1) ? "Toca mañana" : `Toca el ${WEEKDAY_NAMES[isoWeekday(next) - 1]}`;
+  }
+  if (schedule.training && schedule.training.restDayTime === null) return "Hoy descansas · solo los días de entreno";
+  return "Hoy no toca";
+}
+
+/** "ayer", "el domingo" (this past week), "el 12 de septiembre". */
+function lastLabel(last: string, today: string): string {
+  if (last === addDays(today, -1)) return "ayer";
+  if (last > addDays(today, -7)) return `el ${WEEKDAY_NAMES[isoWeekday(last) - 1]}`;
+  return `el ${fmtDate(last)}`;
+}
+
+const fmtDate = (date: string) => new Intl.DateTimeFormat("es", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
+
+const ORDER: Record<TodayState, number> = { tomada: 0, omitida: 0, ahora: 0, atrasada: 0, pendiente: 0, entreno: 1, "a-demanda": 2, "no-toca": 3 };
+
+/**
+ * Today as one list: every slot of every active med, intakes logged outside a
+ * slot, each as-needed med once, and scheduled meds with nothing today. Timed
+ * items go by the clock (taken ones at when they were taken); then what waits
+ * for a workout, the as-needed meds not taken yet and what isn't due today.
+ */
+export function todayItems(medications: Medication[], day: MedicationDay, history: MedicationPage["history"], date: string, now: string): TodayItem[] {
+  const items: TodayItem[] = [];
+  const slotted = new Set(day.slots.map((s) => `${s.medicationId}|${s.slot}`));
+  const entries = history.find((d) => d.date === date)?.entries ?? [];
+  const loose = entries.filter((e) => e.status === "tomada" && !(e.scheduledTime && slotted.has(`${e.medicationId}|${e.scheduledTime}`)));
+
+  for (const med of medications.filter((m) => m.active)) {
+    const intakes = loose.filter((e) => e.medicationId === med.id);
+    const at = intakes[0]?.takenAt ? clock(intakes[0].takenAt) : null;
+    if (med.schedule.asNeeded) {
+      const last = intakes.length ? null : history.find((d) => d.entries.some((e) => e.medicationId === med.id && e.status === "tomada"))?.date;
+      const line = intakes.length === 0 ? (last ? `Última ${lastLabel(last, date)}` : "Ninguna hoy") : intakes.length === 1 ? `Tomada a las ${at}` : `${intakes.length} hoy · última a las ${at}`;
+      items.push({ key: med.id, medication: med, state: "a-demanda", at, when: "Cuando haga falta", line, slot: null, intakes });
+      continue;
+    }
+    const slots = day.slots.filter((s) => s.medicationId === med.id);
+    for (const slot of slots) {
+      const { state, line } = slotState(slot, now);
+      items.push({ key: `${med.id}|${slot.slot}`, medication: med, state, at: slot.takenAt ? clock(slot.takenAt) : slot.time, when: slotWhen(slot), line, slot, intakes: [] });
+    }
+    for (const e of intakes) {
+      items.push({ key: e.id, medication: med, state: "tomada", at: clock(e.takenAt!), when: "Fuera de horario", line: `Tomada a las ${clock(e.takenAt!)}`, slot: null, intakes: [e] });
+    }
+    if (slots.length === 0 && intakes.length === 0 && !(med.endDate && date > med.endDate)) {
+      items.push({ key: med.id, medication: med, state: "no-toca", at: null, when: scheduleLine(med.schedule), line: offLine(med, date), slot: null, intakes: [] });
+    }
+  }
+  // As-needed meds taken today sit on the clock with the rest; untaken ones wait below.
+  const rank = (i: TodayItem) => (i.state === "a-demanda" && i.at ? 0 : ORDER[i.state]);
+  return items.sort((a, b) => rank(a) - rank(b) || (a.at ?? "99").localeCompare(b.at ?? "99") || a.medication.name.localeCompare(b.medication.name));
 }
 
 // --- Spanish wording for schedules and slots, shared by the page and Hoy. ---

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { DoseSlot } from "@pulso/contract";
 import { addDays, localNow } from "../medication/schedule";
 import { addMedication, listMedications, logDose, updateMedication } from "../medication/store";
-import { groupSlots, HISTORY_DAYS, medicationPage, scheduleLine, slotLabel, trainingLine, unitFor } from "./medication";
+import { groupSlots, HISTORY_DAYS, isLeft, medicationPage, scheduleLine, slotLabel, trainingLine, unitFor } from "./medication";
 import { ownDatabase } from "./test-db";
 
 ownDatabase("web-medication");
@@ -43,23 +43,41 @@ test("today's slots, as-needed counts, paused meds and the history grouped by da
   expect(page.adherence.overall.last7.taken).toBe(1);
 });
 
-test("today's slots grouped by moment, training ones under «Después de entrenar» with their status", () => {
+test("today as one timeline: taken by the clock, what is left with its state, then as-needed and days off", () => {
   for (const m of listMedications()) updateMedication(m.id, { active: false });
+  const fixed = (times: string[], days: number[] = []) => ({ asNeeded: false, times, days });
   const creatine = addMedication({ name: "Creatina", kind: "suplemento", dose: 5, unit: "g", schedule: { asNeeded: false, times: [], days: [], training: { withinMinutes: 60, restDayTime: "09:00" } } }, today);
   addMedication({ name: "Whey", kind: "suplemento", dose: 1, unit: "scoop", schedule: { asNeeded: false, times: [], days: [], training: { withinMinutes: 60, restDayTime: null } } }, today);
-  addMedication({ name: "Omega 3", kind: "suplemento", dose: 1, unit: "cápsula", schedule: { asNeeded: false, times: [], days: [], meals: ["desayuno"] } }, today);
+  const levo = addMedication({ name: "Levotiroxina", dose: 1, unit: "comprimido" }, today);
+  const sema = addMedication({ name: "Semaglutida", dose: 1, unit: "inyección" }, today);
+  addMedication({ name: "Hierro", dose: 1, unit: "comprimido", schedule: fixed(["10:00"], [1]) }, today); // 2033-07-14 is a Thursday
+  addMedication({ name: "Omega 3", kind: "suplemento", dose: 1, unit: "cápsula", schedule: fixed(["11:30"]) }, today);
+  addMedication({ name: "Magnesio B", dose: 1, unit: "comprimido", schedule: fixed(["15:00"]) }, today);
+  logDose({ medicationId: levo.id, date: today, status: "tomada", takenAt: new Date(2033, 6, 14, 9, 56).getTime() });
 
-  // No workout and none planned: a rest day, so creatine falls to 09:00 and whey ("No tomar") has no slot.
+  // 12:00 on a rest day: creatine fell to 09:00 and is late, whey ("No tomar") has nothing today.
   let page = medicationPage(NOW);
-  expect(page.groups.map((g) => [g.title, g.slots.map((s) => [s.name, s.line])])).toEqual([
-    ["Con el desayuno", [["Omega 3", null]]],
-    ["Después de entrenar", [["Creatina", "Hoy descansas · 09:00"]]],
+  expect(page.today.map((i) => [i.medication.name, i.state, i.at, i.when, i.line])).toEqual([
+    ["Creatina", "atrasada", "09:00", "Hoy descansas · 09:00", "Se pasó hace 3 h"],
+    ["Levotiroxina", "a-demanda", "09:56", "Cuando haga falta", "Tomada a las 09:56"],
+    ["Omega 3", "ahora", "11:30", "A las 11:30", "Toca ahora"],
+    ["Magnesio B", "pendiente", "15:00", "A las 15:00", "En 3 h"],
+    ["Semaglutida", "a-demanda", null, "Cuando haga falta", "Ninguna hoy"], // never taken
+    ["Hierro", "no-toca", null, "L · 10:00", "Toca el lunes"],
+    ["Whey", "no-toca", null, "Después de entrenar · solo días de entreno", "Hoy descansas · solo los días de entreno"],
   ]);
+  expect(page.today.filter(isLeft).map((i) => i.medication.name)).toEqual(["Creatina", "Omega 3", "Magnesio B"]);
+  expect(page.nudges.map((n) => [n.name, n.cadence])).toEqual([["Levotiroxina", "daily"], ["Semaglutida", "weekly"]]);
 
+  // Taken now, creatine moves to the clock time it was taken; a dose logged outside any slot shows as its own.
   logDose({ medicationId: creatine.id, date: today, scheduledTime: "entreno", status: "tomada", takenAt: NOW.getTime() });
   page = medicationPage(NOW);
-  expect(page.groups[1]!.slots[0]).toMatchObject({ status: "tomada", line: null });
+  expect(page.today.find((i) => i.medication.id === creatine.id)).toMatchObject({ state: "tomada", at: "12:00", line: "Tomada a las 12:00" });
   expect(page.history[0]!.entries[0]).toMatchObject({ name: "Creatina", scheduledTime: "entreno" });
+
+  // An as-needed med not taken today says when it last was.
+  logDose({ medicationId: sema.id, date: addDays(today, -4), status: "tomada", takenAt: NOW.getTime() - 4 * 86_400_000 });
+  expect(medicationPage(NOW).today.find((i) => i.medication.id === sema.id)?.line).toBe("Última el domingo");
 });
 
 const slot = (over: Partial<DoseSlot>): DoseSlot => ({
