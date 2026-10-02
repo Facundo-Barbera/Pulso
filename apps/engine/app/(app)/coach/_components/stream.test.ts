@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { AgentMessage, AgentStreamEvent } from "@pulso/contract";
-import { applyEvent, keepIds, readEvents } from "./stream";
+import type { AgentFeedItem, AgentMessage, AgentStreamEvent } from "@pulso/contract";
+import { applyEvent, mergeLatest, prependOlder, readEvents } from "./stream";
 import { isAction, placeOf, toolLook } from "./tools";
 
 function body(chunks: string[]): ReadableStream<Uint8Array> {
@@ -51,20 +51,26 @@ const message = (id: string, role: AgentMessage["role"], text = ""): AgentMessag
   id, threadId: "t", role, text, attachments: [], products: [], tools: [], status: "done", error: null, createdAt: 0,
 });
 
-test("a re-read thread keeps the local placeholders' ids for what the Mac saved", () => {
-  const shown = [message("m1", "user"), message("m2", "assistant"), message("local-a", "user", "hola"), message("local-b", "assistant")];
-  const saved = [message("m1", "user"), message("m2", "assistant"), message("m3", "user", "hola"), message("m4", "assistant", "¡Hola!")];
-  const kept = keepIds(shown, saved);
-  expect(kept.map((m) => m.id)).toEqual(["m1", "m2", "local-a", "local-b"]);
-  // Everything else is the Mac's.
-  expect(kept.at(-1)?.text).toBe("¡Hola!");
+const msg = (id: string, role: AgentMessage["role"] = "user"): AgentFeedItem => ({ type: "message", message: message(id, role) });
+const mark = (id: string): AgentFeedItem => ({ type: "marker", marker: { id, kind: "compacted", contextId: "c", createdAt: 0 } });
+const ids = (items: AgentFeedItem[]) => items.map((i) => (i.type === "message" ? i.message.id : `#${i.marker.id}`));
+
+test("the latest page keeps local ids and the older rows above it", () => {
+  const shown = [msg("m0"), mark("k1"), msg("m1"), msg("local-u"), msg("local-a", "assistant")];
+  const page = [mark("k1"), msg("m1"), msg("s-u"), msg("s-a", "assistant"), mark("k2")];
+  const { items, continuous } = mergeLatest(shown, page, new Map([["s-u", "local-u"], ["s-a", "local-a"]]));
+  expect(continuous).toBe(true);
+  expect(ids(items)).toEqual(["m0", "#k1", "m1", "local-u", "local-a", "#k2"]);
 });
 
-test("a re-read thread takes the server's ids where the rows don't line up", () => {
-  // A send the Mac never saved: nothing to keep.
-  expect(keepIds([message("m1", "user"), message("local-a", "assistant")], [message("m1", "user")]).map((m) => m.id)).toEqual(["m1"]);
-  expect(keepIds([message("local-a", "assistant")], [message("m1", "user"), message("m2", "assistant")]).map((m) => m.id)).toEqual(["m1", "m2"]);
-  expect(keepIds([], [message("m1", "user")]).map((m) => m.id)).toEqual(["m1"]);
+test("a page that doesn't reach what was shown replaces it; a send the Mac never saved goes", () => {
+  expect(mergeLatest([msg("m0")], [msg("m5"), msg("m6")], new Map())).toEqual({ items: [msg("m5"), msg("m6")], continuous: false });
+  expect(ids(mergeLatest([msg("m1"), msg("local-a", "assistant")], [msg("m1")], new Map()).items)).toEqual(["m1"]);
+  expect(mergeLatest([], [mark("k")], new Map()).continuous).toBe(true);
+});
+
+test("an older page goes on top, a shared marker once", () => {
+  expect(ids(prependOlder([mark("k"), msg("m3")], [msg("m1"), msg("m2"), mark("k")]))).toEqual(["m1", "m2", "#k", "m3"]);
 });
 
 test("tools keep whether they read or wrote, and the card's place wins over its tab", () => {

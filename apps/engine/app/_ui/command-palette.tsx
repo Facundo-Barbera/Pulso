@@ -25,7 +25,7 @@ export function CommandPalette({ open, onClose, substances = false }: { open: bo
     const theme = (value: Appearance["theme"]) => () => saveAppearance({ ...readAppearance(), theme: value });
     return [
       ...SECTIONS.map((s, i) => ({ id: s.href, label: s.label, hint: `⌘${i + 1}`, icon: s.icon, color: s.color, run: () => router.push(s.href) })),
-      { id: "coach-new", label: "Nuevo chat con el Coach", hint: "Coach", icon: SquarePen, color: "var(--pulso-violet)", run: () => router.push("/coach/nuevo") },
+      { id: "coach-new", label: "Preguntar al Coach", hint: "Coach", icon: SquarePen, color: "var(--pulso-violet)", run: () => router.push("/coach") },
       ...(substances ? [{ id: "substances", label: "Sustancias", hint: "Privado", icon: CircleDashed, color: "var(--domain-medication)", run: () => router.push("/sustancias") }] : []),
       { id: "pair", label: "Emparejar un navegador", hint: "Ajustes", icon: Link2, run: () => router.push("/ajustes#emparejar") },
       { id: "dark", label: "Tema oscuro", hint: "Apariencia", icon: Moon, run: theme("dark") },

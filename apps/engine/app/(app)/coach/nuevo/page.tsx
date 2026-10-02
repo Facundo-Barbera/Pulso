@@ -1,15 +1,10 @@
-import { coachBrief } from "@/src/web/coach";
-import { NewChatView } from "../_components/chat";
-
-export const dynamic = "force-dynamic";
-export const metadata = { title: "Nueva conversación" };
+import { redirect } from "next/navigation";
 
 type Props = { searchParams: Promise<{ q?: string; responder?: string }> };
 
-/** A new chat. `?q=` sends a prompt at once; `?responder=<brief id>` opens it as a reply to that brief. */
-export default async function NewChat({ searchParams }: Props) {
+/** Old "new chat" links: the same asks go to the one conversation. */
+export default async function OldNewChat({ searchParams }: Props): Promise<never> {
   const { q, responder } = await searchParams;
-  const { brief, replyTo } = coachBrief(responder);
-  const starter = q?.trim().slice(0, 2000) || null;
-  return <NewChatView key={`${starter}|${replyTo?.id}`} brief={brief} replyTo={replyTo} starter={starter} />;
+  const params = new URLSearchParams({ ...(q ? { q } : {}), ...(responder ? { responder } : {}) }).toString();
+  redirect(params ? `/coach?${params}` : "/coach");
 }

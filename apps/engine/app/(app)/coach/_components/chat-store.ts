@@ -1,35 +1,37 @@
 "use client";
 
-import type { AgentMessage, AgentProduct, AgentThread, AgentUndoResponse, CoachBrief } from "@pulso/contract";
+import type { AgentContext, AgentConversation, AgentFeedItem, AgentMessage, AgentProduct, AgentUndoResponse } from "@pulso/contract";
 import { useSyncExternalStore } from "react";
 import { uuid } from "../../../_ui/insecure";
-import type { CoachThreadView } from "@/src/web/coach";
 import { rememberLocal, type Photo } from "./photos";
-import { applyEvent, keepIds, readEvents } from "./stream";
+import { applyEvent, mergeLatest, prependOlder, readEvents } from "./stream";
 
 /**
- * The web Coach's client state, outside React like iOS's ChatStore: one live
- * chat per thread, so a reply keeps streaming while the person opens another
- * thread or the route changes, and is there when they come back. The turn
- * runs on the Mac to the end whatever the browser does; a chat only follows.
+ * The web Coach's client state, outside React like iOS's store: the one
+ * conversation, so a reply keeps streaming while the person is on another
+ * page and is there when they come back. The turn runs on the Mac to the end
+ * whatever the browser does; this only follows.
  */
 
 export type ChatState = {
-  threadId: string | null;
-  title: string | null;
-  messages: AgentMessage[];
+  items: AgentFeedItem[];
+  contexts: AgentContext[];
+  activeContextId: string | null;
+  /** Cursor for the page above what is shown; null at the start of the conversation. */
+  before: string | null;
+  loadingOlder: boolean;
   /** a turn is being followed (or being started) */
   streaming: boolean;
-  /** the thread has been read from the Mac at least once */
+  /** the Coach is summarizing the context (in a turn, or the hourly summary) */
+  compacting: boolean;
+  /** read from the Mac at least once */
   loaded: boolean;
   error: string | null;
-  /** a new chat replying to this brief: sending starts the thread from it */
-  replyTo: CoachBrief | null;
 };
 
 type Listener = () => void;
 
-const API = "/api/web/coach";
+const API = "/api/web/coach/conversation";
 const RETRIES = 5;
 
 async function problem(response: Response): Promise<string> {
@@ -40,6 +42,7 @@ async function problem(response: Response): Promise<string> {
 }
 
 const localId = () => `local-${uuid()}`;
+const offline = "No se pudo hablar con la Mac.";
 
 /** Multipart only when there are photos; otherwise JSON, with the scanned barcodes when there are any. */
 function messageBody(text: string, photos: Photo[], barcodes: string[]): RequestInit {
@@ -51,28 +54,19 @@ function messageBody(text: string, photos: Photo[], barcodes: string[]): Request
   return { method: "POST", body: form };
 }
 
+const lastMessageIndex = (items: AgentFeedItem[]) => items.findLastIndex((i) => i.type === "message");
+
 export class Chat {
-  private state: ChatState;
+  private state: ChatState = { items: [], contexts: [], activeContextId: null, before: null, loadingOlder: false, streaming: false, compacting: false, loaded: false, error: null };
   private listeners = new Set<Listener>();
   private following = false;
   /** The server said a turn is in flight: `start()` re-attaches. */
   private pendingAttach = false;
-  /** Bumped by `forget`: a follow loop from before stops touching state. */
-  private generation = 0;
-  /** Replies written in this browser keep a local id (stable rows); the Mac's id, from `start`, is what undo names. */
+  /** Rows written in this browser keep a local id (stable rows): local → the Mac's (undo names it) and back. */
   private serverIds = new Map<string, string>();
-
-  constructor(threadId: string | null, replyTo: CoachBrief | null = null) {
-    this.state = {
-      threadId,
-      title: null,
-      messages: replyTo ? [{ id: localId(), threadId: "", role: "assistant", text: replyTo.text, attachments: [], products: [], tools: [], status: "done", error: null, createdAt: replyTo.updatedAt }] : [],
-      streaming: false,
-      loaded: threadId === null,
-      error: null,
-      replyTo,
-    };
-  }
+  private localOf = new Map<string, string>();
+  /** The SDK summarized during the turn: re-read the feed for its marker once it ends. */
+  private compactedInTurn = false;
 
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
@@ -85,58 +79,68 @@ export class Chat {
     this.state = { ...this.state, ...(typeof patch === "function" ? patch(this.state) : patch) };
     if (silent) return;
     for (const listener of this.listeners) listener();
-    changed();
   }
 
+  /** The reply being written: the last message, when it is the Coach's. */
   private patchLast(update: (m: AgentMessage) => AgentMessage) {
     this.set((s) => {
-      const last = s.messages.at(-1);
-      if (!last || last.role !== "assistant") return {};
-      return { messages: [...s.messages.slice(0, -1), update(last)] };
+      const at = lastMessageIndex(s.items);
+      const last = s.items[at];
+      if (last?.type !== "message" || last.message.role !== "assistant") return {};
+      const items = [...s.items];
+      items[at] = { type: "message", message: update(last.message) };
+      return { items };
     });
   }
 
   /** What the server rendered, taken during render (so silently). Ignored once the chat is live. */
-  seed(view: CoachThreadView) {
+  seed(view: AgentConversation) {
     if (this.following || this.state.loaded) return;
     this.take(view, true);
   }
 
   /** From an effect: re-attaches to the turn the server said is in flight. */
   start() {
-    if (!this.pendingAttach || this.following || !this.state.threadId) return;
+    if (!this.pendingAttach || this.following) return;
     this.pendingAttach = false;
-    const id = this.state.threadId;
-    void this.follow(() => fetch(`${API}/threads/${id}/turn`, { cache: "no-store" }));
+    void this.follow(() => fetch(`${API}/turn`, { cache: "no-store" }));
   }
 
-  /** Re-reads the thread unless a stream is live (e.g. the tab comes back into view). */
+  /** Re-reads the latest page unless a stream is live (e.g. the tab comes back into view). */
   async resume() {
-    const id = this.state.threadId;
-    if (this.following || !id) return;
-    const response = await fetch(`${API}/threads/${id}`, { cache: "no-store" }).catch(() => null);
+    if (this.following) return;
+    const response = await fetch(API, { cache: "no-store" }).catch(() => null);
     if (!response?.ok || this.following) return;
-    this.take((await response.json()) as CoachThreadView);
+    this.take((await response.json()) as AgentConversation);
     this.start();
   }
 
-  /** The Mac's messages with this browser's local ids kept (stable rows); the Mac's id behind each is remembered for undo. */
-  private keep(fromMac: AgentMessage[]): AgentMessage[] {
-    const kept = keepIds(this.state.messages, fromMac);
-    kept.forEach((m, i) => {
-      if (fromMac[i] && m.id !== fromMac[i].id) this.serverIds.set(m.id, fromMac[i].id);
-    });
-    return kept;
+  private take(view: AgentConversation, silent = false) {
+    const { items, continuous } = mergeLatest(this.state.items, view.items, this.localOf);
+    const at = lastMessageIndex(items);
+    const last = items[at];
+    const attach = view.running && last?.type === "message" && last.message.role === "assistant" && last.message.status === "streaming";
+    if (attach) {
+      // The re-attached stream replays the turn from its start.
+      items[at] = { type: "message", message: { ...last.message, text: "", tools: [] } };
+    }
+    this.pendingAttach = attach;
+    const keepsOlder = continuous && items.length > view.items.length;
+    this.set(
+      { items, before: keepsOlder ? this.state.before : view.before, contexts: view.contexts, activeContextId: view.activeContextId, compacting: view.compacting, loaded: true, streaming: attach },
+      silent,
+    );
   }
 
-  private take(view: CoachThreadView, silent = false) {
-    const saved = this.keep(view.messages);
-    const last = saved.at(-1);
-    const attach = view.running && last?.role === "assistant" && last.status === "streaming";
-    // The re-attached stream replays the turn from its start.
-    const messages = attach ? [...saved.slice(0, -1), { ...last, text: "", tools: [] }] : saved;
-    this.pendingAttach = attach;
-    this.set({ title: view.thread.title, messages, loaded: true, streaming: attach }, silent);
+  /** The page above what is shown. */
+  async loadOlder() {
+    const before = this.state.before;
+    if (!before || this.state.loadingOlder) return;
+    this.set({ loadingOlder: true });
+    const response = await fetch(`${API}?before=${encodeURIComponent(before)}`, { cache: "no-store" }).catch(() => null);
+    if (!response?.ok) return this.set({ loadingOlder: false });
+    const page = (await response.json()) as AgentConversation;
+    this.set((s) => ({ items: prependOlder(s.items, page.items), before: page.before, loadingOlder: false }));
   }
 
   /** False when nothing was sent (the composer gives the text, photos and products back). */
@@ -144,76 +148,77 @@ export class Chat {
     const text = raw.trim();
     if ((!text && !photos.length && !products.length) || this.state.streaming) return false;
     const now = Date.now();
+    const base = { threadId: "", contextId: this.state.activeContextId, source: null, tools: [], status: "done" as const, error: null, createdAt: now };
     this.set((s) => ({
       error: null,
       streaming: true,
-      messages: [
-        ...s.messages,
-        { id: localId(), threadId: s.threadId ?? "", role: "user", text, attachments: rememberLocal(photos), products, tools: [], status: "done", error: null, createdAt: now },
-        { id: localId(), threadId: s.threadId ?? "", role: "assistant", text: "", attachments: [], products: [], tools: [], status: "streaming", error: null, createdAt: now },
+      items: [
+        ...s.items,
+        { type: "message", message: { ...base, id: localId(), role: "user", text, attachments: rememberLocal(photos), products } },
+        { type: "message", message: { ...base, id: localId(), role: "assistant", text: "", attachments: [], products: [], status: "streaming" } },
       ],
     }));
-    if (!this.state.threadId) {
-      const brief = this.state.replyTo;
-      const response = await fetch(brief ? `${API}/briefs/${brief.id}/thread` : `${API}/threads`, { method: "POST" }).catch(() => null);
-      if (!response?.ok) {
-        this.failSend(response ? await problem(response) : "No se pudo hablar con la Mac.");
-        return false;
-      }
-      const { thread } = (await response.json()) as { thread: AgentThread };
-      live.set(thread.id, this);
-      this.set({ threadId: thread.id, title: thread.title, replyTo: null });
-      upsertThread(thread);
-    }
-    const id = this.state.threadId!;
-    void this.follow(() => fetch(`${API}/threads/${id}/messages`, messageBody(text, photos, products.map((p) => p.barcode))));
+    void this.follow(() => fetch(`${API}/messages`, messageBody(text, photos, products.map((p) => p.barcode))));
     return true;
   }
 
   /** The person's stop. The stream then ends by itself with what was written. */
   async stop() {
-    const id = this.state.threadId;
-    if (!id || !this.state.streaming) return;
-    const response = await fetch(`${API}/threads/${id}/turn`, { method: "DELETE" }).catch(() => null);
+    if (!this.state.streaming) return;
+    const response = await fetch(`${API}/turn`, { method: "DELETE" }).catch(() => null);
     if (response && !response.ok && response.status !== 404) this.set({ error: await problem(response) });
   }
 
   /** Deshacer on an action card: the Mac puts the change back and the card shows it undone. Null, or what went wrong. */
   async undo(message: AgentMessage, index: number): Promise<string | null> {
-    const id = this.state.threadId;
-    if (!id) return "Esta conversación todavía no está en la Mac.";
     const messageId = this.serverIds.get(message.id) ?? message.id;
-    const response = await fetch(`${API}/threads/${id}/messages/${messageId}/tools/${index}/undo`, { method: "POST" }).catch(() => null);
-    if (!response?.ok) return response ? await problem(response) : "No se pudo hablar con la Mac.";
+    if (messageId.startsWith("local-")) return "Esta respuesta todavía no está en la Mac.";
+    const response = await fetch(`${API}/messages/${messageId}/tools/${index}/undo`, { method: "POST" }).catch(() => null);
+    if (!response?.ok) return response ? await problem(response) : offline;
     const saved = ((await response.json()) as AgentUndoResponse).message;
-    this.set((s) => ({ messages: s.messages.map((m) => (m.id === message.id ? { ...saved, id: m.id } : m)) }));
+    this.set((s) => ({ items: s.items.map((i) => (i.type === "message" && i.message.id === message.id ? { type: "message", message: { ...saved, id: message.id } } : i)) }));
+    return null;
+  }
+
+  /** «Contexto nuevo», or «Volver a este contexto» with an id. Null, or what went wrong. */
+  async context(id?: string): Promise<string | null> {
+    if (this.state.streaming) return "Espera a que el Coach termine de responder.";
+    const response = await fetch(id ? `${API}/contexts/${id}` : `${API}/contexts`, { method: "POST" }).catch(() => null);
+    if (!response?.ok) return response ? await problem(response) : offline;
+    this.take((await response.json()) as AgentConversation);
+    return null;
+  }
+
+  /** «Responder» on a brief: it goes into the conversation as the Coach's message. Null, or what went wrong. */
+  async replyTo(briefId: string): Promise<string | null> {
+    const response = await fetch(`/api/web/coach/briefs/${briefId}/reply`, { method: "POST" }).catch(() => null);
+    if (!response?.ok) return response ? await problem(response) : offline;
+    await this.resume();
     return null;
   }
 
   /** Nothing reached the Mac: take the two placeholders back. */
   private failSend(message: string) {
-    this.set((s) => ({ streaming: false, messages: s.messages.slice(0, -2), error: message }));
+    this.set((s) => ({ streaming: false, items: s.items.slice(0, -2), error: message }));
   }
 
   /**
-   * Follows a turn's NDJSON. A lost stream (network, sleep) re-reads the thread:
+   * Follows a turn's NDJSON. A lost stream (network, sleep) re-reads the feed:
    * if the Mac is still answering it re-attaches, otherwise what it saved wins.
    */
   private async follow(open: () => Promise<Response>) {
-    const generation = this.generation;
-    const current = () => generation === this.generation;
     this.following = true;
+    this.compactedInTurn = false;
     this.set({ streaming: true });
     let finished = false;
     let attempts = 0;
     let request = open;
-    while (!finished && current()) {
+    while (!finished) {
       const response = await request().catch(() => null);
-      // A 404 while re-attaching only means the turn ended; on the first request the thread is gone.
+      // A 404 while re-attaching only means the turn ended.
       if (response && !response.ok && (response.status !== 404 || request === open)) {
         const message = await problem(response);
-        // Nothing started: the person's message was not sent.
-        if (request === open && this.state.messages.at(-1)?.text === "") this.patchLast((m) => ({ ...m, status: "error", error: message }));
+        if (request === open && this.sending()) this.failSend(message);
         else this.set({ error: message });
         finished = true;
         break;
@@ -221,127 +226,73 @@ export class Chat {
       if (response?.ok && response.body) {
         try {
           for await (const event of readEvents(response.body)) {
-            if (!current()) return;
-            if (event.type === "start") {
-              const last = this.state.messages.at(-1);
-              if (last?.role === "assistant") this.serverIds.set(last.id, event.messageId);
-            }
+            if (event.type === "start") this.adopt(event.messageId, event.userMessageId);
+            if (event.type === "status") this.set({ compacting: event.status === "compacting" });
+            if (event.type === "compacted") this.compactedInTurn = true;
             this.patchLast((m) => applyEvent(m, event));
-            // The first message titles the thread on the Mac.
-            if (event.type === "start") void this.refreshTitle();
             if (event.type === "done" || event.type === "error") finished = true;
           }
         } catch {
           // Dropped: not something the person must act on.
         }
       }
-      if (finished || !current()) break;
-      const id = this.state.threadId;
-      const detail = id ? await fetch(`${API}/threads/${id}`, { cache: "no-store" }).catch(() => null) : null;
+      if (finished) break;
+      const detail = await fetch(API, { cache: "no-store" }).catch(() => null);
       if (!detail?.ok) {
         if (++attempts > RETRIES) break;
         await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
-      const view = (await detail.json()) as CoachThreadView;
-      const saved = this.keep(view.messages);
-      const last = saved.at(-1);
-      if (!view.running || last?.status !== "streaming") {
-        this.set({ title: view.thread.title, messages: saved });
+      const view = (await detail.json()) as AgentConversation;
+      this.take(view);
+      this.pendingAttach = false;
+      if (!this.state.streaming) {
         finished = true;
         break;
       }
-      this.set({ title: view.thread.title, messages: [...saved.slice(0, -1), { ...last, text: "", tools: [] }] });
       attempts = 0;
-      request = () => fetch(`${API}/threads/${id}/turn`, { cache: "no-store" });
+      request = () => fetch(`${API}/turn`, { cache: "no-store" });
     }
-    if (!current()) return;
     this.following = false;
-    this.set({ streaming: false });
-    if (!finished && this.state.messages.at(-1)?.status === "streaming") {
+    this.set({ streaming: false, compacting: false });
+    const last = this.state.items[lastMessageIndex(this.state.items)];
+    if (!finished && last?.type === "message" && last.message.status === "streaming") {
       this.set({ error: "Sin conexión con la Mac. La respuesta se sigue guardando allá y aparecerá al volver." });
     }
-    void refreshThreads();
+    // The summary's marker, the contexts' counts.
+    if (finished && this.compactedInTurn) void this.resume();
   }
 
-  private async refreshTitle() {
-    const id = this.state.threadId;
-    const response = id ? await fetch(`${API}/threads/${id}`, { cache: "no-store" }).catch(() => null) : null;
-    if (response?.ok) this.set({ title: ((await response.json()) as CoachThreadView).thread.title });
-    void refreshThreads();
+  /** The send's two placeholders are still waiting for the Mac's `start`. */
+  private sending(): boolean {
+    const last = this.state.items[lastMessageIndex(this.state.items)];
+    return last?.type === "message" && last.message.id.startsWith("local-") && !this.serverIds.has(last.message.id);
   }
 
-  /** Stops following (the thread was deleted). */
-  forget() {
-    this.generation++;
-    this.following = false;
+  /** `start` names what the Mac saved for the two placeholders. */
+  private adopt(assistantId: string, userId: string) {
+    const messages = this.state.items.flatMap((i) => (i.type === "message" ? [i.message] : []));
+    const assistant = messages.at(-1);
+    const user = messages.at(-2);
+    for (const [local, server] of [
+      [assistant, assistantId],
+      [user, userId],
+    ] as const) {
+      if (!local?.id.startsWith("local-")) continue;
+      this.serverIds.set(local.id, server);
+      this.localOf.set(server, local.id);
+    }
   }
 }
 
-const live = new Map<string, Chat>();
+let chat: Chat | null = null;
 
-/** The live chat for a thread: the same one each time. The server renders with a throwaway one. */
-export function chatFor(threadId: string): Chat {
-  if (typeof window === "undefined") return new Chat(threadId);
-  let chat = live.get(threadId);
-  if (!chat) live.set(threadId, (chat = new Chat(threadId)));
-  return chat;
+/** The one live conversation in this browser. The server renders with a throwaway one. */
+export function theChat(): Chat {
+  if (typeof window === "undefined") return new Chat();
+  return (chat ??= new Chat());
 }
 
 export function useChat(chat: Chat): ChatState {
   return useSyncExternalStore(chat.subscribe, chat.snapshot, chat.snapshot);
-}
-
-// ── The thread list ─────────────────────────────────────────────────────────
-
-let threads: AgentThread[] | null = null;
-const threadListeners = new Set<Listener>();
-const emitThreads = () => threadListeners.forEach((l) => l());
-
-/** Thread ids with a reply streaming in this browser, as a stable string so the list only redraws when it changes. */
-let streaming = "";
-function changed() {
-  const next = [...live].filter(([, chat]) => chat.snapshot().streaming).map(([id]) => id).join(" ");
-  if (next === streaming) return;
-  streaming = next;
-  emitThreads();
-}
-
-/** The server's list on a fresh render; the browser's own once it has one. */
-export function seedThreads(initial: AgentThread[]) {
-  if (typeof window !== "undefined" && threads === null) threads = initial;
-}
-
-function upsertThread(thread: AgentThread) {
-  threads = [thread, ...(threads ?? []).filter((t) => t.id !== thread.id)];
-  emitThreads();
-}
-
-export async function refreshThreads() {
-  const response = await fetch(`${API}/threads`, { cache: "no-store" }).catch(() => null);
-  if (!response?.ok) return;
-  threads = ((await response.json()) as { threads: AgentThread[] }).threads;
-  emitThreads();
-}
-
-export async function deleteThread(id: string): Promise<string | null> {
-  const response = await fetch(`${API}/threads/${id}`, { method: "DELETE" }).catch(() => null);
-  if (!response || (!response.ok && response.status !== 404)) return response ? await problem(response) : "No se pudo hablar con la Mac.";
-  live.get(id)?.forget();
-  live.delete(id);
-  threads = (threads ?? []).filter((t) => t.id !== id);
-  emitThreads();
-  return null;
-}
-
-const subscribeThreads = (listener: Listener) => {
-  threadListeners.add(listener);
-  return () => threadListeners.delete(listener);
-};
-
-/** The list (the server's until the browser has its own) and the ids with a reply streaming here. */
-export function useThreads(initial: AgentThread[]): { threads: AgentThread[]; streaming: Set<string> } {
-  const list = useSyncExternalStore(subscribeThreads, () => threads ?? initial, () => initial);
-  const ids = useSyncExternalStore(subscribeThreads, () => streaming, () => "");
-  return { threads: list, streaming: new Set(ids ? ids.split(" ") : []) };
 }

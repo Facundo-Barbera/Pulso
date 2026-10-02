@@ -44,6 +44,6 @@ export function rememberLocal(photos: Photo[]): AgentAttachment[] {
   return photos.map((p) => ({ id: p.id, mime: "image/jpeg", width: p.width, height: p.height }));
 }
 
-export function photoSrc(threadId: string, attachment: AgentAttachment): string {
-  return localUrls.get(attachment.id) ?? `/api/web/coach/threads/${threadId}/attachments/${attachment.id}`;
+export function photoSrc(attachment: AgentAttachment): string {
+  return localUrls.get(attachment.id) ?? `/api/web/coach/conversation/attachments/${attachment.id}`;
 }

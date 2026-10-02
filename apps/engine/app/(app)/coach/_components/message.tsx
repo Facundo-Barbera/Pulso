@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgentActionLine, AgentAttachment, AgentMessage, AgentToolResult, AgentToolUse } from "@pulso/contract";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Copy, Share, Undo2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Share, Sunrise, Undo2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../../_ui/cn";
@@ -21,7 +21,7 @@ export function MessageRow({ message, last, onUndo }: { message: AgentMessage; l
 function UserBubble({ message }: { message: AgentMessage }) {
   return (
     <div className="flex flex-col items-end gap-1.5 pl-10 motion-safe:animate-[pulso-rise_280ms_ease-out_both] md:pl-20">
-      {message.attachments.length > 0 && <Photos threadId={message.threadId} photos={message.attachments} />}
+      {message.attachments.length > 0 && <Photos photos={message.attachments} />}
       {/* `?.`: messages saved before products existed may come without the field. */}
       {message.products?.length > 0 && (
         <ul className="flex w-[min(280px,100%)] flex-col gap-1.5" aria-label={message.products.length === 1 ? "Producto" : `${message.products.length} productos`}>
@@ -42,8 +42,19 @@ function UserBubble({ message }: { message: AgentMessage }) {
   );
 }
 
+/** What a quoted brief or review is, above its text: the person is answering it. */
+function Quoted({ source }: { source: NonNullable<AgentMessage["source"]> }) {
+  const Icon = source.kind === "brief" ? Sunrise : ClipboardList;
+  return (
+    <p className="text-muted-foreground flex items-center gap-1.5 text-[12.5px] font-medium">
+      <Icon className="size-3.5" />
+      {source.title}
+    </p>
+  );
+}
+
 /** The person's photos, right-aligned like their bubble; one is big, several make a grid. Click opens it full size. */
-function Photos({ threadId, photos }: { threadId: string; photos: AgentAttachment[] }) {
+function Photos({ photos }: { photos: AgentAttachment[] }) {
   const [open, setOpen] = useState<AgentAttachment | null>(null);
   const single = photos.length === 1;
   return (
@@ -59,7 +70,7 @@ function Photos({ threadId, photos }: { threadId: string; photos: AgentAttachmen
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={photoSrc(threadId, photo)}
+                src={photoSrc(photo)}
                 alt=""
                 loading="lazy"
                 decoding="async"
@@ -70,7 +81,7 @@ function Photos({ threadId, photos }: { threadId: string; photos: AgentAttachmen
           </li>
         ))}
       </ul>
-      {open && <PhotoViewer src={photoSrc(threadId, open)} onClose={() => setOpen(null)} />}
+      {open && <PhotoViewer src={photoSrc(open)} onClose={() => setOpen(null)} />}
     </>
   );
 }
@@ -111,6 +122,7 @@ function AssistantRow({ message, last, onUndo }: { message: AgentMessage; last: 
 
   return (
     <div className="group/msg flex flex-col gap-3.5 motion-safe:animate-[pulso-rise_280ms_ease-out_both]">
+      {message.source && <Quoted source={message.source} />}
       {checked.length > 0 && <Checked tools={checked} />}
       {activity.length > 0 && <ToolChips tools={activity} />}
       {thinking && (
