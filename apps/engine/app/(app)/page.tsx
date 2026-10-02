@@ -16,8 +16,9 @@ export default function Hoy() {
   return (
     <Page>
       <PageHeader eyebrow={fmtLongDate(now)} title={greeting(now)} />
-      <ReadinessHero readiness={today.readiness} />
-      <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <ReadinessHero readiness={today.readiness} sleepMin={today.trend.at(-1)?.sleepMin ?? null} />
+      {/* Dense so a two-column card never leaves a hole beside Corazón on a two-column screen. */}
+      <div className="mt-5 grid gap-5 md:grid-flow-row-dense md:grid-cols-2 xl:grid-cols-3">
         <ActivityCard today={today.today} trend={today.trend} delay={60} />
         <SleepCard night={today.lastNight} summary={today.sleep} trend={today.trend} delay={110} />
         <HeartCard readiness={today.readiness} trend={today.trend} delay={160} />

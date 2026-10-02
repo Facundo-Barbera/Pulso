@@ -1,6 +1,7 @@
 import type { Readiness, ReadinessFactor } from "@pulso/contract";
 import { Activity, CircleCheck, CircleDashed, CircleDot, HeartPulse, Moon, TriangleAlert, type LucideIcon } from "lucide-react";
 import { Card } from "../../_ui/card";
+import { fmtMinutes, fmtNumber } from "../../_ui/format";
 import { Ring } from "../../_ui/ring";
 
 /** Each level as colour, icon and word together: never green against red, never the colour alone. */
@@ -17,8 +18,11 @@ const FACTOR_ICON: Record<ReadinessFactor["key"], { icon: LucideIcon; color: str
   sleep: { icon: Moon, color: "var(--domain-sleep)" },
 };
 
-/** The page's one hero: the readiness ring, what it means today, and the three factors behind it. */
-export function ReadinessHero({ readiness }: { readiness: Readiness }) {
+/**
+ * The page's one hero: the readiness ring, what it means today, and the three factors behind it.
+ * `sleepMin` is last night as the Sueño card shows it, so both say the same duration.
+ */
+export function ReadinessHero({ readiness, sleepMin }: { readiness: Readiness; sleepMin: number | null }) {
   const level = LEVEL[readiness.level];
   const LevelIcon = level.icon;
   return (
@@ -48,7 +52,7 @@ export function ReadinessHero({ readiness }: { readiness: Readiness }) {
           <p className="text-muted-foreground mt-1.5 text-center text-[15px] leading-relaxed md:text-left">{readiness.explanation}</p>
           <ul className="mt-6 grid gap-3 sm:grid-cols-3">
             {readiness.factors.map((factor) => (
-              <FactorTile key={factor.key} factor={factor} />
+              <FactorTile key={factor.key} factor={factor} value={factor.key === "sleep" ? (sleepMin ?? factor.value) : factor.value} />
             ))}
           </ul>
           {readiness.baselineDays < 7 && readiness.level !== "unknown" && (
@@ -60,19 +64,40 @@ export function ReadinessHero({ readiness }: { readiness: Readiness }) {
   );
 }
 
-function FactorTile({ factor }: { factor: ReadinessFactor }) {
+/**
+ * A factor as the person reads it elsewhere on the page: the raw value (same
+ * source and rounding as its card), then how much it lifts today's readiness
+ * as a bar. The 0–100 factor score stays off the tile: next to the cards'
+ * values and the night's own sleep score it read as a third, competing number.
+ */
+function FactorTile({ factor, value }: { factor: ReadinessFactor; value: number | null }) {
   const { icon: Icon, color } = FACTOR_ICON[factor.key];
+  const sleep = factor.key === "sleep";
+  const unit = factor.key === "hrv" ? "ms" : factor.key === "resting_hr" ? "lpm" : undefined;
+  // Sleep's detail repeats the duration; say the target instead.
+  const detail = sleep && value !== null && factor.baseline !== null ? `de ${fmtMinutes(factor.baseline)} de objetivo` : factor.detail;
   return (
     <li className="bg-muted/60 rounded-2xl p-3.5">
       <p className="text-muted-foreground flex items-center gap-1.5 text-[12px] font-medium">
         <Icon className="size-3.5" style={{ color }} strokeWidth={2.2} />
         {factor.label}
-        <span className="tabular text-foreground ml-auto font-semibold">{factor.score ?? "—"}</span>
       </p>
-      <div className="bg-background/70 mt-2.5 h-1.5 overflow-hidden rounded-full">
+      <p className="mt-1.5 flex items-baseline gap-1">
+        <span className="tabular text-[20px] leading-none font-semibold tracking-tight">{value === null ? "—" : sleep ? fmtMinutes(value) : fmtNumber(value)}</span>
+        {unit && value !== null && <span className="text-muted-foreground text-[12px]">{unit}</span>}
+      </p>
+      <div
+        className="bg-background/70 mt-2.5 h-1.5 overflow-hidden rounded-full"
+        role="meter"
+        aria-label={`Aporte de ${factor.label.toLowerCase()} a la preparación`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={factor.score ?? undefined}
+        title={factor.score === null ? undefined : `Aporte a la preparación: ${factor.score} de 100`}
+      >
         <div className="h-full rounded-full motion-safe:transition-[width] motion-safe:duration-700" style={{ width: `${factor.score ?? 0}%`, background: color }} />
       </div>
-      <p className="text-muted-foreground mt-2 text-[12px] leading-snug">{factor.detail}</p>
+      <p className="text-muted-foreground mt-2 text-[12px] leading-snug">{detail}</p>
     </li>
   );
 }

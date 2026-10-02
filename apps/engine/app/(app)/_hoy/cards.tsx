@@ -21,22 +21,36 @@ const hasAny = (trend: Trend, pick: (m: DailyMetrics) => number | null) => trend
 
 const SYNC_HINT = "Abre Pulso en el iPhone y sincroniza desde Salud.";
 
+/** The first row's cards share this: equal height, and every chart the same size on the same baseline at the bottom. */
+const ROW_CARD = "flex flex-col";
+const CHART_HEIGHT = 64;
+const RANGE = "Últimos 14 días";
+
+/**
+ * Pins a card's chart to its bottom edge, so charts in a row line up whatever sits above them.
+ * `grow` lets the chart take the card's free height instead of leaving it blank.
+ */
+const ChartSlot = ({ grow, children }: { grow?: boolean; children: React.ReactNode }) => <div className={cn("mt-auto pt-5", grow && "flex flex-1 flex-col")}>{children}</div>;
+
 export function ActivityCard({ today, trend, delay }: { today: DailyMetrics | null; trend: Trend; delay: number }) {
   const any = hasAny(trend, (m) => m.steps ?? m.activeEnergy ?? m.exerciseMinutes);
   return (
-    <Card delay={delay}>
+    <Card delay={delay} className={ROW_CARD}>
       <CardTitle icon={Flame} color="var(--domain-energy)" title="Actividad" />
       {!any ? (
         <EmptyState compact icon={Watch} color="var(--domain-energy)" title="Sin actividad todavía" line={SYNC_HINT} />
       ) : (
         <>
-          <StatTile label="Pasos" value={today?.steps != null ? fmtNumber(today.steps) : "—"} color="var(--domain-energy)">
-            <Sparkline variant="bars" points={series(trend, (m) => m.steps)} color="var(--domain-energy)" label="Pasos, últimos 14 días" />
-          </StatTile>
-          <div className="border-border mt-5 grid grid-cols-2 gap-4 border-t pt-4">
+          <StatTile label="Pasos" value={today?.steps != null ? fmtNumber(today.steps) : "—"} color="var(--domain-energy)" caption="hoy" />
+          <div className="border-border mt-4 grid grid-cols-2 gap-4 border-t pt-4">
             <StatTile label="Energía activa" value={today?.activeEnergy != null ? fmtNumber(today.activeEnergy) : "—"} unit="kcal" />
             <StatTile label="Ejercicio" value={today?.exerciseMinutes != null ? fmtNumber(today.exerciseMinutes) : "—"} unit="min" />
           </div>
+          {hasAny(trend, (m) => m.steps) && (
+            <ChartSlot>
+              <Sparkline variant="bars" points={series(trend, (m) => m.steps)} color="var(--domain-energy)" height={CHART_HEIGHT} range={`Pasos · ${RANGE.toLowerCase()}`} label="Pasos, últimos 14 días" />
+            </ChartSlot>
+          )}
         </>
       )}
     </Card>
@@ -47,18 +61,18 @@ export function ActivityCard({ today, trend, delay }: { today: DailyMetrics | nu
 const STAGES = [...SLEEP_STAGES].reverse();
 
 export function SleepCard({ night, summary, trend, delay }: { night: SleepNight | null; summary: SleepSummary; trend: Trend; delay: number }) {
-  const sleepSeries = series(trend, (m) => (m.sleepMinutes === null ? null : Math.round((m.sleepMinutes / 60) * 10) / 10));
+  const sleepSeries = trend.map((d) => ({ label: fmtDayLabel(d.date), value: d.sleepMin }));
   const staged = night ? STAGES.reduce((sum, s) => sum + night.minutes[s.key], 0) : 0;
   return (
-    <Card delay={delay}>
-      <CardTitle icon={Moon} color="var(--domain-sleep)" title="Sueño" />
+    <Card delay={delay} className={ROW_CARD}>
+      <CardTitle icon={Moon} color="var(--domain-sleep)" title="Sueño" href="/sueno" />
       {!night ? (
         <EmptyState compact icon={Moon} color="var(--domain-sleep)" title="Sin datos de anoche" line={summary.nights ? "La última noche registrada es de antes de ayer." : SYNC_HINT} />
       ) : (
         <>
           <div className="flex items-end justify-between gap-4">
-            <StatTile label="Anoche" value={fmtMinutes(night.minutes.asleep)} caption={`${fmtTime(night.asleepStart)} – ${fmtTime(night.asleepEnd)} · eficiencia ${Math.round(night.efficiency * 100)} %`} />
-            <div className="text-right">
+            <StatTile label="Anoche" value={fmtMinutes(night.minutes.asleep)} caption={`${fmtTime(night.asleepStart)} – ${fmtTime(night.asleepEnd)} · eficiencia ${Math.round(night.efficiency * 100)}\u00a0%`} />
+            <div className="shrink-0 text-right">
               <p className="tabular text-[26px] leading-none font-semibold">{night.score.value}</p>
               <p className="text-muted-foreground mt-1 text-[12px]">puntuación</p>
             </div>
@@ -78,10 +92,10 @@ export function SleepCard({ night, summary, trend, delay }: { night: SleepNight 
               </div>
             </div>
           )}
-          {hasAny(trend, (m) => m.sleepMinutes) && (
-            <div className="border-border mt-4 border-t pt-3">
-              <Sparkline variant="bars" points={sleepSeries} color="var(--domain-sleep)" unit="h" decimals={1} target={summary.targetMin / 60} height={44} label="Horas dormidas, últimos 14 días" />
-            </div>
+          {sleepSeries.some((p) => p.value !== null) && (
+            <ChartSlot>
+              <Sparkline variant="bars" points={sleepSeries} color="var(--domain-sleep)" duration target={summary.targetMin} targetLabel={`objetivo ${fmtMinutes(summary.targetMin)}`} height={CHART_HEIGHT} range={RANGE} label="Horas dormidas, últimos 14 días" />
+            </ChartSlot>
           )}
         </>
       )}
@@ -89,23 +103,43 @@ export function SleepCard({ night, summary, trend, delay }: { night: SleepNight 
   );
 }
 
+/** One heart signal: today's value against its 28-day mean, and the fortnight under it. */
+function HeartSignal({ factor, title, unit, color, points }: { factor: Readiness["factors"][number] | undefined; title: string; unit: string; color: string; points: { label: string; value: number | null }[] }) {
+  const baseline = factor?.baseline ?? undefined;
+  return (
+    <div className="flex min-w-0 flex-col">
+      <StatTile label={title} value={factor?.value != null ? fmtNumber(factor.value) : "—"} unit={unit} caption={factor?.detail} color={color} />
+      {points.some((p) => p.value !== null) && (
+        <ChartSlot grow>
+          <Sparkline
+            grow
+            className="flex-1"
+            points={points}
+            color={color}
+            unit={unit}
+            target={baseline}
+            targetLabel={baseline === undefined ? undefined : `media ${fmtNumber(baseline)} ${unit}`}
+            height={CHART_HEIGHT}
+            range="14 días"
+            label={`${title}, últimos 14 días${baseline === undefined ? "" : `; media de 28 días ${fmtNumber(baseline)} ${unit}`}`}
+          />
+        </ChartSlot>
+      )}
+    </div>
+  );
+}
+
 export function HeartCard({ readiness, trend, delay }: { readiness: Readiness; trend: Trend; delay: number }) {
-  const hrv = readiness.factors.find((f) => f.key === "hrv");
-  const rhr = readiness.factors.find((f) => f.key === "resting_hr");
   const any = hasAny(trend, (m) => m.hrv ?? m.restingHeartRate);
   return (
-    <Card delay={delay}>
+    <Card delay={delay} className={ROW_CARD}>
       <CardTitle icon={HeartPulse} color="var(--domain-heart)" title="Corazón" />
       {!any ? (
         <EmptyState compact icon={HeartPulse} color="var(--domain-heart)" title="Sin lecturas del reloj" line="La VFC y el pulso en reposo llegan del Apple Watch a través de Salud." />
       ) : (
-        <div className="grid gap-5">
-          <StatTile label="VFC" value={hrv?.value != null ? fmtNumber(hrv.value) : "—"} unit="ms" caption={hrv?.baseline != null ? `media 28 días: ${fmtNumber(hrv.baseline)} ms` : undefined} color="var(--domain-heart)">
-            <Sparkline points={series(trend, (m) => m.hrv)} color="var(--domain-heart)" unit="ms" height={44} label="VFC, últimos 14 días" />
-          </StatTile>
-          <StatTile label="Pulso en reposo" value={rhr?.value != null ? fmtNumber(rhr.value) : "—"} unit="lpm" caption={rhr?.baseline != null ? `media 28 días: ${fmtNumber(rhr.baseline)} lpm` : undefined} color="var(--domain-heart)">
-            <Sparkline points={series(trend, (m) => m.restingHeartRate)} color="var(--domain-heart)" unit="lpm" height={44} label="Pulso en reposo, últimos 14 días" />
-          </StatTile>
+        <div className="grid flex-1 grid-cols-2 gap-5">
+          <HeartSignal factor={readiness.factors.find((f) => f.key === "hrv")} title="VFC" unit="ms" color="var(--domain-heart)" points={series(trend, (m) => m.hrv)} />
+          <HeartSignal factor={readiness.factors.find((f) => f.key === "resting_hr")} title="Pulso en reposo" unit="lpm" color="var(--domain-heart)" points={series(trend, (m) => m.restingHeartRate)} />
         </div>
       )}
     </Card>
