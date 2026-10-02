@@ -10,7 +10,7 @@ export function Ring({ value, size = 168, stroke = 14, color, track = "var(--mut
     <div className="relative grid shrink-0 place-items-center" style={{ width: size, height: size }} role="img" aria-label={label}>
       {glow && <div className="absolute inset-[12%] rounded-full opacity-40 blur-2xl" style={{ background: color }} aria-hidden />}
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="relative -rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} className="ring-track" />
         {fraction > 0 && (
           <circle
             cx={size / 2}

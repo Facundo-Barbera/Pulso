@@ -78,7 +78,7 @@ function Ring({ ring, c, r, stroke }: { ring: RingSpec; c: number; r: number; st
 
   return (
     <g>
-      <circle className="ring-track" cx={c} cy={c} r={r} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={stroke} />
+      <circle className="activity-track" cx={c} cy={c} r={r} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={stroke} />
       {band && (
         <>
           <circle cx={c} cy={c} r={r} fill="none" stroke="var(--foreground)" strokeOpacity={0.1} strokeWidth={stroke} {...seg(band.from, band.to)} />
