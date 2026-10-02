@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Add/edit sheet. The schedule is two plain questions: «¿Cada cuándo?» (every
-/// day, some days, every N weeks, monthly, when needed) and «¿A qué hora?»
-/// (a time, a part of the day, any time, after training, with a meal, before bed).
+/// Add/edit sheet. The schedule is two plain questions, read back in one line above
+/// them: «¿Cada cuándo?» (every day, some days, every N weeks, monthly, when needed)
+/// and «¿Cuándo durante el día?» (a time, a part of the day, any time, after training,
+/// with a meal, before bed). Only the chosen option's controls show.
 struct MedicationEditor: View {
     let store: MedicationStore
     let medication: Medication?
@@ -15,7 +16,7 @@ struct MedicationEditor: View {
 
     private static let instructionPresets = ["Con comida", "En ayunas", "Antes de dormir", "Con agua"]
     private static let moments = [("Mañana", "08:00", "sunrise"), ("Mediodía", "14:00", "sun.max"), ("Tarde", "18:00", "sun.haze"), ("Noche", "22:00", "moon.stars")]
-    private static let windows = [30, 45, 60, 90]
+    private static let windows = [30, 45, 60, 90, 120]
 
     /// `suggestion` prefills the schedule of an existing med (from a `ScheduleNudge`), starting today
     /// so past as-needed days don't count as missed doses. Nothing is saved until «Guardar».
@@ -45,8 +46,10 @@ struct MedicationEditor: View {
                 }
                 if medication == nil && draft.kind == .suplemento { presets }
                 basics
+                readBack
                 frequency
                 if !draft.schedule.asNeeded { timing }
+                if draft.schedule.type == .anyTime { reminder }
                 stock
                 details
                 if medication != nil {
@@ -165,6 +168,26 @@ struct MedicationEditor: View {
         return list + [form]
     }
 
+    // MARK: Read-back
+
+    /// The schedule as one sentence, live, so every choice below shows what it means.
+    private var readBack: some View {
+        Section {
+            Label {
+                Text(draft.schedule.readBack)
+                    .font(.subheadline.weight(.medium))
+                    .contentTransition(.opacity)
+            } icon: {
+                Image(systemName: draft.schedule.type.symbol)
+                    .foregroundStyle(Color.accentColor)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .accessibilityElement(children: .combine)
+        } header: {
+            Text("Horario")
+        }
+    }
+
     // MARK: ¿Cada cuándo?
 
     private var frequency: some View {
@@ -188,7 +211,7 @@ struct MedicationEditor: View {
             Text("¿Cada cuándo?")
         } footer: {
             switch draft.schedule.frequency {
-            case .asNeeded: Text("Sin recordatorios ni adherencia: anota cada toma con «Tomé una».")
+            case .asNeeded: Text("Sin horario, avisos ni adherencia: anota cada toma con + en Medicación.")
             case .monthly where (draft.schedule.monthDay ?? 1) > 28: Text("En los meses más cortos, el último día.")
             case .everyN where draft.schedule.interval?.unit == .week: Text("Cuenta las semanas desde la fecha de inicio.")
             default: EmptyView()
@@ -215,7 +238,7 @@ struct MedicationEditor: View {
         if interval.unit == .week { WeekdayPicker(days: $draft.schedule.days, emptyMeansEvery: false) }
     }
 
-    // MARK: ¿A qué hora?
+    // MARK: ¿Cuándo durante el día?
 
     private var timing: some View {
         Section {
@@ -226,13 +249,12 @@ struct MedicationEditor: View {
             switch draft.schedule.type {
             case .fixed: fixedTimes
             case .window: windowPicker
-            case .anyTime: anyTimeReminder
             case .training: trainingRule
             case .meal: mealPicker
-            case .bedtime, .asNeeded: EmptyView()
+            case .anyTime, .bedtime, .asNeeded: EmptyView()
             }
         } header: {
-            Text("¿A qué hora?")
+            Text("¿Cuándo durante el día?")
         } footer: {
             scheduleFooter
         }
@@ -247,27 +269,39 @@ struct MedicationEditor: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Each part reads its range; the times open only on request.
         ForEach(draft.schedule.windows) { window in
-            HStack {
-                Label(window.part.label, systemImage: window.part.symbol)
-                Spacer()
-                DatePicker("Desde", selection: windowBinding(window.part, \.start), displayedComponents: .hourAndMinute).labelsHidden()
-                Text("–").foregroundStyle(.secondary)
-                DatePicker("Hasta", selection: windowBinding(window.part, \.end), displayedComponents: .hourAndMinute).labelsHidden()
+            DisclosureGroup {
+                DatePicker("Desde", selection: windowBinding(window.part, \.start), displayedComponents: .hourAndMinute)
+                DatePicker("Hasta", selection: windowBinding(window.part, \.end), displayedComponents: .hourAndMinute)
+            } label: {
+                LabeledContent {
+                    Text(window.range).monospacedDigit()
+                } label: {
+                    Label(window.part.label, systemImage: window.part.symbol)
+                }
             }
         }
     }
 
-    @ViewBuilder private var anyTimeReminder: some View {
-        Toggle("Avisar si no la tomé", isOn: Binding(
-            get: { draft.schedule.reminder != nil },
-            set: { draft.schedule.reminder = $0 ? MedicationSchedule.defaultReminder : nil }
-        ))
-        if let reminder = draft.schedule.reminder {
-            DatePicker("A las", selection: Binding(
-                get: { LocalClock.instant(date: LocalClock.date(.now), time: reminder) ?? .now },
-                set: { draft.schedule.reminder = LocalClock.time($0) }
-            ), displayedComponents: .hourAndMinute)
+    /// Any time has no hour of its own: the optional nudge is its own section, so its
+    /// time never reads as the dose's.
+    private var reminder: some View {
+        Section {
+            Toggle("Recordatorio si no la has tomado", isOn: Binding(
+                get: { draft.schedule.reminder != nil },
+                set: { draft.schedule.reminder = $0 ? MedicationSchedule.defaultReminder : nil }
+            ))
+            if let reminder = draft.schedule.reminder {
+                DatePicker("A las", selection: Binding(
+                    get: { LocalClock.instant(date: LocalClock.date(.now), time: reminder) ?? .now },
+                    set: { draft.schedule.reminder = LocalClock.time($0) }
+                ), displayedComponents: .hourAndMinute)
+            }
+        } header: {
+            Text("Recordatorio")
+        } footer: {
+            Text(draft.schedule.reminder == nil ? "Opcional. Sin él, Pulso no te avisa." : "Solo si a esa hora aún no la marcaste como tomada.")
         }
     }
 
@@ -293,23 +327,17 @@ struct MedicationEditor: View {
 
     @ViewBuilder private var trainingRule: some View {
         let rule = draft.schedule.training ?? TrainingRule()
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tomar dentro de")
-            Picker("Tomar dentro de", selection: trainingBinding(\.withinMinutes)) {
-                ForEach(Self.windows.contains(rule.withinMinutes) ? Self.windows : (Self.windows + [rule.withinMinutes]).sorted(), id: \.self) {
-                    Text("\($0) min").tag($0)
-                }
+        Picker("Dentro de", selection: trainingBinding(\.withinMinutes)) {
+            ForEach(Self.windows.contains(rule.withinMinutes) ? Self.windows : (Self.windows + [rule.withinMinutes]).sorted(), id: \.self) {
+                Text("\($0) min").tag($0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
-        .padding(.vertical, 2)
-        Picker("En días sin entreno", selection: Binding(
+        Picker("Días sin entreno", selection: Binding(
             get: { rule.restDayTime != nil },
             set: { draft.schedule.training?.restDayTime = $0 ? "09:00" : nil }
         )) {
-            Text("A una hora").tag(true)
             Text("No tomar").tag(false)
+            Text("A una hora").tag(true)
         }
         if let rest = rule.restDayTime {
             DatePicker("A las", selection: Binding(
@@ -337,12 +365,11 @@ struct MedicationEditor: View {
         case .window:
             Text("Una toma cuando quieras dentro de la franja. Te avisamos al empezar, y solo cuenta como olvidada si se acaba el día.")
         case .anyTime:
-            Text(draft.schedule.reminder.map { "Toca ese día, cuando quieras. Si a las \(LocalClock.display($0)) aún no la marcaste, un aviso suave." }
-                 ?? "Toca ese día, cuando quieras, sin avisos. Solo cuenta como olvidada si se acaba el día.")
+            Text("Toca ese día, sin hora: cuando quieras. Solo cuenta como olvidada si se acaba el día.")
         case .training:
             Text(draft.schedule.training?.restDayTime == nil
-                 ? "Te avisamos al terminar tu entreno, en Pulso o en Salud. Los días sin entreno no cuenta."
-                 : "Te avisamos al terminar tu entreno, en Pulso o en Salud. Si ese día no entrenas, a la hora que elijas.")
+                 ? "Te avisamos al terminar tu entreno, en Pulso o en Salud. Los días sin entreno no toca."
+                 : "Te avisamos al terminar tu entreno, en Pulso o en Salud. Los días sin entreno, a la hora que elijas.")
         case .meal:
             Text("A la hora de cada comida de tu calendario.")
         case .bedtime:
@@ -558,12 +585,12 @@ enum FrequencyType: String, CaseIterable, Identifiable {
     }
 }
 
-/// The editor's «¿A qué hora?»: which part of `MedicationSchedule` the person edits.
+/// The editor's «¿Cuándo durante el día?»: which part of `MedicationSchedule` the person edits.
 enum ScheduleType: String, CaseIterable, Identifiable {
     case fixed, window, anyTime, training, meal, bedtime, asNeeded
     var id: String { rawValue }
 
-    /// What «¿A qué hora?» offers (as-needed is a frequency).
+    /// What «¿Cuándo durante el día?» offers (as-needed is a frequency).
     static let timings: [ScheduleType] = [.fixed, .window, .anyTime, .training, .meal, .bedtime]
 
     var label: String {
@@ -599,10 +626,11 @@ extension MedicationSchedule {
         return days.isEmpty ? .daily : .someDays
     }
 
-    /// Switches the frequency, keeping the timing (so «Cuando haga falta» and back loses nothing)
-    /// and starting the new one with a sensible default from `today`.
+    /// Switches the frequency, keeping the timing, and starts the new one with a sensible default
+    /// from `today`. «Cuando haga falta» has no timing, so it drops it; coming back starts at 8:00.
     mutating func adopt(_ frequency: FrequencyType, today: String) {
         guard frequency != self.frequency else { return }
+        if frequency == .asNeeded { return self = .asNeededOnly }
         let weekday = LocalClock.day(today).map { LocalClock.isoWeekday($0) } ?? 1
         asNeeded = frequency == .asNeeded
         if frequency != .everyN { interval = nil }
@@ -618,7 +646,7 @@ extension MedicationSchedule {
             monthDay = Int(today.suffix(2)) ?? 1
         case .asNeeded: break
         }
-        if !asNeeded && !hasSlots { times = ["08:00"] }
+        if !hasSlots { times = ["08:00"] }
     }
 
     /// The editor's view of it. A mixed schedule (from the Coach) shows its first part.
@@ -632,12 +660,34 @@ extension MedicationSchedule {
         return .fixed
     }
 
+    /// The whole schedule in one line, for the editor's read-back:
+    /// "Semanal · jueves · cuando quieras · aviso 19:00 si no la tomaste".
+    var readBack: String {
+        if asNeeded { return "Cuando haga falta · sin horario ni avisos" }
+        var parts = [frequencyLine ?? "Cada día"]
+        if !times.isEmpty { parts.append("a las " + times.map(LocalClock.display).formatted(.list(type: .and))) }
+        if !windows.isEmpty { parts.append(windows.map { "\($0.part.phrase), \($0.range)" }.formatted(.list(type: .and))) }
+        if anyTime {
+            parts.append("cuando quieras")
+            if let reminder { parts.append("aviso \(LocalClock.display(reminder)) si no la tomaste") }
+        }
+        if let training {
+            parts.append("después de entrenar, dentro de \(training.withinMinutes) min")
+            parts.append(training.restDayTime.map { "sin entreno, a las \(LocalClock.display($0))" } ?? "sin entreno, no")
+        }
+        if !meals.isEmpty { parts.append(meals.map(\.phrase).formatted(.list(type: .and))) }
+        if bedtime { parts.append("antes de dormir") }
+        return parts.joined(separator: " · ")
+    }
+
     /// More than one kind of slot, which the editor shows only one of.
     var isMixed: Bool {
         !asNeeded && [!times.isEmpty, training != nil, !meals.isEmpty, bedtime, !windows.isEmpty, anyTime].count { $0 } > 1
     }
 
-    /// Switches to `type`, keeping the frequency and starting it with a sensible default.
+    /// Switches to `type`, keeping the frequency and nothing of the other timings: the new one
+    /// starts with a sensible default (any time starts without a reminder). On a mixed schedule,
+    /// the chosen part keeps its settings.
     mutating func become(_ type: ScheduleType) {
         guard type != self.type || isMixed else { return }
         let keep = (training, meals, times, windows, reminder)
@@ -648,7 +698,7 @@ extension MedicationSchedule {
         case .window: windows = keep.3.isEmpty ? [DoseWindow(part: .manana)] : keep.3
         case .anyTime:
             anyTime = true
-            reminder = wasAnyTime ? keep.4 : MedicationSchedule.defaultReminder
+            reminder = wasAnyTime ? keep.4 : nil
         case .training: training = keep.0 ?? TrainingRule()
         case .meal: meals = keep.1.isEmpty ? [.desayuno] : keep.1
         case .bedtime: bedtime = true
@@ -774,4 +824,28 @@ private struct WeekdayPicker: View {
         }
         days = set.count == 7 && emptyMeansEvery ? [] : set.sorted()
     }
+}
+
+private func previewMed(_ name: String, _ kind: MedicationKind, _ dose: Double, _ unit: String, _ schedule: MedicationSchedule) -> Medication {
+    Medication(id: name, name: name, kind: kind, dose: dose, unit: unit, schedule: schedule, startDate: "2026-09-01", lowStock: false, active: true)
+}
+
+#Preview("Editor · diario a una hora") {
+    MedicationEditor(store: .shared, medication: previewMed("Magnesio", .suplemento, 300, "mg", MedicationSchedule(asNeeded: false, times: ["22:00"], days: [])))
+}
+
+#Preview("Editor · semanal, cualquier hora · XXL") {
+    MedicationEditor(store: .shared, medication: previewMed("Semaglutida", .medicamento, 1, "mg",
+                                                            MedicationSchedule(asNeeded: false, times: [], days: [4], anyTime: true, reminder: "19:00")))
+        .dynamicTypeSize(.xxLarge)
+}
+
+#Preview("Editor · después de entrenar · oscuro") {
+    MedicationEditor(store: .shared, medication: previewMed("Creatina", .suplemento, 5, "g",
+                                                            MedicationSchedule(asNeeded: false, times: [], days: [], training: TrainingRule(withinMinutes: 60, restDayTime: nil))))
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Editor · cuando haga falta") {
+    MedicationEditor(store: .shared, medication: previewMed("Ibuprofeno", .medicamento, 400, "mg", .asNeededOnly))
 }

@@ -305,10 +305,12 @@ final class MedicationTests: XCTestCase {
         XCTAssertEqual(on31.line, "Cada mes · día 31 · cualquier hora")
     }
 
-    func testEditorStepsKeepTheOtherHalf() {
+    func testEditorStepsKeepTheOtherHalfAndNothingElse() {
         var schedule = MedicationSchedule(asNeeded: false, times: ["08:00"], days: [])
+        // Any time has no hour: no leftover time, and the reminder starts off.
         schedule.become(.anyTime)
-        XCTAssertEqual(schedule, MedicationSchedule(asNeeded: false, times: [], days: [], anyTime: true, reminder: "19:00"))
+        XCTAssertEqual(schedule, MedicationSchedule(asNeeded: false, times: [], days: [], anyTime: true, reminder: nil))
+        schedule.reminder = "19:00"
         schedule.adopt(.someDays, today: "2026-10-01")
         XCTAssertEqual(schedule.days, [4])
         XCTAssertTrue(schedule.anyTime)
@@ -317,11 +319,25 @@ final class MedicationTests: XCTestCase {
         schedule.become(.window)
         XCTAssertEqual(schedule.windows, [DoseWindow(part: .manana)])
         XCTAssertNotNil(schedule.interval)
+        // «Cuando haga falta» drops the timing; coming back starts fresh at 8:00.
         schedule.adopt(.asNeeded, today: "2026-10-01")
+        XCTAssertEqual(schedule, .asNeededOnly)
         schedule.adopt(.monthly, today: "2026-10-01")
         XCTAssertEqual(schedule.monthDay, 1)
         XCTAssertNil(schedule.interval)
-        XCTAssertEqual(schedule.type, .window)
+        XCTAssertEqual(schedule.type, .fixed)
+        XCTAssertEqual(schedule.times, ["08:00"])
+        XCTAssertTrue(schedule.windows.isEmpty)
+    }
+
+    func testEditorReadsTheScheduleBack() {
+        let show = LocalClock.display
+        let sema = MedicationSchedule(asNeeded: false, times: [], days: [4], anyTime: true, reminder: "19:00")
+        XCTAssertEqual(sema.readBack, "Semanal · jueves · cuando quieras · aviso \(show("19:00")) si no la tomaste")
+        XCTAssertEqual(MedicationSchedule(asNeeded: false, times: [], days: [], training: TrainingRule(withinMinutes: 60, restDayTime: nil)).readBack,
+                       "Cada día · después de entrenar, dentro de 60 min · sin entreno, no")
+        XCTAssertEqual(MedicationSchedule(asNeeded: false, times: ["08:00"], days: []).readBack, "Cada día · a las \(show("08:00"))")
+        XCTAssertEqual(MedicationSchedule.asNeededOnly.readBack, "Cuando haga falta · sin horario ni avisos")
     }
 
     func testAnyTimeAndWindowRemindersUseRemindAt() {
