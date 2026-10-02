@@ -69,6 +69,7 @@ struct RootView: View {
                 }
                 // Replies the Mac kept writing while Pulso was away pick up where they were.
                 ChatStore.resumeAll()
+                ConversationStore.shared.resume()
                 openNotification()
             case .inactive:
                 // The Face ID sheet itself makes the scene inactive; no cover for that.
@@ -113,8 +114,8 @@ struct RootView: View {
         case .training:
             tab = "entreno"
             training.liveRequested = training.live != nil
-        case let .coach(threadId):
-            Task { await launcher.open(threadId: threadId) }
+        case .coach:
+            launcher.open()
         }
     }
 }

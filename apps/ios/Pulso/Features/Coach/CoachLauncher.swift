@@ -3,18 +3,18 @@ import SwiftUI
 
 /// Opens the Coach from anywhere in the app. A feature calls `askCoach("…")`
 /// (environment) or `CoachLauncher.shared.ask("…")`; RootView switches to the
-/// Coach tab when `pending` changes, and `CoachView` pushes the chat and clears it.
+/// Coach tab when `pending` changes, and `CoachView` (the one conversation) takes it.
 @MainActor
 @Observable
 final class CoachLauncher {
     static let shared = CoachLauncher()
 
     enum Request: Equatable {
-        /// A new chat. `send`: the prompt goes out at once; otherwise it waits in the composer.
+        /// A message into the conversation. `send`: it goes out at once; otherwise it waits in the composer.
         case prompt(String, send: Bool)
-        /// An existing conversation, composer focused.
-        case thread(AgentThread)
-        /// A new chat that opens the camera, the prompt waiting in the composer for the photo.
+        /// The conversation, re-read, composer focused (e.g. a brief was just quoted into it).
+        case open
+        /// The camera, the prompt waiting in the composer for the photo.
         case photo(String)
     }
 
@@ -35,14 +35,8 @@ final class CoachLauncher {
         pending = Launch(request: .photo(prompt))
     }
 
-    func open(_ thread: AgentThread) {
-        pending = Launch(request: .thread(thread))
-    }
-
-    /// A conversation by id, as a tapped reply notification names it.
-    func open(threadId: String) async {
-        guard let api = PulsoModel.shared.api else { return }
-        do { open(try await api.agentThread(threadId).thread) } catch { PulsoModel.shared.handle(error) }
+    func open() {
+        pending = Launch(request: .open)
     }
 
     /// Hands the pending launch to the Coach tab, once.

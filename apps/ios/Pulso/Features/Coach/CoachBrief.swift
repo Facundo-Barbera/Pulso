@@ -31,7 +31,7 @@ struct CoachBriefs: Codable, Equatable {
 
 extension PulsoAPI {
     private struct BriefResponse: Decodable { var brief: CoachBrief? }
-    private struct ThreadResponse: Decodable { var thread: AgentThread }
+    private struct QuotedResponse: Decodable { var message: AgentMessage }
 
     func coachBriefs() async throws -> CoachBriefs {
         try await call("api/mobile/coach/brief", method: "GET")
@@ -43,10 +43,10 @@ extension PulsoAPI {
         return response.brief
     }
 
-    /// A new conversation that opens with the brief as the Coach's first message.
-    func replyToCoachBrief(_ id: String) async throws -> AgentThread {
-        let response: ThreadResponse = try await call("api/mobile/coach/briefs/\(id)/thread", method: "POST")
-        return response.thread
+    /// «Responder»: the brief goes into the conversation as the Coach's message.
+    func replyToCoachBrief(_ id: String) async throws -> AgentMessage {
+        let response: QuotedResponse = try await call("api/mobile/coach/briefs/\(id)/reply", method: "POST")
+        return response.message
     }
 }
 
@@ -93,13 +93,14 @@ final class CoachBriefStore {
         }
     }
 
-    /// "Responder": opens a conversation seeded with the brief in the Coach tab.
+    /// "Responder": the brief goes into the conversation and the Coach tab opens on it, composer ready.
     func reply(to brief: CoachBrief) async {
         guard let api = PulsoModel.shared.api, !replying else { return }
         replying = true
         defer { replying = false }
         do {
-            CoachLauncher.shared.open(try await api.replyToCoachBrief(brief.id))
+            _ = try await api.replyToCoachBrief(brief.id)
+            CoachLauncher.shared.open()
         } catch {
             PulsoModel.shared.handle(error)
         }

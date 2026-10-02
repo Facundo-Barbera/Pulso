@@ -17,8 +17,7 @@ struct LogMealIntent: AppIntent {
         let meal = try MealText.normalized(text)
         let api = try PulsoAPI.forIntent()
         do {
-            let thread = try await api.createAgentThread()
-            let reply = await CoachReply.collect(api.sendAgentMessage(threadId: thread.id, text: MealText.prompt(meal, at: .now)), timeout: Self.waitForReply)
+            let reply = await CoachReply.collect(api.sendConversationMessage(text: MealText.prompt(meal, at: .now)), timeout: Self.waitForReply)
             await WidgetSync.refresh()
             return .result(dialog: "\(reply ?? "Se lo pasé al Coach; en unos segundos lo ves en Dieta.")")
         } catch {

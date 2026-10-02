@@ -3,42 +3,13 @@ import Observation
 import UIKit
 import UserNotifications
 
-/// The thread list.
-@MainActor
-@Observable
-final class CoachStore {
-    private(set) var threads: [AgentThread] = []
-    private(set) var loaded = false
-
-    func refresh() async {
-        guard let api = PulsoModel.shared.api else { return }
-        do {
-            threads = try await api.agentThreads()
-            loaded = true
-        } catch {
-            PulsoModel.shared.handle(error)
-        }
-    }
-
-    func delete(_ thread: AgentThread) async {
-        guard let api = PulsoModel.shared.api else { return }
-        threads.removeAll { $0.id == thread.id }
-        ChatStore.forget(thread.id)
-        do {
-            try await api.deleteAgentThread(thread.id)
-        } catch {
-            PulsoModel.shared.handle(error)
-            await refresh()
-        }
-    }
-}
-
-/// One conversation: its messages and the turn being streamed, if any.
+/// One thread (the live-workout chat): its messages and the turn being streamed, if any.
 ///
 /// The turn runs on the Mac to the end whatever the phone does, so the phone only
 /// has to keep up: stores are kept per thread (leaving and reopening a chat shows
 /// the same live reply), streams run in tasks no view owns, a lost stream
 /// re-attaches by itself, and coming back to the app picks up where it left off.
+/// The Coach tab's one conversation is `ConversationStore`.
 @MainActor
 @Observable
 final class ChatStore {
@@ -127,20 +98,13 @@ final class ChatStore {
                                      attachments: photos.map(\.attachment), products: products))
         messages.append(AgentMessage(id: local, threadId: threadId ?? "", role: .assistant, text: "", tools: [], status: .streaming, error: nil, createdAt: now))
         streaming = true
-        do {
-            if threadId == nil {
-                let thread = try await api.createAgentThread()
-                threadId = thread.id
-                Self.live[thread.id] = self
-            }
-            let threadId = threadId!
-            let jpegs = photos.map(\.jpeg)
-            let barcodes = products.map(\.barcode)
-            start { api.sendAgentMessage(threadId: threadId, text: text, photos: jpegs, barcodes: barcodes) }
-        } catch {
+        guard let threadId else {
             streaming = false
-            fail(error.localizedDescription)
+            return fail("Esta conversación todavía no está en la Mac.")
         }
+        let jpegs = photos.map(\.jpeg)
+        let barcodes = products.map(\.barcode)
+        start { api.sendAgentMessage(threadId: threadId, text: text, photos: jpegs, barcodes: barcodes) }
     }
 
     /// Follows a stream in a task no view owns. iOS gets a little background time
@@ -219,31 +183,9 @@ final class ChatStore {
 
     private func apply(_ event: AgentStreamEvent) {
         guard let index = messages.indices.last, messages[index].role == .assistant else { return }
-        switch event {
-        case let .start(messageId, _):
-            // Ids stay local so rows keep their identity; the server's id is remembered for undo.
-            serverIds[messages[index].id] = messageId
-        case let .text(delta):
-            messages[index].text += delta
-        case let .tool(name, status, access, result):
-            if let i = messages[index].tools.lastIndex(where: { $0.name == name && $0.status == .running }), status != .running {
-                messages[index].tools[i].status = status
-                messages[index].tools[i].result = result
-                if let access { messages[index].tools[i].access = access }
-            } else if status == .running {
-                messages[index].tools.append(AgentToolUse(name: name, status: status, access: access))
-            }
-        case .done:
-            messages[index].status = .done
-            for i in messages[index].tools.indices where messages[index].tools[i].status == .running {
-                messages[index].tools[i].status = .done
-            }
-        case let .error(message):
-            messages[index].status = .error
-            messages[index].error = message
-        case .unknown:
-            break
-        }
+        // Ids stay local so rows keep their identity; the server's id is remembered for undo.
+        if case let .start(messageId, _) = event { serverIds[messages[index].id] = messageId }
+        messages[index].apply(event)
     }
 
     /// Deshacer on an action card: the Mac puts the change back and the card shows it undone.
@@ -271,54 +213,33 @@ final class ChatStore {
     }
 }
 
-#if DEBUG
-extension ChatStore {
-    /// A thread that keeps sending and streaming replies with no Mac behind it,
-    /// for previewing that the scroll stays pinned to the end. Returns its id.
-    static func streamingPreview() -> String {
-        let id = "preview"
-        let store = store(for: id)
-        guard store.messages.isEmpty else { return id }
-        store.title = "Plan de la semana"
-        store.messages = (0..<4).flatMap { i in
-            [AgentMessage(id: "m\(i)-user", threadId: id, role: .user, text: "¿Qué toca hoy?", tools: [], status: .done, error: nil, createdAt: 0),
-             AgentMessage(id: "m\(i)", threadId: id, role: .assistant, text: previewReply, tools: [], status: .done, error: nil, createdAt: 0)]
-        }
-        Task { await store.previewTurns() }
-        return id
-    }
-
-    private static let previewReply = """
-        Hoy toca **torso**: press banca 4×8, remo con barra 4×10 y dominadas al fallo.
-
-        - Calienta 10 minutos.
-        - Descansa 2 minutos entre series pesadas.
-
-        Mañana, pierna.
-        """
-
-    private func previewTurns() async {
-        for turn in 1...20 {
-            try? await Task.sleep(for: .seconds(2))
-            let local = "local-preview-\(turn)"
-            messages.append(AgentMessage(id: "\(local)-user", threadId: threadId ?? "", role: .user, text: "¿Y después?", tools: [], status: .done, error: nil, createdAt: 0))
-            messages.append(AgentMessage(id: local, threadId: threadId ?? "", role: .assistant, text: "", tools: [], status: .streaming, error: nil, createdAt: 0))
-            streaming = true
-            apply(.tool(name: "list_workouts", status: .running))
-            try? await Task.sleep(for: .milliseconds(800))
-            apply(.tool(name: "list_workouts", status: .done))
-            for word in Self.previewReply.split(separator: " ", omittingEmptySubsequences: false) {
-                try? await Task.sleep(for: .milliseconds(40))
-                apply(.text(word + " "))
-            }
-            apply(.done(messageId: local))
-            streaming = false
-        }
-    }
-}
-#endif
-
 extension AgentMessage {
+    /// One event of a turn applied to the reply being written.
+    mutating func apply(_ event: AgentStreamEvent) {
+        switch event {
+        case let .text(delta):
+            text += delta
+        case let .tool(name, status, access, result):
+            if let i = tools.lastIndex(where: { $0.name == name && $0.status == .running }), status != .running {
+                tools[i].status = status
+                tools[i].result = result
+                if let access { tools[i].access = access }
+            } else if status == .running {
+                tools.append(AgentToolUse(name: name, status: status, access: access))
+            }
+        case .done:
+            status = .done
+            for i in tools.indices where tools[i].status == .running {
+                tools[i].status = .done
+            }
+        case let .error(message):
+            status = .error
+            error = message
+        case .start, .compacting, .compacted, .unknown:
+            break
+        }
+    }
+
     /// The saved conversation, keeping the ids of rows already on screen. A local
     /// placeholder and the message the Mac saved for it are the same row, matched by
     /// position and role: re-keyed rows are rebuilt, and a lazy stack rebuilt under a

@@ -164,4 +164,40 @@ final class CoachTests: XCTestCase {
         XCTAssertEqual(AgentMessage.keepingIds(of: [message("local-a", .assistant)], in: [message("m1", .user), message("m2", .assistant)]).map(\.id), ["m1", "m2"])
         XCTAssertEqual(AgentMessage.keepingIds(of: [], in: [message("m1", .user)]).map(\.id), ["m1"])
     }
+
+    private func item(_ id: String, _ role: AgentMessage.Role = .user) -> AgentFeedItem { .message(message(id, role)) }
+    private func mark(_ id: String) -> AgentFeedItem { .marker(AgentFeedMarker(id: id, kind: .compacted, contextId: "c", createdAt: 0)) }
+
+    /// The feed's latest page keeps the local ids of rows sent here (mapped from the Mac's, not by position)
+    /// and the older pages above it.
+    func testFeedReloadKeepsLocalIdsAndOlderRows() {
+        let shown = [item("m0"), mark("k1"), item("m1"), item("local-a-user"), item("local-a", .assistant)]
+        let page = [mark("k1"), item("m1"), item("s-u"), item("s-a", .assistant), mark("k2")]
+        let (items, continuous) = AgentFeedItem.mergingLatest(page, into: shown, localOf: ["s-u": "local-a-user", "s-a": "local-a"])
+        XCTAssertTrue(continuous)
+        XCTAssertEqual(items.map(\.id), ["m0", "marker:k1", "m1", "local-a-user", "local-a", "marker:k2"])
+        XCTAssertEqual(AgentFeedItem.mergingLatest([item("m5")], into: [item("m0")], localOf: [:]).continuous, false)
+        XCTAssertEqual(AgentFeedItem.prependingOlder([item("m1"), mark("k")], to: [mark("k"), item("m2")]).map(\.id), ["m1", "marker:k", "m2"])
+    }
+
+    func testConversationPagesAndCompactionEventsDecode() throws {
+        let json = #"{"threadId":"t","activeContextId":"c2","contexts":[{"id":"c2","startedAt":2,"lastMessageAt":null,"messageCount":0,"active":true}],"items":[{"type":"marker","marker":{"id":"k","kind":"context","contextId":"c2","createdAt":2}},{"type":"marker","marker":{"id":"x","kind":"futuro","contextId":"c2","createdAt":3}},{"type":"message","message":{"id":"m","threadId":"t","contextId":"c2","source":{"kind":"brief","title":"Resumen del 2 oct"},"role":"assistant","text":"Hoy: pierna.","tools":[],"status":"done","error":null,"createdAt":4}}],"before":null,"running":false,"compacting":true}"#
+        let page = try JSONDecoder().decode(AgentConversation.self, from: Data(json.utf8))
+        XCTAssertEqual(page.items.map(\.id), ["marker:k", "marker:x", "m"])
+        if case let .marker(unknown) = page.items[1] { XCTAssertEqual(unknown.kind, .unknown) } else { XCTFail() }
+        XCTAssertEqual(page.items[2].message?.source?.title, "Resumen del 2 oct")
+        XCTAssertTrue(page.compacting)
+        let decode = { (line: String) in try JSONDecoder().decode(AgentStreamEvent.self, from: Data(line.utf8)) }
+        XCTAssertEqual(try decode(#"{"type":"status","status":"compacting"}"#), .compacting(true))
+        XCTAssertEqual(try decode(#"{"type":"status","status":null}"#), .compacting(false))
+        XCTAssertEqual(try decode(#"{"type":"compacted"}"#), .compacted)
+    }
+
+    @MainActor
+    func testLauncherOpensTheConversation() {
+        let launcher = CoachLauncher()
+        launcher.open()
+        XCTAssertEqual(launcher.take()?.request, .open)
+        XCTAssertNil(launcher.take())
+    }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A Coach conversation (`@pulso/contract` `AgentThread`). Times are epoch milliseconds.
+/// A Coach thread (`@pulso/contract` `AgentThread`): the live-workout chat; the Coach tab reads the one conversation. Times are epoch milliseconds.
 struct AgentThread: Codable, Identifiable, Equatable, Hashable {
     var id: String
     var title: String
@@ -64,6 +64,12 @@ struct AgentProduct: Codable, Equatable {
     var product: FoodProduct?
 }
 
+/// A brief or review the app quoted into the conversation (`AgentMessageSource`): the person is answering it.
+struct AgentMessageSource: Codable, Equatable {
+    var kind: String
+    var title: String
+}
+
 struct AgentMessage: Codable, Identifiable, Equatable {
     enum Role: String, Codable { case user, assistant }
     enum Status: String, Codable { case streaming, done, error }
@@ -79,10 +85,13 @@ struct AgentMessage: Codable, Identifiable, Equatable {
     var attachments: [AgentAttachment] = []
     /// Scanned products on a user message, in the order they were added.
     var products: [AgentProduct] = []
+    /// In the conversation, the context (SDK session) it belongs to.
+    var contextId: String? = nil
+    var source: AgentMessageSource? = nil
 }
 
 extension AgentMessage {
-    private enum Keys: String, CodingKey { case id, threadId, role, text, tools, status, error, createdAt, attachments, products }
+    private enum Keys: String, CodingKey { case id, threadId, role, text, tools, status, error, createdAt, attachments, products, contextId, source }
 
     /// `attachments` and `products` may be missing (an engine from before them).
     init(from decoder: Decoder) throws {
@@ -97,6 +106,8 @@ extension AgentMessage {
         createdAt = try c.decode(Double.self, forKey: .createdAt)
         attachments = try c.decodeIfPresent([AgentAttachment].self, forKey: .attachments) ?? []
         products = try c.decodeIfPresent([AgentProduct].self, forKey: .products) ?? []
+        contextId = try c.decodeIfPresent(String.self, forKey: .contextId)
+        source = try? c.decodeIfPresent(AgentMessageSource.self, forKey: .source)
     }
 }
 
@@ -107,6 +118,10 @@ enum AgentStreamEvent: Decodable, Equatable {
     case tool(name: String, status: AgentToolUse.Status, access: String? = nil, result: AgentToolResult? = nil)
     case done(messageId: String)
     case error(String)
+    /// The SDK is summarizing the context to make room (true), or stopped (false).
+    case compacting(Bool)
+    /// The context was summarized: its marker is in the feed once the turn ends.
+    case compacted
     case unknown
 
     private enum Keys: String, CodingKey { case type, messageId, userMessageId, delta, name, status, access, result, message }
@@ -126,6 +141,8 @@ enum AgentStreamEvent: Decodable, Equatable {
             )
         case "done": self = .done(messageId: try c.decode(String.self, forKey: .messageId))
         case "error": self = .error(try c.decode(String.self, forKey: .message))
+        case "status": self = .compacting((try? c.decodeIfPresent(String.self, forKey: .status)) == "compacting")
+        case "compacted": self = .compacted
         default: self = .unknown
         }
     }
@@ -137,10 +154,85 @@ struct AgentThreadDetail: Decodable {
     var running: Bool
 }
 
-extension PulsoAPI {
-    private struct ThreadsResponse: Decodable { var threads: [AgentThread] }
-    private struct ThreadResponse: Decodable { var thread: AgentThread }
+/// One context of the conversation (`AgentContext`): one SDK session.
+struct AgentContext: Codable, Identifiable, Equatable {
+    var id: String
+    var startedAt: Double
+    var lastMessageAt: Double?
+    var messageCount: Int
+    var active: Bool
+}
 
+/// A quiet line in the feed (`AgentFeedMarker`).
+struct AgentFeedMarker: Codable, Identifiable, Equatable {
+    enum Kind: String, Codable { case context, `switch`, compacted, distilled, unknown }
+    var id: String
+    var kind: Kind
+    var contextId: String
+    var createdAt: Double
+
+    private enum Keys: String, CodingKey { case id, kind, contextId, createdAt }
+
+    init(id: String, kind: Kind, contextId: String, createdAt: Double) {
+        self.id = id
+        self.kind = kind
+        self.contextId = contextId
+        self.createdAt = createdAt
+    }
+
+    /// A kind this build doesn't know still decodes, as a plain line.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = Kind(rawValue: try c.decode(String.self, forKey: .kind)) ?? .unknown
+        contextId = try c.decode(String.self, forKey: .contextId)
+        createdAt = try c.decode(Double.self, forKey: .createdAt)
+    }
+}
+
+/// A row of the feed (`AgentFeedItem`): a message or a marker.
+enum AgentFeedItem: Decodable, Identifiable, Equatable {
+    case message(AgentMessage)
+    case marker(AgentFeedMarker)
+
+    private enum Keys: String, CodingKey { case type, message, marker }
+
+    var id: String {
+        switch self {
+        case let .message(message): message.id
+        case let .marker(marker): "marker:\(marker.id)"
+        }
+    }
+
+    var message: AgentMessage? {
+        if case let .message(message) = self { return message }
+        return nil
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        if try c.decode(String.self, forKey: .type) == "marker" {
+            self = .marker(try c.decode(AgentFeedMarker.self, forKey: .marker))
+        } else {
+            self = .message(try c.decode(AgentMessage.self, forKey: .message))
+        }
+    }
+}
+
+/// A page of the Coach's one conversation (`AgentConversation`), oldest first.
+struct AgentConversation: Decodable {
+    var threadId: String
+    var activeContextId: String
+    /// Newest first.
+    var contexts: [AgentContext]
+    var items: [AgentFeedItem]
+    /// Cursor for the page before this one; nil at the start.
+    var before: String?
+    var running: Bool
+    var compacting: Bool
+}
+
+extension PulsoAPI {
     /// Turns can sit quiet for a while (tools, web search), so streams get long timeouts.
     private static let streamSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -150,14 +242,31 @@ extension PulsoAPI {
         return URLSession(configuration: config)
     }()
 
-    func agentThreads() async throws -> [AgentThread] {
-        let response: ThreadsResponse = try await call("api/mobile/agent/threads", method: "GET")
-        return response.threads
+    /// The latest page of the conversation, or the one before `before`.
+    func conversation(before: String? = nil) async throws -> AgentConversation {
+        var request = makeRequest("api/mobile/agent/conversation", method: "GET")
+        if let before { request.url = request.url?.appending(queryItems: [URLQueryItem(name: "before", value: before)]) }
+        return try await perform(request)
     }
 
-    func createAgentThread() async throws -> AgentThread {
-        let response: ThreadResponse = try await call("api/mobile/agent/threads", method: "POST")
-        return response.thread
+    /// «Contexto nuevo»; answers with the latest page.
+    func newConversationContext() async throws -> AgentConversation {
+        try await call("api/mobile/agent/conversation/contexts", method: "POST")
+    }
+
+    /// «Volver a este contexto»; answers with the latest page.
+    func switchConversationContext(_ id: String) async throws -> AgentConversation {
+        try await call("api/mobile/agent/conversation/contexts/\(id)", method: "POST")
+    }
+
+    /// Sends a message into the conversation's active context and streams the Coach's turn.
+    func sendConversationMessage(text: String, photos: [Data] = [], barcodes: [String] = []) -> AsyncThrowingStream<AgentStreamEvent, Error> {
+        events(messageRequest("api/mobile/agent/conversation/messages", text: text, photos: photos, barcodes: barcodes))
+    }
+
+    /// Re-attaches to the conversation's turn in flight, replayed from its start.
+    func attachConversationTurn() -> AsyncThrowingStream<AgentStreamEvent, Error> {
+        events(makeRequest("api/mobile/agent/conversation/turn", method: "GET"))
     }
 
     func agentThread(_ id: String) async throws -> AgentThreadDetail {
@@ -171,18 +280,15 @@ extension PulsoAPI {
         return response.message
     }
 
-    func deleteAgentThread(_ id: String) async throws {
-        let request = makeRequest("api/mobile/agent/threads/\(id)", method: "DELETE")
-        let (data, response) = try await Self.streamSession.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else { throw Self.failure(status: status, data: data) }
+    /// Sends a message to a thread (the live-workout chat), with up to four JPEG photos and four
+    /// scanned barcodes, and streams the Coach's turn. The engine looks each barcode up itself.
+    func sendAgentMessage(threadId: String, text: String, photos: [Data] = [], barcodes: [String] = []) -> AsyncThrowingStream<AgentStreamEvent, Error> {
+        events(messageRequest("api/mobile/agent/threads/\(threadId)/messages", text: text, photos: photos, barcodes: barcodes))
     }
 
-    /// Sends a message, with up to four JPEG photos and four scanned barcodes, and streams the Coach's turn.
-    /// The engine looks each barcode up itself.
-    func sendAgentMessage(threadId: String, text: String, photos: [Data] = [], barcodes: [String] = []) -> AsyncThrowingStream<AgentStreamEvent, Error> {
+    private func messageRequest(_ path: String, text: String, photos: [Data], barcodes: [String]) -> URLRequest {
         struct Body: Encodable { var text: String; var barcodes: [String]? }
-        var request = makeRequest("api/mobile/agent/threads/\(threadId)/messages", method: "POST")
+        var request = makeRequest(path, method: "POST")
         if photos.isEmpty {
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.httpBody = try? JSONEncoder().encode(Body(text: text, barcodes: barcodes.isEmpty ? nil : barcodes))
@@ -191,7 +297,7 @@ extension PulsoAPI {
             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "content-type")
             request.httpBody = Self.multipart(text: text, photos: photos, barcodes: barcodes, boundary: boundary)
         }
-        return events(request)
+        return request
     }
 
     /// The form the engine reads: a `text` field, one `barcode` field per product and one `image` file per photo.

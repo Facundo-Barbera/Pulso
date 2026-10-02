@@ -195,13 +195,12 @@ final class TrainingStore {
         }
     }
 
-    /// "Ver por qué": opens the review in a Coach thread.
+    /// "Ver por qué": the review goes into the Coach's conversation, which opens on it.
     func discussAdjustment() async {
         guard let api = PulsoModel.shared.api, let adjustment else { return }
         do {
-            let threadId = try await api.adjustmentThread(adjustment.id)
-            let detail = try await api.agentThread(threadId)
-            CoachLauncher.shared.open(detail.thread)
+            _ = try await api.adjustmentThread(adjustment.id)
+            CoachLauncher.shared.open()
         } catch {
             PulsoModel.shared.handle(error)
         }
