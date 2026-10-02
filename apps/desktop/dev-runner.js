@@ -8,8 +8,10 @@
  * The port is fixed (3230, set in apps/engine's dev script) and never hops: a
  * silently different port is how the window ends up on one server and the browser on another.
  */
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
+const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 
 const repoDir = path.resolve(__dirname, "..", "..");
@@ -20,6 +22,37 @@ const webOnly = process.argv.includes("--web");
 /** @type {import("node:child_process").ChildProcess[]} */
 const children = [];
 let stopping = false;
+
+/**
+ * macOS names the app menu after the bundle's CFBundleName, not app.setName(),
+ * so the stock Electron.app shows "Electron" in the menu bar. A renamed copy,
+ * made once per Electron version in the temp dir, shows "Pulso". Anything
+ * failing falls back to the stock binary: a wrong name beats no window.
+ */
+function electronBinary() {
+  const stock = require("electron");
+  if (process.platform !== "darwin") return stock;
+  try {
+    const source = path.resolve(stock, "../../..");
+    const version = require("electron/package.json").version;
+    const bundle = path.join(os.tmpdir(), `pulso-dev-electron-${version}`, "Pulso.app");
+    const binary = path.join(bundle, "Contents", "MacOS", "Electron");
+    if (!fs.existsSync(binary)) {
+      fs.rmSync(path.dirname(bundle), { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(bundle), { recursive: true });
+      execFileSync("ditto", [source, bundle]);
+      const plist = path.join(bundle, "Contents", "Info.plist");
+      execFileSync("plutil", ["-replace", "CFBundleName", "-string", "Pulso", plist]);
+      execFileSync("plutil", ["-replace", "CFBundleDisplayName", "-string", "Pulso", plist]);
+      // Edited bundle: re-sign ad hoc so macOS runs it.
+      execFileSync("codesign", ["--force", "--deep", "--sign", "-", bundle], { stdio: "ignore" });
+    }
+    return binary;
+  } catch (error) {
+    console.warn(`Using the stock Electron (${error.message}); the menu bar will say "Electron".`);
+    return stock;
+  }
+}
 
 function portFree(port) {
   return new Promise((resolve) => {
@@ -78,7 +111,7 @@ async function main() {
   console.log(`Pulso engine: ${url}`);
   if (webOnly) return;
 
-  const electron = spawn(require("electron"), [__dirname], {
+  const electron = spawn(electronBinary(), [__dirname], {
     stdio: "inherit",
     detached: true,
     env: { ...process.env, PULSO_DESKTOP_URL: url },
