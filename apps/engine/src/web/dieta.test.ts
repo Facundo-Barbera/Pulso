@@ -87,11 +87,12 @@ test("replacing an entry keeps where it came from and changes what was corrected
   expect(replaceMeal("missing", food("X", "snack", 1))).toBeUndefined();
 });
 
-test("progress has one row per day with kcal, water, target hits and plan share", () => {
+test("progress has one row per day with kcal, water, days in zone and plan share", () => {
   const today = "2031-04-14";
   setTargets({ kcal: 2000, protein: 150, carbs: 200, fat: 60 });
-  logMeal(food("Comida", "comida", 1950, { date: "2031-04-13" }));
-  logMeal(food("Comida", "comida", 1000, { date: "2031-04-12" }));
+  logMeal(food("Comida", "comida", 1950, { date: "2031-04-13", protein: 160 }));
+  logMeal(food("Comida", "comida", 1000, { date: "2031-04-12", protein: 160 }));
+  logMeal(food("Comida", "comida", 2000, { date: "2031-04-11", protein: 90 })); // kcal in zone, protein short of its minimum
   logWater({ amountMl: 1500, date: "2031-04-13" });
   const progress = dietaProgress(today, 7);
   expect(progress.days).toHaveLength(7);
@@ -99,5 +100,6 @@ test("progress has one row per day with kcal, water, target hits and plan share"
   const byDate = Object.fromEntries(progress.days.map((d) => [d.date, d]));
   expect(byDate["2031-04-13"]).toMatchObject({ kcal: 1950, waterMl: 1500, onTarget: true });
   expect(byDate["2031-04-12"]!.onTarget).toBe(false);
-  expect(progress.averages).toMatchObject({ kcal: 1475, onTarget: 1, logged: 2, waterMl: 1500 });
+  expect(byDate["2031-04-11"]!.onTarget).toBe(false);
+  expect(progress.averages).toMatchObject({ kcal: 1650, onTarget: 1, logged: 3, waterMl: 1500 });
 });
