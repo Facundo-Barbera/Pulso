@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Log or edit one use. Defaults make the common case one tap: now, Cannabis,
-/// Fumado, Normal. Everything below the amount is optional.
+/// Log or edit one use. Defaults make the common case one tap: now, the substance
+/// on screen, its first form, Normal. Everything below the amount is optional.
 struct SubstanceLogSheet: View {
     let store: SubstanceStore
     let entry: SubstanceEntry?
@@ -16,40 +16,59 @@ struct SubstanceLogSheet: View {
         _draft = State(initialValue: entry.map(SubstanceDraft.init) ?? SubstanceDraft(substance: substance))
     }
 
+    /// Active substances, plus an archived one an old entry belongs to.
+    private var choices: [Substance] {
+        var list = store.active
+        if let own = store.substance(draft.substanceId), own.archived { list.append(own) }
+        return list
+    }
+
+    private var substance: Substance? { store.substance(draft.substanceId) }
+
+    /// The substance's forms, plus an entry's form that has since been removed.
+    private var forms: [String] {
+        var list = substance?.forms ?? []
+        if let form = draft.form, !list.contains(form) { list.append(form) }
+        return list
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Sustancia", selection: $draft.substance) {
-                        ForEach(Substance.allCases) { Text($0.shortLabel).tag($0) }
+                    SubstanceChips(items: choices.map(\.id), selection: draft.substanceId, onSelect: select) { id in
+                        if let substance = store.substance(id) { SubstanceLabel(substance: substance) }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0))
                     DatePicker("Cuándo", selection: $draft.at, in: ...Date.now)
                 }
-                if draft.substance == .cannabis {
+                if !forms.isEmpty {
                     Section("Forma") {
-                        Picker("Forma", selection: formBinding) {
-                            ForEach(SubstanceForm.allCases) { Text($0.label).tag($0) }
+                        SubstanceChips(items: forms, selection: draft.form, onSelect: { draft.form = $0 }) { form in
+                            Label {
+                                Text(SubstanceText.capitalizedFirst(form))
+                            } icon: {
+                                SubstanceGlyphView(symbol: SubstanceText.formSymbol(form) ?? substance?.symbol)
+                            }
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
+                        .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0))
                     }
                 }
-                Section("Cantidad") {
-                    Picker("Cantidad", selection: $draft.amount) {
+                Section("Cuánto") {
+                    Picker("Cuánto", selection: $draft.amount) {
                         ForEach(SubstanceAmount.allCases) { Text($0.label).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 }
                 Section {
-                    Stepper(value: countBinding, in: 0...100) {
-                        LabeledContent(draft.substance.countLabel) {
-                            Text(draft.count.map(String.init) ?? "—")
+                    Stepper(value: quantityBinding, in: 0...10_000) {
+                        LabeledContent(SubstanceText.unitLabel(substance?.unit ?? "veces")) {
+                            TextField("—", value: $draft.quantity, format: .number)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
                                 .fontDesign(.rounded)
                                 .monospacedDigit()
-                                .contentTransition(.numericText(value: Double(draft.count ?? 0)))
                         }
                     }
                     if draft.showsThc {
@@ -60,8 +79,10 @@ struct SubstanceLogSheet: View {
                                 .fontDesign(.rounded)
                         }
                     }
-                    ContextChips(selection: $draft.context)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0))
+                    SubstanceChips(items: SubstanceContext.allCases, selection: draft.context, clearable: true, onSelect: { draft.context = $0 }) {
+                        Text($0.label)
+                    }
+                    .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0))
                     TextField("Nota", text: $draft.note, axis: .vertical)
                         .lineLimit(1...4)
                 } header: {
@@ -97,11 +118,9 @@ struct SubstanceLogSheet: View {
                 .padding(.horizontal)
                 .padding(.bottom, 8)
             }
-            .onChange(of: draft.substance) { _, substance in
-                withAnimation(.snappy) { draft.form = substance == .cannabis ? (draft.form ?? .fumado) : nil }
-            }
             .animation(.snappy, value: draft.showsThc)
-            .sensoryFeedback(.selection, trigger: draft.substance)
+            .animation(.snappy, value: forms)
+            .sensoryFeedback(.selection, trigger: draft.substanceId)
             .sensoryFeedback(.selection, trigger: draft.form)
             .sensoryFeedback(.selection, trigger: draft.amount)
             .sensoryFeedback(.selection, trigger: draft.context)
@@ -117,48 +136,19 @@ struct SubstanceLogSheet: View {
         }
     }
 
-    private var formBinding: Binding<SubstanceForm> {
-        Binding { draft.form ?? .fumado } set: { draft.form = $0 }
+    private func select(_ id: String?) {
+        guard let id, let substance = store.substance(id) else { return }
+        draft.switchTo(substance)
     }
 
-    /// 0 on the stepper is "not counted".
-    private var countBinding: Binding<Int> {
-        Binding { draft.count ?? 0 } set: { draft.count = $0 == 0 ? nil : $0 }
+    /// Steps by one; 0 is "not counted". Decimals are typed in the field.
+    private var quantityBinding: Binding<Double> {
+        Binding { draft.quantity ?? 0 } set: { draft.quantity = $0 <= 0 ? nil : $0 }
     }
 
     private func save() async {
         saving = true
         defer { saving = false }
         if await store.save(draft, id: entry?.id) { dismiss() }
-    }
-}
-
-/// Optional context as glass chips; tapping the selected one clears it.
-private struct ContextChips: View {
-    @Binding var selection: SubstanceContext?
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    ForEach(SubstanceContext.allCases) { context in
-                        let on = selection == context
-                        Button {
-                            withAnimation(.snappy) { selection = on ? nil : context }
-                        } label: {
-                            Text(context.label)
-                                .font(.subheadline.weight(on ? .semibold : .regular))
-                                .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.plain)
-                        .glassEffect(on ? .regular.tint(SubstanceStyle.tint).interactive() : .regular.interactive(), in: .capsule)
-                        .accessibilityAddTraits(on ? .isSelected : [])
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-        }
     }
 }

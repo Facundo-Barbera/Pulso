@@ -174,18 +174,28 @@ struct SubstanceWeeksCard: View {
     }
 }
 
-/// Morning, afternoon, night or small hours.
-struct SubstanceTimeOfDayCard: View {
-    let buckets: [SubstanceTimeBucket]
+/// Uses split some way (time of day, form, substance) as soft horizontal bars.
+struct SubstanceBarsCard: View {
+    struct Row: Identifiable {
+        var id: String
+        var label: String
+        /// An emoji or SF Symbol name, drawn like a substance's.
+        var symbol: String?
+        var uses: Int
+    }
+
+    let title: String
+    let systemImage: String
+    let rows: [Row]
 
     var body: some View {
-        let top = max(buckets.map(\.uses).max() ?? 1, 1)
+        let top = max(rows.map(\.uses).max() ?? 1, 1)
         Card {
-            CardTitle(text: "Momento del día", systemImage: "clock")
+            CardTitle(text: title, systemImage: systemImage)
             VStack(spacing: 10) {
-                ForEach(buckets) { bucket in
+                ForEach(rows) { row in
                     HStack(spacing: 10) {
-                        Label(bucket.label, systemImage: bucket.symbol)
+                        Label { Text(row.label) } icon: { SubstanceGlyphView(symbol: row.symbol) }
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(width: 118, alignment: .leading)
@@ -197,21 +207,68 @@ struct SubstanceTimeOfDayCard: View {
                                 GeometryReader { proxy in
                                     Capsule()
                                         .fill(SubstanceStyle.tint.gradient)
-                                        .frame(width: max(bucket.uses > 0 ? 8 : 0, proxy.size.width * Double(bucket.uses) / Double(top)))
+                                        .frame(width: max(row.uses > 0 ? 8 : 0, proxy.size.width * Double(row.uses) / Double(top)))
                                 }
                             }
                             .frame(height: 10)
-                        Text("\(bucket.uses)")
+                        Text("\(row.uses)")
                             .font(.subheadline.weight(.semibold))
                             .fontDesign(.rounded)
                             .monospacedDigit()
-                            .contentTransition(.numericText(value: Double(bucket.uses)))
+                            .contentTransition(.numericText(value: Double(row.uses)))
                             .frame(minWidth: 22, alignment: .trailing)
                     }
                     .accessibilityElement(children: .combine)
                 }
             }
         }
+    }
+}
+
+/// Glass capsules for picking one item; the selected one takes the feature's tint.
+/// With `clearable`, tapping the selected chip clears it.
+struct SubstanceChips<Item: Hashable, Content: View>: View {
+    let items: [Item]
+    let selection: Item?
+    var clearable = false
+    var inset: CGFloat = 20
+    let onSelect: (Item?) -> Void
+    @ViewBuilder let label: (Item) -> Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    ForEach(items, id: \.self) { item in
+                        let on = selection == item
+                        Button {
+                            withAnimation(.snappy) { onSelect(on && clearable ? nil : item) }
+                        } label: {
+                            label(item)
+                                .font(.subheadline.weight(on ? .semibold : .regular))
+                                .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                                .lineLimit(1)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(on ? .regular.tint(SubstanceStyle.tint).interactive() : .regular.interactive(), in: .capsule)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal, inset)
+            }
+        }
+        .scrollClipDisabled()
+    }
+}
+
+/// A substance's symbol and name, for chips and rows.
+struct SubstanceLabel: View {
+    let substance: Substance
+
+    var body: some View {
+        Label { Text(substance.name) } icon: { SubstanceGlyphView(symbol: substance.symbol) }
     }
 }
 

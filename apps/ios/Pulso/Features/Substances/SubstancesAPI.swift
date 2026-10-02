@@ -4,14 +4,17 @@ import Foundation
 /// time so "today" and "this week" are the person's, not the Mac's.
 extension PulsoAPI {
     private struct Deleted: Decodable {}
+    private struct Order: Encodable { var ids: [String] }
 
-    func substanceOverview(_ substance: Substance, at now: Date = .now) async throws -> SubstanceOverview {
+    /// `scope` nil lets the engine pick (the first active substance).
+    func substanceOverview(_ scope: SubstanceScope?, at now: Date = .now) async throws -> SubstanceOverview {
         var request = makeRequest("api/mobile/substances", method: "GET")
-        request.url = request.url?.appending(queryItems: [
-            URLQueryItem(name: "substance", value: substance.rawValue),
+        var query = [
             URLQueryItem(name: "date", value: LocalClock.date(now)),
             URLQueryItem(name: "time", value: LocalClock.time(now)),
-        ])
+        ]
+        if let scope { query.insert(URLQueryItem(name: "substance", value: scope.query), at: 0) }
+        request.url = request.url?.appending(queryItems: query)
         return try await perform(request)
     }
 
@@ -27,8 +30,23 @@ extension PulsoAPI {
         let _: Deleted = try await call("api/mobile/substances/\(id)", method: "DELETE")
     }
 
-    /// `nil` clears the goal.
-    func updateSubstanceSettings(maxDaysPerWeek: Int?) async throws -> SubstanceSettings {
-        try await call("api/mobile/substances/settings", method: "PATCH", body: SubstanceSettings(maxDaysPerWeek: maxDaysPerWeek))
+    func substanceTypes() async throws -> [Substance] {
+        let list: SubstanceList = try await call("api/mobile/substances/types", method: "GET")
+        return list.substances
+    }
+
+    /// `patch.name` is required here.
+    func createSubstance(_ patch: SubstancePatch) async throws -> Substance {
+        try await call("api/mobile/substances/types", method: "POST", body: patch)
+    }
+
+    func updateSubstance(id: String, _ patch: SubstancePatch) async throws -> Substance {
+        try await call("api/mobile/substances/types/\(id)", method: "PATCH", body: patch)
+    }
+
+    /// Every active id, in the new order.
+    func reorderSubstances(_ ids: [String]) async throws -> [Substance] {
+        let list: SubstanceList = try await call("api/mobile/substances/types/order", method: "PUT", body: Order(ids: ids))
+        return list.substances
     }
 }

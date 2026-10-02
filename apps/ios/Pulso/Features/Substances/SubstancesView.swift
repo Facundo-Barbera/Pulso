@@ -1,51 +1,54 @@
 import SwiftUI
 
-/// Sustancias: a private, non-judgmental log of when the person uses cannabis,
-/// alcohol or nicotine, to see how often and how it sits with their sleep. Only
-/// reachable through `SubstancesAccess` (Face ID each time); closes itself when
-/// the app goes to the background. A List, not a ScrollView, so entries swipe.
+/// Sustancias: a private, non-judgmental log of when the person uses something
+/// (Cannabis and Alcohol built in, plus their own), to see how often and how it
+/// sits with their sleep. Only reachable through `SubstancesAccess` (Face ID each
+/// time); closes itself when the app goes to the background. A List, not a
+/// ScrollView, so entries swipe.
 struct SubstancesView: View {
     /// Presented as a sheet (the profile menu) rather than pushed (Ajustes): adds "Listo".
     var closable = false
     @State private var store = SubstanceStore()
     @State private var logging: LogTarget?
+    @State private var managing = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
     private enum LogTarget: Identifiable {
         case new(Substance)
-        case existing(SubstanceEntry)
+        case existing(SubstanceEntry, Substance)
         var id: String {
             switch self {
-            case let .new(substance): "new-\(substance.rawValue)"
-            case let .existing(entry): entry.id
+            case let .new(substance): "new-\(substance.id)"
+            case let .existing(entry, _): entry.id
             }
         }
     }
 
+    /// What "Registrar" starts on: the substance shown, or the first one under Todas.
+    private var logDefault: Substance? {
+        store.substance(store.scope?.substanceId) ?? store.active.first
+    }
+
     var body: some View {
         List {
-            Section {
-                Picker("Sustancia", selection: $store.substance) {
-                    ForEach(Substance.allCases) { Text($0.shortLabel).tag($0) }
+            if !store.active.isEmpty {
+                Section {
+                    SubstanceChips(items: [SubstanceScope.all] + store.active.map { .one($0.id) }, selection: store.scope, inset: 0, onSelect: { if let scope = $0 { store.scope = scope } }) { scope in
+                        if let substance = store.substance(scope.substanceId) {
+                            SubstanceLabel(substance: substance)
+                        } else {
+                            Label("Todas", systemImage: "square.grid.2x2")
+                        }
+                    }
+                    .padding(.vertical, 2)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                .cardRow()
             }
-            .cardRow()
 
             if let overview = store.current {
                 if overview.isEmpty {
-                    Section {
-                        EmptyStateView(
-                            systemImage: store.substance.symbol,
-                            title: "Sin registros de \(store.substance.label.lowercased())",
-                            message: "Anota cuándo consumes para ver con qué frecuencia y cómo se lleva con tu sueño. Solo tú lo ves.",
-                            tint: SubstanceStyle.tint,
-                            actionTitle: "Registrar"
-                        ) { logging = .new(store.substance) }
-                    }
-                    .cardRow()
+                    Section { empty }.cardRow()
                 } else {
                     dashboard(overview)
                     entries(overview)
@@ -67,27 +70,69 @@ struct SubstancesView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Registrar", systemImage: "plus") { logging = .new(store.substance) }
+                Button("Gestionar sustancias", systemImage: "slider.horizontal.3") { managing = true }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Registrar", systemImage: "plus") { if let logDefault { logging = .new(logDefault) } }
                     .buttonStyle(.glassProminent)
+                    .disabled(logDefault == nil)
             }
         }
+        .navigationDestination(isPresented: $managing) { SubstanceManageView(store: store) }
         .refreshable { await store.load() }
-        .onChange(of: store.substance, initial: true) { _, _ in Task { await store.load() } }
+        // Also on coming back from "Gestionar sustancias". Unstructured: leaving must not cancel it.
+        .onAppear { Task { await store.load() } }
+        // The first load picks the scope; later switches load what's newly shown.
+        .onChange(of: store.scope) { old, _ in if old != nil { Task { await store.load() } } }
         // More private than the rest of the app: leaving Pulso closes it, and coming back asks again.
-        .onChange(of: scenePhase) { _, phase in if phase == .background { dismiss() } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                logging = nil
+                managing = false
+                dismiss()
+            }
+        }
         .animation(.snappy, value: store.current)
-        .sensoryFeedback(.selection, trigger: store.substance)
+        .sensoryFeedback(.selection, trigger: store.scope)
         .sensoryFeedback(.success, trigger: store.changes)
         .sheet(item: $logging) { target in
             switch target {
             case let .new(substance): SubstanceLogSheet(store: store, entry: nil, substance: substance)
-            case let .existing(entry): SubstanceLogSheet(store: store, entry: entry, substance: entry.substance)
+            case let .existing(entry, substance): SubstanceLogSheet(store: store, entry: entry, substance: substance)
             }
         }
     }
 
+    @ViewBuilder private var empty: some View {
+        let substance = store.substance(store.scope?.substanceId)
+        VStack(spacing: 14) {
+            SubstanceGlyphView(symbol: substance?.symbol ?? "square.grid.2x2")
+                .font(.system(size: 44, weight: .medium))
+                .foregroundStyle(SubstanceStyle.tint.gradient)
+                .symbolEffect(.bounce, options: .nonRepeating)
+                .frame(width: 88, height: 88)
+                .background(SubstanceStyle.tint.opacity(0.12), in: Circle())
+            Text(substance.map { "Sin registros de \($0.name.lowercased())" } ?? "Sin registros todavía")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text("Anota cuándo consumes para ver con qué frecuencia y cómo se lleva con tu sueño. Solo tú lo ves.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            if let logDefault {
+                Button("Registrar") { logging = .new(logDefault) }
+                    .buttonStyle(.glassProminent)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.vertical, 28)
+        .padding(.horizontal, Theme.padding)
+        .frame(maxWidth: .infinity)
+    }
+
     @ViewBuilder private func dashboard(_ overview: SubstanceOverview) -> some View {
         let summary = overview.summary
+        let substance = store.substance(summary.substanceId)
         Section {
             SubstanceHero(summary: summary)
         }
@@ -111,12 +156,31 @@ struct SubstancesView: View {
         }
         .cardRow()
         Section {
-            SubstanceWeeksCard(summary: summary, goal: store.substance == .cannabis ? overview.settings.maxDaysPerWeek : nil)
+            SubstanceWeeksCard(summary: summary, goal: substance?.maxDaysPerWeek)
         }
         .cardRow()
+        if summary.substanceId == nil, summary.bySubstance.contains(where: { $0.uses > 0 }) {
+            Section {
+                SubstanceBarsCard(title: "Por sustancia", systemImage: "square.grid.2x2", rows: summary.bySubstance.map { item in
+                    let known = store.substance(item.substanceId)
+                    return .init(id: item.substanceId, label: known?.name ?? item.substanceId, symbol: known?.symbol, uses: item.uses)
+                })
+            }
+            .cardRow()
+        }
+        if let substance, summary.byForm.filter({ $0.uses > 0 }).count > 1 {
+            Section {
+                SubstanceBarsCard(title: "Forma", systemImage: "square.stack", rows: summary.byForm.map {
+                    .init(id: $0.form, label: SubstanceText.capitalizedFirst($0.form), symbol: SubstanceText.formSymbol($0.form) ?? substance.symbol, uses: $0.uses)
+                })
+            }
+            .cardRow()
+        }
         if summary.timeOfDay.contains(where: { $0.uses > 0 }) {
             Section {
-                SubstanceTimeOfDayCard(buckets: summary.timeOfDay)
+                SubstanceBarsCard(title: "Momento del día", systemImage: "clock", rows: summary.timeOfDay.map {
+                    .init(id: $0.key, label: $0.label, symbol: $0.symbol, uses: $0.uses)
+                })
             }
             .cardRow()
         }
@@ -126,21 +190,24 @@ struct SubstancesView: View {
             }
             .cardRow()
         }
-        // One setting on the engine; it reads as "días de cannabis", so it lives on that tab.
-        if store.substance == .cannabis {
+        // Each substance has its own optional maximum; Todas has none.
+        if let substance {
             Section {
-                SubstanceGoalCard(maxDays: overview.settings.maxDaysPerWeek, daysThisWeek: summary.daysThisWeek) { max in
-                    await store.setGoal(max)
+                SubstanceGoalCard(maxDays: substance.maxDaysPerWeek, daysThisWeek: summary.daysThisWeek) { max in
+                    await store.setGoal(max, for: substance.id)
                 }
+                .id(substance.id)
             }
             .cardRow()
         }
     }
 
     private func entries(_ overview: SubstanceOverview) -> some View {
-        Section {
+        let mixed = overview.summary.substanceId == nil
+        return Section {
             ForEach(overview.entries) { entry in
-                Button { logging = .existing(entry) } label: { SubstanceEntryRow(entry: entry) }
+                let substance = store.substance(entry.substanceId)
+                Button { open(entry) } label: { SubstanceEntryRow(entry: entry, substance: substance, showingName: mixed) }
                     .tint(.primary)
                     .swipeActions(edge: .trailing) {
                         Button("Eliminar", systemImage: "trash", role: .destructive) {
@@ -148,7 +215,7 @@ struct SubstancesView: View {
                         }
                     }
                     .swipeActions(edge: .leading) {
-                        Button("Editar", systemImage: "pencil") { logging = .existing(entry) }
+                        Button("Editar", systemImage: "pencil") { open(entry) }
                             .tint(SubstanceStyle.tint)
                     }
             }
@@ -157,6 +224,11 @@ struct SubstancesView: View {
         } footer: {
             Text("Últimos 60 días. Desliza para editar o eliminar.")
         }
+    }
+
+    private func open(_ entry: SubstanceEntry) {
+        guard let substance = store.substance(entry.substanceId) else { return }
+        logging = .existing(entry, substance)
     }
 }
 
@@ -171,16 +243,19 @@ private extension View {
 
 struct SubstanceEntryRow: View {
     let entry: SubstanceEntry
+    let substance: Substance?
+    /// Under Todas, entries of several substances mix: lead with the name.
+    var showingName = false
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: entry.symbol)
+            SubstanceGlyphView(symbol: showingName ? substance?.symbol : entry.form.flatMap(SubstanceText.formSymbol) ?? substance?.symbol)
                 .font(.body.weight(.medium))
                 .foregroundStyle(SubstanceStyle.tint)
                 .frame(width: 36, height: 36)
                 .background(SubstanceStyle.tint.opacity(0.12), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.title).font(.body.weight(.medium))
+                Text(entry.title(substanceName: substance?.name ?? "Sustancia", showingName: showingName)).font(.body.weight(.medium))
                 Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 if let note = entry.note, !note.isEmpty {
                     Text(note).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
@@ -194,6 +269,7 @@ struct SubstanceEntryRow: View {
                     .fontDesign(.rounded)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .padding(.vertical, 2)
@@ -207,8 +283,8 @@ struct SubstanceEntryRow: View {
     }
 
     private var detail: String? {
-        if let mg = entry.thcMg { return "\(mg.formatted(.number.precision(.fractionLength(0...1)))) mg" }
-        if let count = entry.count { return "×\(count)" }
+        if let mg = entry.thcMg { return "\(mg.formatted(.number.precision(.fractionLength(0...1)))) mg THC" }
+        if let quantity = entry.quantity { return SubstanceText.quantity(quantity, unit: substance?.unit ?? "veces") }
         return nil
     }
 }
