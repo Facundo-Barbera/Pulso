@@ -51,11 +51,11 @@ private struct PostWorkoutDoseRow: View {
         HStack(spacing: 12) {
             Image(systemName: taken ? "checkmark.circle.fill" : slot.kind.symbol)
                 .font(.title3)
-                .foregroundStyle(taken ? Theme.body : Theme.training)
+                .foregroundStyle(taken ? Theme.good : Theme.training)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, value: taken)
                 .frame(width: 34, height: 34)
-                .background((taken ? Theme.body : Theme.training).opacity(0.15), in: .circle)
+                .background((taken ? Theme.good : Theme.training).opacity(0.15), in: .circle)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(slot.name) \(slot.doseText)")
                     .font(.body.weight(.medium))
@@ -70,7 +70,7 @@ private struct PostWorkoutDoseRow: View {
             if taken {
                 Text("Tomada")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.body)
+                    .foregroundStyle(Theme.good)
                     .transition(.scale.combined(with: .opacity))
             } else {
                 Button("Tomar ahora") { Task { await store.take(slot) } }

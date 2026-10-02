@@ -24,7 +24,7 @@ struct MacrosWidgetView: View {
         switch family {
         case .accessoryCircular:
             Gauge(value: macros?.kcalProgress ?? 0) {
-                Image(systemName: "flame.fill")
+                Image(systemName: Theme.energySymbol)
             } currentValueLabel: {
                 Text(macros?.kcalLeft.map(WidgetStyle.number) ?? "–").fontDesign(.rounded).minimumScaleFactor(0.5)
             }
@@ -68,7 +68,7 @@ struct MacrosWidgetView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                bar("Proteína", "\(proteinText) g", macros.proteinProgress, Theme.protein)
+                bar("Proteína", Theme.proteinSymbol, "\(proteinText) g", macros.proteinProgress, Theme.protein)
             }
         } else {
             WidgetEmpty(systemImage: "fork.knife.circle", text: entry.paired ? "Registrá tu primera comida en Pulso" : WidgetStyle.unpaired, color: Theme.energy)
@@ -80,8 +80,8 @@ struct MacrosWidgetView: View {
             // On a 375 pt phone the medium widget is ~297 pt inside: two 86 pt rings and 18 pt gaps
             // left ~89 pt for the text, which wrapped word by word. Smaller rings, tighter gaps.
             HStack(spacing: 12) {
-                ring("kcal", kcalText, macros.kcalProgress, Theme.energy)
-                ring("g proteína", proteinText, macros.proteinProgress, Theme.protein)
+                ring("kcal", Theme.energySymbol, kcalText, macros.kcalProgress, Theme.energy)
+                ring("g proteína", Theme.proteinSymbol, proteinText, macros.proteinProgress, Theme.protein)
                 VStack(alignment: .leading, spacing: 6) {
                     WidgetHeader(title: "Dieta", systemImage: "fork.knife", color: Theme.energy)
                     Text(hasTargets ? "Lo que te queda hoy" : "Lo que comiste hoy")
@@ -103,9 +103,11 @@ struct MacrosWidgetView: View {
         }
     }
 
-    private func ring(_ unit: String, _ value: String, _ progress: Double, _ color: Color) -> some View {
+    /// Each macro wears its `Theme` symbol, as in the app's rings, so kcal and protein never rest on hue.
+    private func ring(_ unit: String, _ symbol: String, _ value: String, _ progress: Double, _ color: Color) -> some View {
         WidgetRing(progress: progress, color: color, lineWidth: 9) {
             VStack(spacing: 0) {
+                Image(systemName: symbol).font(.system(size: 9, weight: .bold)).foregroundStyle(color)
                 Text(value).font(.system(.headline, design: .rounded, weight: .bold)).minimumScaleFactor(0.6)
                 Text(unit).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary).minimumScaleFactor(0.8)
             }
@@ -115,10 +117,15 @@ struct MacrosWidgetView: View {
         .frame(width: 76, height: 76)
     }
 
-    private func bar(_ label: String, _ value: String, _ progress: Double, _ color: Color) -> some View {
+    private func bar(_ label: String, _ symbol: String, _ value: String, _ progress: Double, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(label).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                Label {
+                    Text(label).foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: symbol).foregroundStyle(color)
+                }
+                .font(.caption2.weight(.medium))
                 Spacer(minLength: 4)
                 Text(value).font(.caption.weight(.semibold)).fontDesign(.rounded)
             }

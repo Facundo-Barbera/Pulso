@@ -99,7 +99,8 @@ private struct HeroStat: View {
     }
 }
 
-/// "▼ 1,2 kg" in green when it moved the good way.
+/// "↓ 1,2 kg ✓": the arrow says which way it moved, the trailing checkmark or
+/// exclamation whether that was the good way (blue) or not (orange), never hue alone.
 struct DeltaBadge: View {
     let delta: Double
     let unit: String
@@ -108,14 +109,21 @@ struct DeltaBadge: View {
 
     var body: some View {
         let good = abs(delta) < 0.05 ? nil : (delta < 0) == lowerIsBetter
-        Label {
-            Text("\(abs(delta).decimal()) \(unit)")
-        } icon: {
-            Image(systemName: abs(delta) < 0.05 ? "equal" : delta < 0 ? "arrow.down" : "arrow.up")
+        HStack(spacing: 3) {
+            Label {
+                Text("\(abs(delta).decimal()) \(unit)")
+            } icon: {
+                Image(systemName: abs(delta) < 0.05 ? "equal" : delta < 0 ? "arrow.down" : "arrow.up")
+            }
+            .labelStyle(.titleAndIcon)
+            if let good {
+                Image(systemName: good ? "checkmark" : "exclamationmark")
+                    .imageScale(.small)
+                    .accessibilityLabel(good ? "bien" : "a vigilar")
+            }
         }
         .font(compact ? .caption2.weight(.bold) : .caption.weight(.bold))
-        .foregroundStyle(good == nil ? Color.secondary : good! ? Color.green : Color.orange)
-        .labelStyle(.titleAndIcon)
+        .foregroundStyle(good == nil ? Color.secondary : good! ? Theme.good : Theme.caution)
         .lineLimit(1)
     }
 }
@@ -207,7 +215,7 @@ struct CompositionCard: View {
             if let water = scan.totalBodyWater {
                 Divider()
                 HStack {
-                    Image(systemName: "drop.fill").foregroundStyle(Theme.fat).frame(width: 10)
+                    Image(systemName: "drop.fill").foregroundStyle(Theme.water).frame(width: 10)
                     Text("Agua").font(.subheadline)
                     Spacer(minLength: 8)
                     Text("\(water.decimal()) L").font(.subheadline.weight(.semibold)).monospacedDigit()

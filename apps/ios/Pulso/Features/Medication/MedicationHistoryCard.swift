@@ -110,9 +110,9 @@ private struct HistoryRow: View {
 
     private var color: Color {
         switch dose.status {
-        case .tomada: Theme.body
+        case .tomada: Theme.good
         case .omitida: .secondary
-        case .pospuesta: .orange
+        case .pospuesta: Theme.caution
         case .pendiente: .secondary
         }
     }

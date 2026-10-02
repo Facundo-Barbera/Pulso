@@ -297,7 +297,7 @@ private struct ZoneRow: View {
         case 2: Theme.body
         case 3: Theme.carbs
         case 4: Theme.energy
-        case 5: Theme.protein
+        case 5: Theme.heart
         default: .secondary
         }
     }

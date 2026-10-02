@@ -23,7 +23,7 @@ struct MedicationTodayCard: View {
                             .fontDesign(.rounded)
                             .monospacedDigit()
                             .contentTransition(.numericText())
-                            .foregroundStyle(day.taken == day.slots.count ? Theme.body : .secondary)
+                            .foregroundStyle(day.taken == day.slots.count ? Theme.good : .secondary)
                     }
                     Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                 }
@@ -70,7 +70,7 @@ struct MedicationTodayCard: View {
             } else if day.taken == day.slots.count {
                 Label("Todo tomado por hoy", systemImage: "checkmark.seal.fill")
                     .font(.footnote.weight(.medium))
-                    .foregroundStyle(Theme.body)
+                    .foregroundStyle(Theme.good)
             }
             LowStockNote(medications: store.lowStock)
             AsNeededRows(store: store, editing: $editing)
@@ -211,7 +211,7 @@ struct DoseRow: View {
                 .font(.subheadline.weight(.semibold))
                 .fontDesign(.rounded)
                 .monospacedDigit()
-                .foregroundStyle(isLate ? Theme.energy : .secondary)
+                .foregroundStyle(isLate ? Theme.caution : .secondary)
                 .lineLimit(1)
                 .layoutPriority(1)
         } else {
@@ -228,16 +228,16 @@ struct DoseRow: View {
         case .tomada: "checkmark.circle.fill"
         case .omitida: "xmark.circle"
         case .pospuesta: "clock.badge"
-        case .pendiente: "circle"
+        case .pendiente: isLate ? "exclamationmark.circle" : "circle"
         }
     }
 
     private var color: Color {
         switch slot.status {
-        case .tomada: Theme.body
+        case .tomada: Theme.good
         case .omitida: .secondary
         case .pospuesta: Theme.carbs
-        case .pendiente: isLate ? Theme.energy : .accentColor
+        case .pendiente: isLate ? Theme.caution : .accentColor
         }
     }
 
@@ -272,7 +272,7 @@ struct LowStockNote: View {
                 Image(systemName: "exclamationmark.triangle.fill").symbolEffect(.pulse, options: .nonRepeating)
             }
             .font(.footnote.weight(.medium))
-            .foregroundStyle(Theme.energy)
+            .foregroundStyle(Theme.caution)
         }
     }
 
@@ -298,7 +298,7 @@ private struct AsNeededRows: View {
                 HStack(spacing: 12) {
                     Image(systemName: count > 0 ? "checkmark.circle.fill" : "pills")
                         .font(.title2)
-                        .foregroundStyle(count > 0 ? Theme.body : .secondary)
+                        .foregroundStyle(count > 0 ? Theme.good : .secondary)
                         .contentTransition(.symbolEffect(.replace))
                         .frame(width: 34, height: 34)
                     VStack(alignment: .leading, spacing: 2) {

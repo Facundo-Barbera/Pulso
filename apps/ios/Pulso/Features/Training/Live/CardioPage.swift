@@ -287,7 +287,7 @@ private struct CardioDone: View {
                 if let km = log.distanceKm { StatTile(title: "Distancia", value: km.formatted(), unit: "km", systemImage: "point.topleft.down.to.point.bottomright.curvepath", tint: Theme.energy) }
             }
             HStack(spacing: 10) {
-                if let hr = log.avgHr { StatTile(title: "FC media", value: Int(hr).formatted(), unit: "ppm", systemImage: "heart.fill", tint: Theme.protein) }
+                if let hr = log.avgHr { StatTile(title: "FC media", value: Int(hr).formatted(), unit: "ppm", systemImage: "heart.fill", tint: Theme.heart) }
                 if let kcal = log.kcal { StatTile(title: "Energía", value: Int(kcal).formatted(), unit: "kcal", systemImage: "flame.fill", tint: Theme.energy) }
             }
             Button("Editar registro", systemImage: "pencil", action: edit)

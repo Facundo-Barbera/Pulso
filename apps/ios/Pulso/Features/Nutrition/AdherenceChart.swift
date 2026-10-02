@@ -1,8 +1,9 @@
 import Charts
 import SwiftUI
 
-/// Last 7 days of kcal against the target zone (the green band). A day counts when it is in
-/// zone: kcal inside it and protein at least its minimum. Touch a bar to read that day.
+/// Last 7 days of kcal against the target zone (the shaded band). A day counts when it is in
+/// zone: kcal inside it and protein at least its minimum; those wear a checkmark, so in and out
+/// of zone never rest on blue against orange alone. Touch a bar to read that day.
 struct AdherenceChart: View {
     let days: [NutritionSummary]
     @State private var selected: Date?
@@ -34,16 +35,22 @@ struct AdherenceChart: View {
             Chart {
                 if let zone, let high = zone.max {
                     RectangleMark(yStart: .value("Mínimo", zone.min ?? 0), yEnd: .value("Máximo", high))
-                        .foregroundStyle(Theme.body.opacity(0.14))
+                        .foregroundStyle(Theme.good.opacity(0.14))
                         .accessibilityLabel("Tu zona")
                 }
                 ForEach(days) { day in
                     let date = NutritionDate.date(day.date) ?? .now
-                    let color = Self.onTarget(day) ? Theme.body : Theme.energy
+                    let inZone = Self.onTarget(day)
+                    let color = inZone ? Theme.good : Theme.caution
                     BarMark(x: .value("Día", date, unit: .day), y: .value("kcal", day.totals.kcal), width: .ratio(0.55))
                         .foregroundStyle(LinearGradient(colors: [color, color.opacity(0.45)], startPoint: .top, endPoint: .bottom))
                         .clipShape(Capsule())
                         .opacity(selectedDay == nil || selectedDay?.date == day.date ? 1 : 0.35)
+                        .annotation(position: .top, spacing: 2) {
+                            if inZone && day.entries > 0 {
+                                Image(systemName: "checkmark").font(.system(size: 9, weight: .heavy)).foregroundStyle(Theme.good)
+                            }
+                        }
                 }
                 if let target {
                     RuleMark(y: .value("Objetivo", target))
@@ -68,13 +75,21 @@ struct AdherenceChart: View {
     private var readout: some View {
         if let day = selectedDay {
             VStack(alignment: .trailing, spacing: 0) {
-                Text("\(Int(day.totals.kcal)) kcal").font(.subheadline.weight(.bold)).monospacedDigit()
+                HStack(spacing: 4) {
+                    if target != nil {
+                        Image(systemName: Self.onTarget(day) ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                            .foregroundStyle(Self.onTarget(day) ? Theme.good : Theme.caution)
+                            .accessibilityLabel(Self.onTarget(day) ? "En tu zona" : "Fuera de tu zona")
+                    }
+                    Text("\(Int(day.totals.kcal)) kcal")
+                }
+                .font(.subheadline.weight(.bold)).monospacedDigit()
                 Text((NutritionDate.date(day.date) ?? .now).formatted(.dateTime.weekday(.wide).day()))
                     .font(.caption2).foregroundStyle(.secondary)
             }
         } else if target != nil {
             Text("\(days.filter(Self.onTarget).count) de \(days.count) en tu zona")
-                .font(.caption.weight(.semibold)).foregroundStyle(Theme.body)
+                .font(.caption.weight(.semibold)).foregroundStyle(Theme.good)
         }
     }
 }

@@ -171,7 +171,7 @@ private struct CodeField<Field: Hashable>: View {
             .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(failed ? Theme.protein : Color.accentColor, lineWidth: active || failed ? 2 : 0)
+                    .strokeBorder(failed ? Theme.caution : Color.accentColor, lineWidth: active || failed ? 2 : 0)
             }
     }
 }
@@ -189,21 +189,21 @@ private struct Shake: GeometryEffect {
     }
 }
 
-/// A refusal or a transport problem, in a soft red card the person can read calmly.
+/// A refusal or a transport problem, in a soft orange card the person can read calmly.
 private struct ErrorNote: View {
     let message: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.protein)
+                .foregroundStyle(Theme.caution)
                 .symbolEffect(.bounce, value: message)
             Text(LocalizedStringKey(message))
                 .font(.subheadline)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
-        .background(Theme.protein.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Theme.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 }

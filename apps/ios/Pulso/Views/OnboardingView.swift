@@ -138,7 +138,7 @@ private struct HealthStep: View {
                 .padding(.top, 24)
                 .padding(.horizontal, 32)
             if let failed {
-                Text(failed).font(.footnote).foregroundStyle(Theme.protein).multilineTextAlignment(.center).padding(.top, 8)
+                Label(failed, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(Theme.caution).multilineTextAlignment(.center).padding(.top, 8)
             }
         } actions: {
             PrimaryButton(title: "Permitir acceso", busy: asking) {

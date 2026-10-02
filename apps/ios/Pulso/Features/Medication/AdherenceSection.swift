@@ -111,6 +111,12 @@ private struct AdherenceHeatmap: View {
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .foregroundStyle(color(cell.day))
                 .opacity(selected == nil || selected?.id == cell.id ? 1 : 0.45)
+                // A missed day is marked, not only tinted.
+                .annotation(position: .overlay) {
+                    if cell.day.rate == 0 {
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .heavy)).foregroundStyle(Theme.caution)
+                    }
+                }
             }
             .chartYScale(domain: WeekdayNames.letters)
             .chartXAxis(.hidden)
@@ -166,16 +172,18 @@ private struct AdherenceHeatmap: View {
         HStack(spacing: 3) {
             Text("menos").font(.caption2).foregroundStyle(.tertiary)
             ForEach([0.0, 0.5, 1.0], id: \.self) { rate in
-                RoundedRectangle(cornerRadius: 3).fill(Theme.body.opacity(0.2 + rate * 0.8)).frame(width: 10, height: 10)
+                RoundedRectangle(cornerRadius: 3).fill(Theme.good.opacity(0.2 + rate * 0.8)).frame(width: 10, height: 10)
             }
             Text("más").font(.caption2).foregroundStyle(.tertiary)
+            Image(systemName: "xmark").font(.system(size: 8, weight: .heavy)).foregroundStyle(Theme.caution).padding(.leading, 4)
+            Text("ninguna").font(.caption2).foregroundStyle(.tertiary)
         }
     }
 
     private func color(_ day: AdherenceDay) -> Color {
         guard let rate = day.rate else { return Color.secondary.opacity(0.12) }
-        if rate == 0 { return Theme.energy.opacity(0.55) }
-        return Theme.body.opacity(0.2 + rate * 0.8)
+        if rate == 0 { return Theme.caution.opacity(0.3) }
+        return Theme.good.opacity(0.2 + rate * 0.8)
     }
 }
 
@@ -204,12 +212,12 @@ private struct PerMedicationBars: View {
                             .monospacedDigit()
                     }
                     Capsule()
-                        .fill(Theme.body.opacity(0.15))
+                        .fill(Theme.good.opacity(0.15))
                         .frame(height: 10)
                         .overlay(alignment: .leading) {
                             GeometryReader { geo in
                                 Capsule()
-                                    .fill(LinearGradient(colors: [Theme.body.opacity(0.5), Theme.body], startPoint: .leading, endPoint: .trailing))
+                                    .fill(LinearGradient(colors: [Theme.good.opacity(0.5), Theme.good], startPoint: .leading, endPoint: .trailing))
                                     .frame(width: rate > 0 ? max(geo.size.width * min(rate, 1), 10) : 0)
                             }
                         }

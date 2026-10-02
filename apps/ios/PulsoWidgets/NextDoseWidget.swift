@@ -93,7 +93,7 @@ struct NextDoseWidgetView: View {
     private func due(_ dose: WidgetSnapshot.Dose) -> some View {
         HStack(spacing: 4) {
             Text(isLate(dose) ? "Atrasada" : dose.due.formatted(date: .omitted, time: .shortened))
-                .foregroundStyle(isLate(dose) ? Theme.energy : .primary)
+                .foregroundStyle(isLate(dose) ? Theme.caution : .primary)
                 .layoutPriority(1)
             Text("· \(dose.doseText)").foregroundStyle(.secondary)
         }
@@ -120,7 +120,7 @@ struct NextDoseWidgetView: View {
 
     private var empty: some View {
         entry.paired
-            ? WidgetEmpty(systemImage: "checkmark.seal.fill", text: "Nada pendiente por hoy", color: Theme.body)
+            ? WidgetEmpty(systemImage: "checkmark.seal.fill", text: "Nada pendiente por hoy", color: Theme.good)
             : WidgetEmpty(systemImage: "pills.circle", text: WidgetStyle.unpaired, color: color)
     }
 }
