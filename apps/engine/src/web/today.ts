@@ -9,7 +9,7 @@ import { addDays, localDate } from "../daily/dates";
 import { listDailyMetrics, readinessFor } from "../daily/store";
 import { localNow } from "../medication/schedule";
 import { medicationDay } from "../medication/store";
-import { sleepOverview } from "../sleep/store";
+import { listSleepNights, sleepSummary } from "../sleep/store";
 import { volumeOf } from "../training/segments";
 import { listSessions } from "../training/store";
 import { listWorkouts } from "../workouts";
@@ -30,8 +30,12 @@ export type TodayOverview = {
   readiness: Readiness;
   /** today's row, if the phone synced one */
   today: DailyMetrics | null;
-  /** the last `TREND_DAYS` days, oldest first, one entry per day (null when nothing synced) */
-  trend: { date: string; metrics: DailyMetrics | null }[];
+  /**
+   * The last `TREND_DAYS` days, oldest first, one entry per day (null when nothing synced).
+   * `sleepMin` is minutes asleep the night ending that day: the sleep store's night when there is
+   * one (what the Sueño card and page show), else the phone's daily sum. Every sleep figure on Hoy reads it.
+   */
+  trend: { date: string; metrics: DailyMetrics | null; sleepMin: number | null }[];
   /** the newest night, if it ended today or yesterday */
   lastNight: SleepNight | null;
   sleep: SleepSummary;
@@ -82,13 +86,16 @@ export function todayOverview(now = new Date()): TodayOverview {
   const date = localDate(now);
   const from = addDays(date, -(TREND_DAYS - 1));
   const byDate = new Map(listDailyMetrics(from, date).map((d) => [d.date, d]));
+  // This window's own nights, not the overview's (which ends at the newest night stored, wherever that is).
+  const windowNights = listSleepNights(from, date);
+  const nights = new Map(windowNights.map((n) => [n.night, n.minutes.asleep]));
   const trend = Array.from({ length: TREND_DAYS }, (_, i) => {
     const day = addDays(from, i);
-    return { date: day, metrics: byDate.get(day) ?? null };
+    const metrics = byDate.get(day) ?? null;
+    return { date: day, metrics, sleepMin: nights.get(day) ?? metrics?.sleepMinutes ?? null };
   });
-  const sleep = sleepOverview(TREND_DAYS);
   // Nights come newest first, keyed by the morning they end on; show it only while it is still "last night".
-  const newest = sleep.nights[0] ?? null;
+  const newest = windowNights[0] ?? null;
   const lastNight = newest && newest.night >= addDays(date, -1) ? newest : null;
   const { time } = localNow(now);
   return {
@@ -97,7 +104,7 @@ export function todayOverview(now = new Date()): TodayOverview {
     today: byDate.get(date) ?? null,
     trend,
     lastNight,
-    sleep: sleep.summary,
+    sleep: sleepSummary(TREND_DAYS),
     brief: latestBrief("daily"),
     medication: medicationDay(date, time),
     recent: recentActivity(),
