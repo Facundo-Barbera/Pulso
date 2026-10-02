@@ -17,6 +17,8 @@ export type TurnState = {
   pendingBreak: boolean;
   sessionId?: string;
   error?: string;
+  /** The SDK summarized the context during this run. */
+  compacted?: boolean;
 };
 
 export const newTurnState = (): TurnState => ({ text: "", tools: [], toolIndex: new Map(), inputs: new Map(), pendingBreak: false });
@@ -99,6 +101,14 @@ export function translate(message: SDKMessage, state: TurnState): AgentStreamEve
       }
       return events;
     }
+    case "system":
+      // The SDK making room in the context: a status while it summarizes, a boundary once it has.
+      if (message.subtype === "status") return [{ type: "status", status: message.status === "compacting" ? "compacting" : null }];
+      if (message.subtype === "compact_boundary") {
+        state.compacted = true;
+        return [{ type: "compacted" }];
+      }
+      return [];
     case "result":
       if (message.subtype !== "success") state.error = message.errors.join("\n") || message.subtype;
       else if (message.is_error) state.error = message.result || "error";

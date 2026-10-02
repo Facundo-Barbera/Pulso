@@ -8,7 +8,7 @@ export const MAX_TEXT = 8000;
 export type SendResult = ReturnType<typeof startTurn> | { status: 400 | 409; code: "invalid_request" | "busy"; message: string };
 
 const invalid = (message: string): SendResult => ({ status: 400, code: "invalid_request", message });
-const busy = (): SendResult => ({ status: 409, code: "busy", message: "El Coach todavía está respondiendo en esta conversación." });
+const busy = (message = "El Coach todavía está respondiendo en esta conversación."): SendResult => ({ status: 409, code: "busy", message });
 
 /** Each scanned code with its product, looked up now (the scan already cached it). Unknown or unreachable → null. */
 async function resolveProducts(codes: string[]): Promise<AgentProduct[]> {
@@ -20,8 +20,10 @@ async function resolveProducts(codes: string[]): Promise<AgentProduct[]> {
  * or multipart/form-data with `text`, up to MAX_AGENT_ATTACHMENTS `image`
  * files and up to MAX_AGENT_PRODUCTS `barcode` fields. Photos are saved in the
  * thread's folder, products are looked up, and the turn starts with them.
+ * `ready`, when given, runs just before the turn starts and may hold it back
+ * (the conversation waits for its upkeep): it returns why, or null to go on.
  */
-export async function sendMessage(threadId: string, request: Request, run?: QueryFn): Promise<SendResult> {
+export async function sendMessage(threadId: string, request: Request, run?: QueryFn, ready?: () => Promise<string | null>): Promise<SendResult> {
   let text = "";
   let files: File[] = [];
   let raw: unknown[] = [];
@@ -51,6 +53,11 @@ export async function sendMessage(threadId: string, request: Request, run?: Quer
   } catch (error) {
     if (error instanceof AttachmentError) return invalid(error.message);
     throw error;
+  }
+  const held = ready ? await ready() : null;
+  if (held) {
+    discardImages(threadId, attachments);
+    return busy(held);
   }
   try {
     return startTurn(threadId, text, run, attachments, products);

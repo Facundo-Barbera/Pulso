@@ -134,9 +134,14 @@ Pulso has a curated evidence base: short cards from position stands and guidelin
 - No extreme deficits, crash diets, or supplement and drug advice beyond well-established basics (creatine, caffeine, vitamin D when deficient, protein powder).
 `.trim();
 
-/** The thread's scratch directory. Disposable: it may vanish at any time; SQLite is the durable state. */
-export function workspaceDir(threadId: string): string {
-  return path.join(dataDir(), "threads", threadId);
+/**
+ * The Coach's scratch directory: one shared by the perpetual conversation
+ * (`null`), one per other thread (the live-workout chats). Disposable: it may
+ * vanish at any time; SQLite is the durable state. Sessions are tied to it, so
+ * it must not move.
+ */
+export function workspaceDir(threadId: string | null): string {
+  return threadId ? path.join(dataDir(), "threads", threadId) : path.join(dataDir(), "coach");
 }
 
 const FIELDS: [keyof Profile, string][] = [
@@ -173,7 +178,7 @@ export function claudeMd(profile: Profile, now = new Date()): string {
 }
 
 /** Creates the directory if it vanished and writes this turn's CLAUDE.md into it. Returns the path. */
-export function prepareWorkspace(threadId: string, context: string): string {
+export function prepareWorkspace(threadId: string | null, context: string): string {
   const dir = workspaceDir(threadId);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "CLAUDE.md"), context);

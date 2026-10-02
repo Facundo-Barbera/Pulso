@@ -2,11 +2,13 @@ import { createSdkMcpServer, query, type HookCallback, type Options, type SDKUse
 import type { AgentAttachment, AgentMessage, AgentProduct, AgentStreamEvent } from "@pulso/contract";
 import { describeProduct } from "../nutrition/portion";
 import { readImageBase64 } from "./attachments";
+import { contextMessages, contextOfThread, recordCompaction, setContextSession } from "./conversation";
 import { hasOutput, newTurnState, rememberBefore, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
 import { childEnv, claudeExecutable, providerEnv } from "./provider";
 import { TOOLS } from "./registry";
 import { addMessage, failStreamingMessages, listMessages, sdkSessionOf, setSdkSession, updateMessage } from "./threads";
+import { sdkConfigDir, stripImages } from "./transcripts";
 import { liveCoachMode } from "../training/live-coach";
 import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
 
@@ -35,6 +37,8 @@ const RECAP_MESSAGES = 20;
 const RECAP_CHARS = 1500;
 const STOPPED = "Detuviste la respuesta.";
 const BUILTIN_TOOLS = ["Read", "Write", "WebSearch", "WebFetch"];
+/** Tokens of context before the SDK summarizes it by itself (its autoCompactWindow; the model's own window caps it). */
+export const AUTO_COMPACT_WINDOW = 200_000;
 
 // Survives Next's dev reloads, like the db connection.
 const g = globalThis as { __pulso_turns__?: Map<string, Turn> };
@@ -91,8 +95,12 @@ const SNAPSHOT_HOOK = { matcher: "mcp__pulso__.*", hooks: [snapshot] };
  * A clean start: the agent knows only the conversation, the profile and the
  * pulso tools. No settings, hooks, plugins, skills, CLAUDE.md files or memory
  * from this Mac are loaded; the thread's own CLAUDE.md goes in the system prompt.
+ * Transcripts live in Pulso's data dir (./transcripts.ts) and the context is
+ * summarized by the SDK as it nears AUTO_COMPACT_WINDOW tokens.
  */
 export function agentOptions(cwd: string, context: string, resume: string | undefined, abortController: AbortController, mode?: TurnMode): Options {
+  // childEnv drops CLAUDE_*, but a DISABLE_*COMPACT left in the engine's env would still switch compaction off.
+  const { DISABLE_AUTO_COMPACT: _auto, DISABLE_COMPACT: _compact, ...env } = childEnv(providerEnv());
   const base: Options = {
     cwd,
     resume,
@@ -100,6 +108,8 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     model: process.env.PULSO_AGENT_MODEL || undefined,
     systemPrompt: { type: "preset", preset: "claude_code", append: `${PERSONA}\n\n${context}` },
     settingSources: [],
+    // The flag-settings layer applies even with no setting sources. Pulso prunes transcripts itself, so the CLI's sweep is pushed out of the way.
+    settings: { autoCompactEnabled: true, autoCompactWindow: AUTO_COMPACT_WINDOW, cleanupPeriodDays: 3650 },
     skills: [],
     strictMcpConfig: true,
     mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: TOOLS }) },
@@ -114,7 +124,8 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     // Like Telar: the installed CLI and a clean env with the configured provider (./provider.ts).
     pathToClaudeCodeExecutable: claudeExecutable(),
     env: {
-      ...childEnv(providerEnv()),
+      ...env,
+      CLAUDE_CONFIG_DIR: sdkConfigDir(),
       CLAUDE_AGENT_SDK_CLIENT_APP: "pulso-coach/0.0.0",
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
@@ -133,22 +144,57 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
   };
 }
 
-/** The prompt for a fresh SDK session when the old one could not be resumed. */
-export function recapPrompt(history: AgentMessage[], text: string): string {
+/**
+ * The prompt for a fresh SDK session: the context's own messages when its old
+ * session could not be resumed, and the digest of the old conversations when
+ * the context starts from one.
+ */
+export function recapPrompt(history: AgentMessage[], text: string, seed?: string | null): string {
   const photos = (m: AgentMessage) => (m.attachments.length ? `[${m.attachments.length > 1 ? `${m.attachments.length} fotos` : "foto"}] ` : "");
   const scanned = (m: AgentMessage) => (m.products ?? []).map((p) => `[producto ${p.barcode}${p.product ? `: ${p.product.name}` : ""}] `).join("");
   const lines = history
     .filter((m) => m.text.trim() || m.attachments.length || m.products?.length)
     .slice(-RECAP_MESSAGES)
     .map((m) => `${m.role === "user" ? "Persona" : "Coach"}: ${photos(m)}${scanned(m)}${m.text.length > RECAP_CHARS ? `${m.text.slice(0, RECAP_CHARS)}…` : m.text}`);
-  if (!lines.length) return text;
+  if (!lines.length && !seed) return text;
   return [
-    "(Context: this conversation continues from an earlier session whose memory was lost. These are its most recent messages, oldest first. Do not mention this recap.)",
-    "<recap>",
-    lines.join("\n\n"),
-    "</recap>",
-    "",
+    ...(seed
+      ? [
+          "(Context: a summary of your earlier conversations with this person, from before the app kept a single conversation. Treat it as what you remember; do not mention it unless they ask.)",
+          "<earlier_conversations>",
+          seed,
+          "</earlier_conversations>",
+          "",
+        ]
+      : []),
+    ...(lines.length
+      ? [
+          "(Context: this conversation continues from an earlier session whose memory was lost. These are its most recent messages, oldest first. Do not mention this recap.)",
+          "<recap>",
+          lines.join("\n\n"),
+          "</recap>",
+          "",
+        ]
+      : []),
     "The person's new message:",
+    text,
+  ].join("\n");
+}
+
+/**
+ * A brief or review the app put in the conversation after the last turn is not
+ * in the SDK session: it goes with the person's message, since they may be
+ * answering it.
+ */
+export function withQuoted(history: AgentMessage[], text: string): string {
+  const lastUser = history.findLastIndex((m) => m.role === "user");
+  const quoted = history.slice(lastUser + 1).filter((m) => m.role === "assistant" && m.source && m.text.trim());
+  if (!quoted.length) return text;
+  return [
+    "(Since your last reply, the app showed the person this from you; their message may answer it.)",
+    ...quoted.map((m) => `<${m.source!.kind} title="${m.source!.title}">\n${m.text}\n</${m.source!.kind}>`),
+    "",
+    "The person's message:",
     text,
   ].join("\n");
 }
@@ -198,17 +244,25 @@ export function startTurn(
   products: AgentProduct[] = [],
 ): { turn: Turn; done: Promise<void> } {
   if (turns().has(threadId)) throw new Error("busy");
-  const history = listMessages(threadId);
+  // In the conversation a turn sees only its context: its session, and its messages for a recap.
+  const context = contextOfThread(threadId);
+  const history = context ? contextMessages(context.id) : listMessages(threadId);
   const user = addMessage(threadId, "user", text, "done", attachments, products);
   const assistant = addMessage(threadId, "assistant", "", "streaming");
   const turn: Turn = { threadId, messageId: assistant.id, events: [], listeners: new Set(), abortController: new AbortController(), stopped: false };
   turns().set(threadId, turn);
   emit(turn, { type: "start", messageId: assistant.id, userMessageId: user.id });
-  const done = runTurn(turn, history, withProducts(text, products), attachments, run).finally(() => turns().delete(threadId));
+  const slot: SessionSlot = context
+    ? { get: () => context.sdk_session_id, set: (id) => setContextSession(context.id, id), seed: context.seed, compacted: () => recordCompaction(context.id, Date.now(), user.createdAt) }
+    : { get: () => sdkSessionOf(threadId), set: (id) => setSdkSession(threadId, id), seed: null, compacted: () => {} };
+  const done = runTurn(turn, history, withProducts(text, products), attachments, run, slot, !!context).finally(() => turns().delete(threadId));
   return { turn, done };
 }
 
-async function runTurn(turn: Turn, history: AgentMessage[], text: string, attachments: AgentAttachment[], run: QueryFn): Promise<void> {
+/** Where a turn's SDK session lives: the conversation's active context, or the thread itself. */
+type SessionSlot = { get: () => string | null; set: (id: string | null) => void; seed: string | null; compacted: () => void };
+
+async function runTurn(turn: Turn, history: AgentMessage[], text: string, attachments: AgentAttachment[], run: QueryFn, slot: SessionSlot, shared: boolean): Promise<void> {
   let state = newTurnState();
   let lastSave = 0;
   const save = (force: boolean) => {
@@ -224,13 +278,14 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, attach
     state = newTurnState();
     const mode = liveCoachMode(turn.threadId);
     const context = mode?.context ?? claudeMd(getProfile());
-    const cwd = prepareWorkspace(turn.threadId, context);
+    const cwd = prepareWorkspace(shared ? null : turn.threadId, context);
     try {
       const prompt = userPrompt(turn.threadId, promptText, attachments);
       for await (const message of run({ prompt, options: agentOptions(cwd, context, resume, abortController, mode) })) {
         const known = state.sessionId;
         const events = translate(message, state);
-        if (state.sessionId && state.sessionId !== known) setSdkSession(turn.threadId, state.sessionId);
+        if (state.sessionId && state.sessionId !== known) slot.set(state.sessionId);
+        if (events.some((e) => e.type === "compacted")) slot.compacted();
         for (const event of events) emit(turn, event);
         if (events.length) save(events.some((e) => e.type === "tool"));
       }
@@ -240,13 +295,15 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, attach
   };
 
   try {
-    const resume = sdkSessionOf(turn.threadId) ?? undefined;
-    await attempt(resume ? text : recapPrompt(history, text), resume);
+    const resume = slot.get() ?? undefined;
+    // The photos of the last turn have been read: they leave the transcript before it goes to the model again.
+    if (resume && history.findLast((m) => m.role === "user")?.attachments.length) stripImages(resume);
+    await attempt(resume ? withQuoted(history, text) : recapPrompt(history, text, slot.seed), resume);
     // The SDK session is gone (or broken) and nothing reached the phone: start over from SQLite.
     if (resume && state.error && !hasOutput(state) && !abortController.signal.aborted) {
       console.warn(`[agent] resume of ${resume} failed (${state.error}); starting a fresh session`);
-      setSdkSession(turn.threadId, null);
-      await attempt(recapPrompt(history, text), undefined);
+      slot.set(null);
+      await attempt(recapPrompt(history, text, slot.seed), undefined);
     }
   } finally {
     clearTimeout(timer);
