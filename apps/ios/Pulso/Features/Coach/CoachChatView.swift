@@ -63,6 +63,7 @@ struct CoachChatView: View {
             .padding(.top, 12)
             .padding(.bottom, 16)
             .animation(.snappy, value: store.messages.count)
+            .environment(\.coachUndo, CoachUndo { [store] message, index in await store.undo(message, index: index) })
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
@@ -239,12 +240,15 @@ private struct AssistantRow: View {
 
     private var streaming: Bool { message.status == .streaming }
     private var thinking: Bool { streaming && message.text.isEmpty && !message.tools.contains { $0.status == .running } }
-    /// Tools that made something get a card; the rest show as activity chips.
-    private var activity: [AgentToolUse] { message.tools.filter { $0.result == nil || $0.status != .done } }
-    private var results: [AgentToolResult] { message.tools.compactMap { $0.status == .done ? $0.result : nil } }
+    /// Lookups that finished fold into "Revisó N cosas"; what is running or failed is a chip; what changed something is a card.
+    private var checked: [AgentToolUse] { message.tools.filter { $0.status == .done && !$0.isAction } }
+    private var activity: [AgentToolUse] { message.tools.filter { $0.status != .done || ($0.isAction && $0.result == nil) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if !checked.isEmpty {
+                CoachCheckedGroup(tools: checked).transition(.blurReplace)
+            }
             if !activity.isEmpty {
                 GlassEffectContainer(spacing: 6) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -266,9 +270,7 @@ private struct AssistantRow: View {
                     .textSelection(.enabled)
                     .contextMenu { MessageActions(text: message.text) }
             }
-            ForEach(Array(results.enumerated()), id: \.offset) { _, result in
-                CoachResultCard(result: result).transition(.scale(scale: 0.95).combined(with: .opacity))
-            }
+            CoachActionCards(message: message)
             if message.status == .error {
                 Label(message.error ?? "El Coach no pudo responder.", systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
