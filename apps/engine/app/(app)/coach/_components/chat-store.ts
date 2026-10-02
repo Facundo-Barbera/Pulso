@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentMessage, AgentProduct, AgentThread, CoachBrief } from "@pulso/contract";
+import type { AgentMessage, AgentProduct, AgentThread, AgentUndoResponse, CoachBrief } from "@pulso/contract";
 import { useSyncExternalStore } from "react";
 import type { CoachThreadView } from "@/src/web/coach";
 import { rememberLocal, type Photo } from "./photos";
@@ -58,6 +58,8 @@ export class Chat {
   private pendingAttach = false;
   /** Bumped by `forget`: a follow loop from before stops touching state. */
   private generation = 0;
+  /** Replies written in this browser keep a local id (stable rows); the Mac's id, from `start`, is what undo names. */
+  private serverIds = new Map<string, string>();
 
   constructor(threadId: string | null, replyTo: CoachBrief | null = null) {
     this.state = {
@@ -117,8 +119,17 @@ export class Chat {
     this.start();
   }
 
+  /** The Mac's messages with this browser's local ids kept (stable rows); the Mac's id behind each is remembered for undo. */
+  private keep(fromMac: AgentMessage[]): AgentMessage[] {
+    const kept = keepIds(this.state.messages, fromMac);
+    kept.forEach((m, i) => {
+      if (fromMac[i] && m.id !== fromMac[i].id) this.serverIds.set(m.id, fromMac[i].id);
+    });
+    return kept;
+  }
+
   private take(view: CoachThreadView, silent = false) {
-    const saved = keepIds(this.state.messages, view.messages);
+    const saved = this.keep(view.messages);
     const last = saved.at(-1);
     const attach = view.running && last?.role === "assistant" && last.status === "streaming";
     // The re-attached stream replays the turn from its start.
@@ -166,6 +177,18 @@ export class Chat {
     if (response && !response.ok && response.status !== 404) this.set({ error: await problem(response) });
   }
 
+  /** Deshacer on an action card: the Mac puts the change back and the card shows it undone. Null, or what went wrong. */
+  async undo(message: AgentMessage, index: number): Promise<string | null> {
+    const id = this.state.threadId;
+    if (!id) return "Esta conversación todavía no está en la Mac.";
+    const messageId = this.serverIds.get(message.id) ?? message.id;
+    const response = await fetch(`${API}/threads/${id}/messages/${messageId}/tools/${index}/undo`, { method: "POST" }).catch(() => null);
+    if (!response?.ok) return response ? await problem(response) : "No se pudo hablar con la Mac.";
+    const saved = ((await response.json()) as AgentUndoResponse).message;
+    this.set((s) => ({ messages: s.messages.map((m) => (m.id === message.id ? { ...saved, id: m.id } : m)) }));
+    return null;
+  }
+
   /** Nothing reached the Mac: take the two placeholders back. */
   private failSend(message: string) {
     this.set((s) => ({ streaming: false, messages: s.messages.slice(0, -2), error: message }));
@@ -198,6 +221,10 @@ export class Chat {
         try {
           for await (const event of readEvents(response.body)) {
             if (!current()) return;
+            if (event.type === "start") {
+              const last = this.state.messages.at(-1);
+              if (last?.role === "assistant") this.serverIds.set(last.id, event.messageId);
+            }
             this.patchLast((m) => applyEvent(m, event));
             // The first message titles the thread on the Mac.
             if (event.type === "start") void this.refreshTitle();
@@ -216,7 +243,7 @@ export class Chat {
         continue;
       }
       const view = (await detail.json()) as CoachThreadView;
-      const saved = keepIds(this.state.messages, view.messages);
+      const saved = this.keep(view.messages);
       const last = saved.at(-1);
       if (!view.running || last?.status !== "streaming") {
         this.set({ title: view.thread.title, messages: saved });

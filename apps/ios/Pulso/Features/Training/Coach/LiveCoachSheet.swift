@@ -70,6 +70,7 @@ private struct LiveCoachThread: View {
         LiveCoachChat(messages: store.messages, streaming: store.streaming, error: store.error, currentExercise: currentExercise) { text in
             Task { await store.send(text) }
         }
+        .environment(\.coachUndo, CoachUndo { [store] message, index in await store.undo(message, index: index) })
         // As each edit lands, and once more at the turn's end for any the stream didn't close.
         .onChange(of: store.sessionEdits) { report() }
         .onChange(of: store.finishedCount) { report() }
@@ -229,6 +230,13 @@ struct LiveCoachChat: View {
 private struct LiveMessageRow: View {
     let message: AgentMessage
 
+    /// The message without its session-edit cards (indices kept, so Deshacer still names the right tool).
+    private var liveActions: AgentMessage {
+        var copy = message
+        for i in copy.tools.indices where copy.tools[i].name == LiveCoachTools.editSession { copy.tools[i].result = nil }
+        return copy
+    }
+
     private var thinking: Bool {
         message.status == .streaming && message.text.isEmpty && !message.tools.contains { $0.status == .running }
     }
@@ -262,6 +270,8 @@ private struct LiveMessageRow: View {
                             .font(.callout)
                             .textSelection(.enabled)
                     }
+                    // The session edit has its own chip and the live screen's undo; anything else it changed gets a compact card.
+                    CoachActionCards(message: liveActions, compact: true)
                     if message.status == .error {
                         Label(message.error ?? "El Coach no pudo responder.", systemImage: "exclamationmark.triangle.fill")
                             .font(.footnote)

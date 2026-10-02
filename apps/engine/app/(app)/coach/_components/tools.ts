@@ -1,4 +1,4 @@
-import type { AgentResultTab } from "@pulso/contract";
+import type { AgentResultPlace, AgentResultTab, AgentToolResult, AgentToolUse } from "@pulso/contract";
 import { Apple, BookOpen, CalendarDays, Dumbbell, FileText, Globe, HeartPulse, Moon, NotebookPen, PersonStanding, Pill, Search, ShoppingCart, Sparkles, Sun, UserRound, type LucideIcon } from "lucide-react";
 
 export type ToolLook = { label: string; icon: LucideIcon; color: string };
@@ -37,10 +37,19 @@ export function toolLook(name: string): ToolLook {
   return { label: writes ? "Guardando cambios" : "Consultando tus datos", icon: FileText, color: "var(--primary)" };
 }
 
+export type ResultPlace = { name: string; href: string; icon: LucideIcon; color: string };
+
 /** Where a tool's result lives in the web app. */
-export const RESULT_PLACES: Record<AgentResultTab, { name: string; href: string; icon: LucideIcon; color: string }> = {
+export const RESULT_PLACES: Record<AgentResultTab | AgentResultPlace, ResultPlace> = {
   hoy: { name: "Hoy", href: "/", icon: Sun, color: "var(--domain-energy)" },
   entreno: { name: "Entreno", href: "/entreno", icon: Dumbbell, color: "var(--domain-training)" },
   dieta: { name: "Dieta", href: "/dieta", icon: Apple, color: "var(--domain-carbs)" },
   cuerpo: { name: "Cuerpo", href: "/cuerpo", icon: PersonStanding, color: "var(--domain-body)" },
+  medicacion: { name: "Medicación", href: "/medicacion", icon: Pill, color: "var(--domain-medication)" },
+  perfil: { name: "Perfil", href: "/cuerpo#perfil", icon: UserRound, color: "var(--domain-body)" },
 };
+
+export const placeOf = (result: AgentToolResult): ResultPlace => RESULT_PLACES[result.place ?? result.tab] ?? RESULT_PLACES.hoy;
+
+/** A tool that changed something: it gets an action card, not a quiet chip. Older messages have no `access`. */
+export const isAction = (tool: AgentToolUse) => tool.access === "write" || !!tool.result;

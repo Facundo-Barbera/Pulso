@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { AgentMessage, AgentStreamEvent } from "@pulso/contract";
 import { applyEvent, keepIds, readEvents } from "./stream";
-import { toolLook } from "./tools";
+import { isAction, placeOf, toolLook } from "./tools";
 
 function body(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -65,4 +65,23 @@ test("a re-read thread takes the server's ids where the rows don't line up", () 
   expect(keepIds([message("m1", "user"), message("local-a", "assistant")], [message("m1", "user")]).map((m) => m.id)).toEqual(["m1"]);
   expect(keepIds([message("local-a", "assistant")], [message("m1", "user"), message("m2", "assistant")]).map((m) => m.id)).toEqual(["m1", "m2"]);
   expect(keepIds([], [message("m1", "user")]).map((m) => m.id)).toEqual(["m1"]);
+});
+
+test("tools keep whether they read or wrote, and the card's place wins over its tab", () => {
+  const start: AgentMessage = { id: "a", threadId: "t", role: "assistant", text: "", attachments: [], products: [], tools: [], status: "streaming", error: null, createdAt: 0 };
+  const result = { title: "Perfil actualizado", detail: null, tab: "cuerpo" as const, place: "perfil" as const, undo: "available" as const };
+  const end = [
+    { type: "tool", name: "get_profile", status: "running", access: "read" },
+    { type: "tool", name: "get_profile", status: "done", access: "read" },
+    { type: "tool", name: "update_profile", status: "running", access: "write" },
+    { type: "tool", name: "update_profile", status: "done", access: "write", result },
+  ].reduce((m, e) => applyEvent(m, e as AgentStreamEvent), start);
+  expect(end.tools).toEqual([
+    { name: "get_profile", status: "done", access: "read" },
+    { name: "update_profile", status: "done", access: "write", result },
+  ]);
+  expect(end.tools.map(isAction)).toEqual([false, true]);
+  // Older messages have no access: a card still means it changed something.
+  expect(isAction({ name: "log_meal", status: "done", result })).toBe(true);
+  expect(placeOf(result).href).toBe("/cuerpo#perfil");
 });

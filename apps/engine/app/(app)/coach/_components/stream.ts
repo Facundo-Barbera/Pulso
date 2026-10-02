@@ -42,8 +42,9 @@ export function applyEvent(message: AgentMessage, event: AgentStreamEvent): Agen
     case "tool": {
       const tools = [...message.tools];
       const running = tools.findLastIndex((t) => t.name === event.name && t.status === "running");
-      if (event.status === "running") tools.push({ name: event.name, status: "running" });
-      else if (running >= 0) tools[running] = { name: event.name, status: event.status, ...(event.result ? { result: event.result } : {}) };
+      const access = event.access ? { access: event.access } : {};
+      if (event.status === "running") tools.push({ name: event.name, status: "running", ...access });
+      else if (running >= 0) tools[running] = { ...tools[running], name: event.name, status: event.status, ...access, ...(event.result ? { result: event.result } : {}) };
       return { ...message, tools };
     }
     case "done":

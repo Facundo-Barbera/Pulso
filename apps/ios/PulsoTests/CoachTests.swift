@@ -25,6 +25,25 @@ final class CoachTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(AgentToolUse.self, from: Data(#"{"name":"list_meals","status":"done"}"#.utf8)).result)
     }
 
+    func testActionCardsCarryLinesPlaceAndUndo() throws {
+        let json = #"{"type":"tool","name":"update_profile","status":"done","access":"write","result":{"title":"Perfil actualizado","detail":"Objetivo: Bajar de peso → Bajar 10 kg","tab":"cuerpo","place":"perfil","lines":[{"label":"Objetivo","before":"Bajar de peso","value":"Bajar 10 kg"}],"undo":"available"}}"#
+        guard case let .tool(_, _, access, result?) = try event(json) else { return XCTFail("no card") }
+        XCTAssertEqual(access, "write")
+        XCTAssertEqual(result.shownLines, [AgentActionLine(label: "Objetivo", before: "Bajar de peso", value: "Bajar 10 kg")])
+        XCTAssertTrue(result.undoable)
+        XCTAssertEqual(CoachResultPlace(result: result).name, "Perfil")
+        XCTAssertFalse(CoachResultPlace(result: result).opens)
+        // An older card has only its detail, which becomes its one line.
+        let old = AgentToolResult(title: "Comida registrada", detail: "Avena · 350 kcal", tab: "dieta")
+        XCTAssertEqual(old.shownLines.map(\.value), ["Avena · 350 kcal"])
+        XCTAssertFalse(old.undoable)
+        // Writes are actions even without a card yet; older tools without access count by their card.
+        XCTAssertTrue(AgentToolUse(name: "log_meal", status: .running, access: "write").isAction)
+        XCTAssertFalse(AgentToolUse(name: "list_meals", status: .done, access: "read").isAction)
+        XCTAssertTrue(AgentToolUse(name: "log_meal", status: .done, result: old).isAction)
+        XCTAssertEqual(CoachResultPlace(result: AgentToolResult(title: "", detail: nil, tab: "hoy", place: "medicacion")).name, "Medicación")
+    }
+
     func testResultCardsNameTheirTab() {
         XCTAssertEqual(CoachResultPlace(tab: "entreno").name, "Entreno")
         XCTAssertEqual(CoachResultPlace(tab: "dieta").name, "Dieta")

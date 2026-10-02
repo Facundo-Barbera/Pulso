@@ -89,7 +89,9 @@ function ChatView({ chat, brief, onReply }: { chat: Chat; brief?: CoachBrief | n
           {fresh ? (
             <Welcome brief={brief ?? null} onPick={(text) => void chat.send(text)} onReply={onReply} />
           ) : (
-            state.messages.map((message, i) => <MessageRow key={message.id} message={message} last={i === state.messages.length - 1} />)
+            state.messages.map((message, i) => (
+              <MessageRow key={message.id} message={message} last={i === state.messages.length - 1} onUndo={(index) => chat.undo(message, index)} />
+            ))
           )}
           {state.error && (
             <p className="text-warning bg-warning/10 flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-[13.5px]" role="alert">

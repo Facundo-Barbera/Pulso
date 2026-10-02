@@ -9,19 +9,43 @@ struct AgentThread: Codable, Identifiable, Equatable, Hashable {
     var preview: String?
 }
 
-/// What a tool created or changed (`AgentToolResult`), shown as a card that opens its tab.
+/// One line of an action card (`AgentActionLine`): "Objetivo: Bajar de peso → Bajar 10 kg de grasa".
+struct AgentActionLine: Codable, Equatable {
+    var label: String?
+    /// What it was, when the change replaced a value.
+    var before: String?
+    var value: String
+}
+
+/// What a tool created or changed (`AgentToolResult`), shown as an action card.
 struct AgentToolResult: Codable, Equatable {
     var title: String
     var detail: String?
     /// "hoy", "entreno", "dieta" or "cuerpo".
     var tab: String
+    /// "medicacion" or "perfil": a screen inside `tab`, when there is one.
+    var place: String? = nil
+    /// What changed, before → after where it applies. Missing on older messages.
+    var lines: [AgentActionLine]? = nil
+    /// "available" while Deshacer works, "done" once undone; nil when it can't be undone.
+    var undo: String? = nil
+
+    var undoable: Bool { undo == "available" }
+    var undone: Bool { undo == "done" }
+    /// The lines, or the old one-line detail.
+    var shownLines: [AgentActionLine] { lines ?? detail.map { [AgentActionLine(value: $0)] } ?? [] }
 }
 
 struct AgentToolUse: Codable, Equatable {
     enum Status: String, Codable { case running, done, error }
     var name: String
     var status: Status
+    /// "write" for tools that change the person's data, "read" for lookups. Missing on older messages.
+    var access: String? = nil
     var result: AgentToolResult? = nil
+
+    /// It changed something: a card, not a quiet chip.
+    var isAction: Bool { access == "write" || result != nil }
 }
 
 /// A photo the person sent (`AgentAttachment`): a JPEG on the Mac, at most 1600 px on its long edge.
@@ -80,12 +104,12 @@ extension AgentMessage {
 enum AgentStreamEvent: Decodable, Equatable {
     case start(messageId: String, userMessageId: String)
     case text(String)
-    case tool(name: String, status: AgentToolUse.Status, result: AgentToolResult? = nil)
+    case tool(name: String, status: AgentToolUse.Status, access: String? = nil, result: AgentToolResult? = nil)
     case done(messageId: String)
     case error(String)
     case unknown
 
-    private enum Keys: String, CodingKey { case type, messageId, userMessageId, delta, name, status, result, message }
+    private enum Keys: String, CodingKey { case type, messageId, userMessageId, delta, name, status, access, result, message }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -94,7 +118,12 @@ enum AgentStreamEvent: Decodable, Equatable {
         case "text": self = .text(try c.decode(String.self, forKey: .delta))
         case "tool":
             // An unreadable result only loses the card, never the event.
-            self = .tool(name: try c.decode(String.self, forKey: .name), status: try c.decode(AgentToolUse.Status.self, forKey: .status), result: try? c.decodeIfPresent(AgentToolResult.self, forKey: .result))
+            self = .tool(
+                name: try c.decode(String.self, forKey: .name),
+                status: try c.decode(AgentToolUse.Status.self, forKey: .status),
+                access: try? c.decodeIfPresent(String.self, forKey: .access),
+                result: try? c.decodeIfPresent(AgentToolResult.self, forKey: .result)
+            )
         case "done": self = .done(messageId: try c.decode(String.self, forKey: .messageId))
         case "error": self = .error(try c.decode(String.self, forKey: .message))
         default: self = .unknown
@@ -133,6 +162,13 @@ extension PulsoAPI {
 
     func agentThread(_ id: String) async throws -> AgentThreadDetail {
         try await call("api/mobile/agent/threads/\(id)", method: "GET")
+    }
+
+    /// Deshacer on an action card: tool `index` of the message. Returns the message with that card undone.
+    func undoAgentAction(threadId: String, messageId: String, index: Int) async throws -> AgentMessage {
+        struct Response: Decodable { var message: AgentMessage }
+        let response: Response = try await call("api/mobile/agent/threads/\(threadId)/messages/\(messageId)/tools/\(index)/undo", method: "POST")
+        return response.message
     }
 
     func deleteAgentThread(_ id: String) async throws {

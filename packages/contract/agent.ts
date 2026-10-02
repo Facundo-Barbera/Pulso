@@ -13,19 +13,45 @@ export type AgentThread = {
 /** The app tab where something a tool created lives. */
 export type AgentResultTab = "hoy" | "entreno" | "dieta" | "cuerpo";
 
-/** What a tool that changed the person's data made, for a tappable card in the chat. In Spanish. */
+/** A screen inside a tab that an action card opens: Medicación (from Hoy) or the profile (in Cuerpo). */
+export type AgentResultPlace = "medicacion" | "perfil";
+
+/** One line of an action card, e.g. label "Objetivo", before "Bajar de peso", value "Bajar 10 kg de grasa". */
+export type AgentActionLine = {
+  label: string | null;
+  /** What it was, when the change replaced a value. */
+  before: string | null;
+  value: string;
+};
+
+/**
+ * The action card for a tool that changed the person's data: what changed, in
+ * Spanish, where it lives and whether it can be undone.
+ */
 export type AgentToolResult = {
-  /** e.g. "Programa creado". */
+  /** e.g. "Perfil actualizado". */
   title: string;
-  /** e.g. "Torso/Pierna · 4 días". */
+  /** The lines in one string, for clients that predate `lines`. */
   detail: string | null;
+  /** The tab it opens. */
   tab: AgentResultTab;
+  /** A screen inside `tab` to open instead, when there is one. */
+  place?: AgentResultPlace;
+  /** 1–5 lines saying what changed, before → after where it applies. */
+  lines?: AgentActionLine[];
+  /**
+   * `available`: Deshacer works (POST `…/threads/:id/messages/:messageId/tools/:index/undo`,
+   * `index` into the message's `tools`); `done`: it was undone. Absent: it can't be.
+   */
+  undo?: "available" | "done";
 };
 
 export type AgentToolUse = {
   /** Tool name without the `mcp__pulso__` prefix, e.g. `list_workouts`, `WebSearch`. */
   name: string;
   status: "running" | "done" | "error";
+  /** `write` when the tool changes the person's data (an action card), `read` for lookups (a quiet chip). Missing on older messages. */
+  access?: "read" | "write";
   /** Only on `done` tools that created or changed something the app shows. */
   result?: AgentToolResult;
 };
@@ -70,6 +96,9 @@ export type AgentMessage = {
 
 export type AgentThreadDetail = { thread: AgentThread; messages: AgentMessage[] };
 
+/** POST `…/messages/:messageId/tools/:index/undo`: the message again, that tool's card now `undo: "done"`. */
+export type AgentUndoResponse = { message: AgentMessage };
+
 /**
  * One line of the NDJSON stream for a turn. `start` comes first and names the
  * assistant message being written, so a client that drops can re-read it from
@@ -78,7 +107,7 @@ export type AgentThreadDetail = { thread: AgentThread; messages: AgentMessage[] 
 export type AgentStreamEvent =
   | { type: "start"; messageId: string; userMessageId: string }
   | { type: "text"; delta: string }
-  | { type: "tool"; name: string; status: AgentToolUse["status"]; result?: AgentToolResult }
+  | { type: "tool"; name: string; status: AgentToolUse["status"]; access?: AgentToolUse["access"]; result?: AgentToolResult }
   | { type: "done"; messageId: string }
   | { type: "error"; message: string };
 

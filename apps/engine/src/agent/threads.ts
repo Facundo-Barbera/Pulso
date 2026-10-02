@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { AgentAttachment, AgentMessage, AgentMessageStatus, AgentProduct, AgentThread, AgentToolUse, FoodProduct } from "@pulso/contract";
+import type { AgentAttachment, AgentMessage, AgentMessageStatus, AgentProduct, AgentThread, FoodProduct } from "@pulso/contract";
 import { db } from "../db";
+import type { StoredTool } from "./events";
 
 export const DEFAULT_TITLE = "Nueva conversación";
 
@@ -33,7 +34,8 @@ const toMessage = (row: MessageRow, attachments: AgentAttachment[] = [], product
   text: row.text,
   attachments,
   products,
-  tools: JSON.parse(row.tools) as AgentToolUse[],
+  // How to undo stays in the engine.
+  tools: (JSON.parse(row.tools) as StoredTool[]).map(({ revert: _revert, ...tool }) => tool),
   status: row.status,
   error: row.error,
   createdAt: row.created_at,
@@ -183,7 +185,17 @@ export function addMessage(
   return getMessage(id)!;
 }
 
-export function updateMessage(id: string, patch: { text: string; tools: AgentToolUse[]; status: AgentMessageStatus; error?: string | null }): void {
+/** A message's tools as saved, with how to undo each. */
+export function storedTools(messageId: string): StoredTool[] {
+  const row = db().query<{ tools: string }, [string]>("SELECT tools FROM agent_messages WHERE id = ?").get(messageId);
+  return row ? (JSON.parse(row.tools) as StoredTool[]) : [];
+}
+
+export function setTools(messageId: string, tools: StoredTool[]): void {
+  db().query("UPDATE agent_messages SET tools = ? WHERE id = ?").run(JSON.stringify(tools), messageId);
+}
+
+export function updateMessage(id: string, patch: { text: string; tools: StoredTool[]; status: AgentMessageStatus; error?: string | null }): void {
   db()
     .query("UPDATE agent_messages SET text = ?, tools = ?, status = ?, error = ? WHERE id = ?")
     .run(patch.text, JSON.stringify(patch.tools), patch.status, patch.error ?? null, id);

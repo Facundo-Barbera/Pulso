@@ -52,6 +52,16 @@ final class ChatStore {
     private(set) var sentCount = 0
     private(set) var finishedCount = 0
     @ObservationIgnored private var followTask: Task<Void, Never>?
+    /// Local reply id → the Mac's, from `start`: Deshacer has to name the saved message.
+    @ObservationIgnored private var serverIds: [String: String] = [:]
+
+    /// The Mac's copy of the thread, keeping local ids on screen (row identity) and
+    /// remembering the server's id behind each one (undo needs it).
+    private func adoptSaved(_ saved: [AgentMessage]) {
+        let kept = AgentMessage.keepingIds(of: messages, in: saved)
+        for (local, server) in zip(kept, saved) where local.id != server.id { serverIds[local.id] = server.id }
+        messages = kept
+    }
 
     /// Live stores by thread id, so a reply streaming in one keeps streaming
     /// while the person is elsewhere and is there when they come back.
@@ -93,7 +103,7 @@ final class ChatStore {
             let detail = try await api.agentThread(threadId)
             title = detail.thread.title
             guard followTask == nil else { return }
-            messages = AgentMessage.keepingIds(of: messages, in: detail.messages)
+            adoptSaved(detail.messages)
             if detail.running, let last = messages.indices.last, messages[last].status == .streaming {
                 // The re-attached stream replays the turn from its start.
                 messages[last].text = ""
@@ -174,7 +184,7 @@ final class ChatStore {
                 continue
             }
             title = detail.thread.title
-            messages = AgentMessage.keepingIds(of: messages, in: detail.messages)
+            adoptSaved(detail.messages)
             guard detail.running, let last = messages.indices.last, messages[last].status == .streaming else {
                 finished = true
                 break
@@ -210,17 +220,18 @@ final class ChatStore {
     private func apply(_ event: AgentStreamEvent) {
         guard let index = messages.indices.last, messages[index].role == .assistant else { return }
         switch event {
-        case .start:
-            // Ids stay local so rows keep their identity, on reloads too (`keepingIds`).
-            break
+        case let .start(messageId, _):
+            // Ids stay local so rows keep their identity; the server's id is remembered for undo.
+            serverIds[messages[index].id] = messageId
         case let .text(delta):
             messages[index].text += delta
-        case let .tool(name, status, result):
+        case let .tool(name, status, access, result):
             if let i = messages[index].tools.lastIndex(where: { $0.name == name && $0.status == .running }), status != .running {
                 messages[index].tools[i].status = status
                 messages[index].tools[i].result = result
+                if let access { messages[index].tools[i].access = access }
             } else if status == .running {
-                messages[index].tools.append(AgentToolUse(name: name, status: status))
+                messages[index].tools.append(AgentToolUse(name: name, status: status, access: access))
             }
         case .done:
             messages[index].status = .done
@@ -232,6 +243,21 @@ final class ChatStore {
             messages[index].error = message
         case .unknown:
             break
+        }
+    }
+
+    /// Deshacer on an action card: the Mac puts the change back and the card shows it undone.
+    /// Nil when it worked, else what to tell the person.
+    func undo(_ message: AgentMessage, index: Int) async -> String? {
+        guard let api = PulsoModel.shared.api, let threadId else { return "Empareja la app con tu Mac." }
+        do {
+            var saved = try await api.undoAgentAction(threadId: threadId, messageId: serverIds[message.id] ?? message.id, index: index)
+            saved.id = message.id
+            if let i = messages.firstIndex(where: { $0.id == message.id }) { messages[i] = saved }
+            return nil
+        } catch {
+            if let failure = error as? PulsoAPI.Failure, failure.kind == .unpaired { PulsoModel.shared.handle(error) }
+            return error.localizedDescription
         }
     }
 

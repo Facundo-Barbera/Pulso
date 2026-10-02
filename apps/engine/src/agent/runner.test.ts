@@ -69,8 +69,8 @@ test("a turn streams text and tool activity as NDJSON and is saved", async () =>
   expect(events.slice(1)).toEqual([
     { type: "text", delta: "Miro tus " },
     { type: "text", delta: "entrenos." },
-    { type: "tool", name: "list_workouts", status: "running" },
-    { type: "tool", name: "list_workouts", status: "done" },
+    { type: "tool", name: "list_workouts", status: "running", access: "read" },
+    { type: "tool", name: "list_workouts", status: "done", access: "read" },
     { type: "text", delta: "\n\nVas **bien**." },
     { type: "done", messageId: turn.messageId },
   ]);
@@ -85,6 +85,8 @@ test("a turn streams text and tool activity as NDJSON and is saved", async () =>
   expect(options.resume).toBeUndefined();
   expect(options.tools).not.toContain("Bash");
   expect(options.permissionMode).toBe("dontAsk");
+  // Write tools are read just before they run, for their action card's before → after.
+  expect(options.hooks?.PreToolUse?.some((h) => h.matcher === "mcp__pulso__.*")).toBe(true);
 });
 
 test("each thread works in a disposable dir under the data dir, with nothing from this Mac", async () => {

@@ -1,7 +1,7 @@
 "use client";
 
-import type { AgentAttachment, AgentMessage, AgentToolResult, AgentToolUse } from "@pulso/contract";
-import { AlertTriangle, Check, ChevronRight, Copy, Share, X } from "lucide-react";
+import type { AgentActionLine, AgentAttachment, AgentMessage, AgentToolResult, AgentToolUse } from "@pulso/contract";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Copy, Share, Undo2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../../../_ui/cn";
@@ -9,10 +9,13 @@ import { Markdown } from "../../../_ui/markdown";
 import { CoachAvatar, copyText, ThinkingDots } from "./bits";
 import { photoSrc } from "./photos";
 import { ProductCard } from "./product-card";
-import { RESULT_PLACES, toolLook } from "./tools";
+import { isAction, placeOf, toolLook } from "./tools";
 
-export function MessageRow({ message, last }: { message: AgentMessage; last: boolean }) {
-  return message.role === "user" ? <UserBubble message={message} /> : <AssistantRow message={message} last={last} />;
+/** Deshacer on tool `index` of a message: null when done, else what went wrong. */
+export type UndoAction = (index: number) => Promise<string | null>;
+
+export function MessageRow({ message, last, onUndo }: { message: AgentMessage; last: boolean; onUndo?: UndoAction }) {
+  return message.role === "user" ? <UserBubble message={message} /> : <AssistantRow message={message} last={last} onUndo={onUndo} />;
 }
 
 function UserBubble({ message }: { message: AgentMessage }) {
@@ -98,15 +101,17 @@ function PhotoViewer({ src, onClose }: { src: string; onClose: () => void }) {
   );
 }
 
-function AssistantRow({ message, last }: { message: AgentMessage; last: boolean }) {
+function AssistantRow({ message, last, onUndo }: { message: AgentMessage; last: boolean; onUndo?: UndoAction }) {
   const streaming = message.status === "streaming";
   const thinking = streaming && !message.text && !message.tools.some((t) => t.status === "running");
-  // Tools that made something get a card; the rest show as activity chips, a finished activity once.
-  const activity = message.tools.filter((t, i, all) => (!t.result || t.status !== "done") && (t.status !== "done" || all.findIndex((o) => o.status === "done" && !o.result && toolLook(o.name).label === toolLook(t.name).label) === i));
-  const results = message.tools.flatMap((t) => (t.status === "done" && t.result ? [t.result] : []));
+  // Lookups that finished fold into one quiet line; what is running (or failed) shows as a chip; what changed something gets a card.
+  const checked = message.tools.filter((t) => t.status === "done" && !isAction(t));
+  const activity = message.tools.filter((t) => t.status !== "done" || (isAction(t) && !t.result));
+  const actions = message.tools.flatMap((t, index) => (t.status === "done" && t.result ? [{ result: t.result, index }] : []));
 
   return (
     <div className="group/msg flex flex-col gap-3.5 motion-safe:animate-[pulso-rise_280ms_ease-out_both]">
+      {checked.length > 0 && <Checked tools={checked} />}
       {activity.length > 0 && <ToolChips tools={activity} />}
       {thinking && (
         <div className="flex items-center gap-2.5">
@@ -115,10 +120,10 @@ function AssistantRow({ message, last }: { message: AgentMessage; last: boolean 
         </div>
       )}
       {message.text && <Markdown text={message.text} className="space-y-3 text-[15.5px] leading-[1.65]" />}
-      {results.length > 0 && (
+      {actions.length > 0 && (
         <div className="grid gap-2.5 sm:grid-cols-2">
-          {results.map((result, i) => (
-            <ResultCard key={i} result={result} />
+          {actions.map(({ result, index }) => (
+            <ActionCard key={index} result={result} onUndo={onUndo && result.undo ? () => onUndo(index) : undefined} />
           ))}
         </div>
       )}
@@ -130,6 +135,32 @@ function AssistantRow({ message, last }: { message: AgentMessage; last: boolean 
       )}
       {message.status === "done" && message.text && <Actions text={message.text} className={cn(!last && "opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 max-md:opacity-100")} />}
     </div>
+  );
+}
+
+/** "Revisó 3 cosas": the lookups behind an answer, folded; open to see which. */
+function Checked({ tools }: { tools: AgentToolUse[] }) {
+  const labels = [...new Set(tools.map((t) => toolLook(t.name).label))];
+  return (
+    <details className="group/checked text-muted-foreground text-[13px]">
+      <summary className="hover:text-foreground focus-visible:ring-ring inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-full px-1 font-medium outline-none transition-colors focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
+        <Check className="text-good size-3.5" strokeWidth={2.4} />
+        Revisó {tools.length === 1 ? "1 cosa" : `${tools.length} cosas`}
+        <ChevronDown className="size-3.5 transition-transform group-open/checked:rotate-180" />
+      </summary>
+      <ul className="mt-1 flex flex-wrap gap-1.5 motion-safe:animate-[pulso-rise_200ms_ease-out_both]">
+        {labels.map((label) => {
+          const look = toolLook(tools.find((t) => toolLook(t.name).label === label)!.name);
+          const Icon = look.icon;
+          return (
+            <li key={label} className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5" style={{ background: `color-mix(in oklab, ${look.color} 8%, transparent)` }}>
+              <Icon className="size-3.5 shrink-0" style={{ color: look.color }} strokeWidth={2.2} />
+              {label}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 
@@ -156,29 +187,89 @@ function ToolChips({ tools }: { tools: AgentToolUse[] }) {
   );
 }
 
-/** "Comida registrada · Avena · 350 kcal — Abrir en Dieta": what a tool made, one click from where it lives. */
-function ResultCard({ result }: { result: AgentToolResult }) {
-  const place = RESULT_PLACES[result.tab] ?? RESULT_PLACES.hoy;
-  const Icon = place.icon;
+/** "Objetivo: Bajar de peso → Bajar 10 kg de grasa". */
+function ActionLine({ line }: { line: AgentActionLine }) {
   return (
-    <Link
-      href={place.href}
-      className="bg-card shadow-1 hover:shadow-2 focus-visible:ring-ring group flex min-h-16 items-center gap-3.5 rounded-2xl p-3.5 outline-none transition-shadow focus-visible:ring-2"
+    <li className="text-[13.5px] leading-snug break-words">
+      {line.label && <span className="text-muted-foreground">{line.label}: </span>}
+      {line.before && (
+        <>
+          <span className="text-muted-foreground line-through decoration-1">{line.before}</span>
+          <span className="text-muted-foreground" aria-label=" cambió a ">
+            {" → "}
+          </span>
+        </>
+      )}
+      <span className="font-medium">{line.value}</span>
+    </li>
+  );
+}
+
+/** What a tool changed: title, before → after, a link to where it lives and Deshacer when it can be undone. */
+function ActionCard({ result, onUndo }: { result: AgentToolResult; onUndo?: () => Promise<string | null> }) {
+  const place = placeOf(result);
+  const Icon = place.icon;
+  const lines = result.lines ?? (result.detail ? [{ label: null, before: null, value: result.detail }] : []);
+  const undone = result.undo === "done";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Mixed toward the text colour so yellows stay readable in light mode.
+  const ink = `color-mix(in oklab, ${place.color} 75%, var(--foreground))`;
+
+  const undo = async () => {
+    if (!onUndo || busy) return;
+    setBusy(true);
+    setError(await onUndo());
+    setBusy(false);
+  };
+
+  return (
+    <div
+      className={cn("shadow-1 flex flex-col gap-2.5 rounded-2xl p-3.5 transition-opacity motion-safe:animate-[pulso-rise_240ms_ease-out_both]", undone && "opacity-70")}
       style={{ background: `color-mix(in oklab, ${place.color} 7%, var(--card))` }}
     >
-      <span className="grid size-10 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in oklab, ${place.color} 18%, transparent)`, color: place.color }}>
-        <Icon className="size-5" strokeWidth={2.2} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[14px] font-semibold">{result.title}</span>
-        {result.detail && <span className="text-muted-foreground line-clamp-2 block text-[13px]">{result.detail}</span>}
-        {/* Mixed toward the text colour so yellows stay readable in light mode. */}
-        <span className="mt-0.5 block text-[12px] font-semibold" style={{ color: `color-mix(in oklab, ${place.color} 75%, var(--foreground))` }}>
-          Abrir en {place.name}
+      <div className="flex items-center gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in oklab, ${place.color} 18%, transparent)`, color: place.color }}>
+          {undone ? <Undo2 className="size-[18px]" strokeWidth={2.2} /> : <Icon className="size-[18px]" strokeWidth={2.2} />}
         </span>
-      </span>
-      <ChevronRight className="text-muted-foreground size-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
-    </Link>
+        <span className="min-w-0 flex-1 text-[14px] font-semibold">{result.title}</span>
+        {undone && <span className="text-muted-foreground bg-muted shrink-0 rounded-full px-2 py-0.5 text-[11.5px] font-semibold">Deshecho</span>}
+      </div>
+      {lines.length > 0 && (
+        <ul className={cn("flex flex-col gap-1 pl-12", undone && "line-through decoration-1")}>
+          {lines.map((line, i) => (
+            <ActionLine key={i} line={line} />
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center gap-1 pl-10">
+        <Link
+          href={place.href}
+          className="hover:bg-muted focus-visible:ring-ring group inline-flex min-h-9 items-center gap-0.5 rounded-lg px-2 text-[12.5px] font-semibold outline-none focus-visible:ring-2"
+          style={{ color: ink }}
+        >
+          Abrir en {place.name}
+          <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+        </Link>
+        {onUndo && !undone && (
+          <button
+            type="button"
+            onClick={undo}
+            disabled={busy}
+            className="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-[12.5px] font-semibold outline-none transition-colors focus-visible:ring-2 disabled:opacity-60"
+          >
+            <Undo2 className={cn("size-3.5", busy && "motion-safe:animate-pulse")} />
+            {busy ? "Deshaciendo…" : "Deshacer"}
+          </button>
+        )}
+      </div>
+      {error && (
+        <p className="text-warning flex items-start gap-1.5 pl-12 text-[12.5px]" role="alert">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
