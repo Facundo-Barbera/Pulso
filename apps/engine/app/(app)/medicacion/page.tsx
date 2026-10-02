@@ -176,10 +176,12 @@ function HeroTile({ label, value }: { label: string; value: number | null }) {
 
 function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
   const { next } = page.day;
+  // Doses with no slot (as needed) taken today: they belong to today too.
+  const extra = page.history.find((d) => d.date === page.date)?.entries.filter((e) => e.status === "tomada" && !e.scheduledTime) ?? [];
   return (
     <Card delay={delay} className="md:col-span-2">
       <CardTitle icon={CalendarCheck} color={MED} title="Hoy" />
-      {page.groups.length === 0 ? (
+      {page.groups.length === 0 && extra.length === 0 ? (
         <EmptyState compact icon={CalendarCheck} color={MED} title="Nada programado hoy" line="Las tomas de hoy aparecerán aquí, por momento del día, para marcarlas." />
       ) : (
         <div className="space-y-4">
@@ -221,6 +223,29 @@ function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
               </section>
             );
           })}
+          {extra.length > 0 && (
+            <section>
+              <h3 className="text-muted-foreground mb-1 flex items-center gap-1.5 text-[12px] font-semibold tracking-wide uppercase">
+                <Hand className="size-3.5" style={{ color: MED }} />
+                Cuando haga falta
+              </h3>
+              <ul className="-mx-2 space-y-0.5">
+                {extra.map((e) => (
+                  <li key={e.id} className="flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] font-medium">{e.name}</span>
+                      <span className="text-muted-foreground block truncate text-[12px]">{amount(e.dose, e.unit)}</span>
+                    </span>
+                    <span className="bg-success/12 text-success tabular inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium">
+                      <CircleCheckBig className="size-3.5" />
+                      Tomada{e.takenAt ? ` · ${fmtTime(e.takenAt)}` : ""}
+                    </span>
+                    <DeleteEntryButton eventId={e.id} label={e.name} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
       )}
     </Card>
