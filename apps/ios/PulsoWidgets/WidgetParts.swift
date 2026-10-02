@@ -74,10 +74,15 @@ extension View {
 enum WidgetStyle {
     static let medication = Color.accentColor
 
-    /// Same thresholds as the Hoy hero.
+    /// Same thresholds, colours and symbols as the Hoy hero: never green against red, never hue alone.
     static func recoveryColor(_ score: Int?) -> Color {
         guard let score else { return .secondary }
-        return score >= 75 ? Theme.body : score >= 50 ? Theme.carbs : Theme.protein
+        return score >= 75 ? Theme.good : score >= 50 ? Theme.fair : Theme.caution
+    }
+
+    static func recoverySymbol(_ score: Int?) -> String {
+        guard let score else { return "circle.dashed" }
+        return score >= 75 ? "checkmark.circle.fill" : score >= 50 ? "minus.circle.fill" : "exclamationmark.circle.fill"
     }
 
     static func number(_ value: Double) -> String { Int(value.rounded()).formatted() }

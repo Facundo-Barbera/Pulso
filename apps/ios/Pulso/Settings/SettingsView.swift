@@ -268,8 +268,8 @@ struct ConnectionBadge: View {
 
     private var color: Color {
         switch reachability {
-        case .online: .green
-        case .offline: .orange
+        case .online: Theme.good
+        case .offline: Theme.caution
         case .unknown: .secondary
         }
     }

@@ -17,7 +17,7 @@ struct MuscleMapView: View {
             }
             HStack(spacing: 8) {
                 if !primary.isEmpty { GlassChip("Principal", systemImage: "circle.fill", tint: Self.primaryColor) }
-                if !secondary.isEmpty { GlassChip("Secundario", systemImage: "circle.fill", tint: Self.secondaryColor) }
+                if !secondary.isEmpty { GlassChip("Secundario", systemImage: "circle.lefthalf.filled", tint: Self.secondaryColor) }
             }
         }
         .accessibilityElement(children: .ignore)

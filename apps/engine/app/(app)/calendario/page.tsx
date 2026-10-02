@@ -10,7 +10,7 @@ import { Page, PageHeader } from "../../_ui/page-header";
 import { DayList, MonthGrid, WeekGrid } from "./_components/agenda";
 import { AddMenu, CalendarProvider, EditPreferencesButton, ReplanBanner, type Area } from "./_components/editors";
 import { HealthView } from "./_components/health";
-import { COLOR, LEGEND, weekdayList } from "./_components/style";
+import { COLOR, KEY_ICON, LEGEND, weekdayList } from "./_components/style";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Calendario" };
@@ -116,12 +116,15 @@ export default async function Calendario({ searchParams }: { searchParams: Promi
 function Legend() {
   return (
     <ul className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-1 px-1 text-[12px]" aria-label="Leyenda">
-      {LEGEND.map((l) => (
-        <li key={l.color} className="flex items-center gap-1.5">
-          <span className="size-2 rounded-full" style={{ background: COLOR[l.color] }} />
-          {l.label}
-        </li>
-      ))}
+      {LEGEND.map((l) => {
+        const Icon = KEY_ICON[l.color];
+        return (
+          <li key={l.color} className="flex items-center gap-1.5">
+            <Icon className="size-3.5" style={{ color: COLOR[l.color] }} strokeWidth={2.2} aria-hidden />
+            {l.label}
+          </li>
+        );
+      })}
       <li className="flex items-center gap-1.5">
         <span className="h-2.5 w-[3px] rounded-full" style={{ background: "repeating-linear-gradient(to bottom, var(--muted-foreground) 0 3px, transparent 3px 5px)" }} />
         Previsto

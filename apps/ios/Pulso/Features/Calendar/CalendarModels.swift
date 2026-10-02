@@ -157,11 +157,12 @@ enum HealthEventStatus: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// State colours (never green against red); rows always print `label` beside them.
     var tint: Color {
         switch self {
-        case .activa: Theme.protein
-        case .recuperandose: Theme.carbs
-        case .resuelta: Theme.body
+        case .activa: Theme.caution
+        case .recuperandose: Theme.fair
+        case .resuelta: Theme.good
         }
     }
 }

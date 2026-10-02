@@ -9,8 +9,8 @@ struct PulsoActivityBundle: WidgetBundle {
     }
 }
 
-/// Same purple as `Theme.training` in the app.
-private let training = Color(red: 0.55, green: 0.42, blue: 0.98)
+/// Same violet as `Theme.training` in the app (its dark step: the lock screen and island are dark).
+private let training = Color(red: 0.63, green: 0.49, blue: 1.00)
 
 /// The strength session on the lock screen and in the Dynamic Island: the
 /// exercise and set coming up, and while resting a countdown that the system
@@ -31,7 +31,7 @@ struct TrainingLiveActivity: Widget {
             let state = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: state.cardio == nil ? "figure.strengthtraining.traditional" : "heart.fill")
+                    Image(systemName: state.cardio.map(cardioSymbol) ?? "figure.strengthtraining.traditional")
                         .font(.title2)
                         .foregroundStyle(state.cardio.map(cardioTint) ?? training)
                         .padding(.leading, 4)
@@ -91,7 +91,7 @@ struct TrainingLiveActivity: Widget {
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                Image(systemName: state.cardio != nil ? "heart.fill" : state.resting ? "timer" : "dumbbell.fill")
+                Image(systemName: state.cardio.map(cardioSymbol) ?? (state.resting ? "timer" : "dumbbell.fill"))
                     .foregroundStyle(state.cardio.map(cardioTint) ?? training)
             } compactTrailing: {
                 if let cardio = state.cardio {
@@ -122,7 +122,7 @@ struct TrainingLiveActivity: Widget {
                             .progressViewStyle(.circular)
                             .tint(cardioTint(cardio))
                     } else {
-                        Image(systemName: "heart.fill").foregroundStyle(cardioTint(cardio))
+                        Image(systemName: cardioSymbol(cardio)).foregroundStyle(cardioTint(cardio))
                     }
                 } else if let range = state.restRange, state.resting {
                     ProgressView(timerInterval: range, countsDown: true) { EmptyView() } currentValueLabel: { EmptyView() }
@@ -137,11 +137,15 @@ struct TrainingLiveActivity: Widget {
     }
 }
 
-/// Same orange and green as `Theme.energy` / `Theme.body`: work and recovery.
-private let work = Color(red: 0.98, green: 0.45, blue: 0.20)
-private let recovery = Color(red: 0.20, green: 0.78, blue: 0.62)
+/// Same orange and teal as `Theme.energy` / `Theme.body`: work and recovery. They sit apart on the
+/// blue–yellow axis for red-green colour blindness, and the phase's name always shows beside them.
+private let work = Color(red: 0.96, green: 0.53, blue: 0.16)
+private let recovery = Color(red: 0.17, green: 0.81, blue: 0.69)
 
 private func cardioTint(_ cardio: TrainingActivityAttributes.ContentState.Cardio) -> Color { cardio.work ? work : recovery }
+
+/// Where the phase's name doesn't fit (compact and minimal island), the symbol tells work from recovery.
+private func cardioSymbol(_ cardio: TrainingActivityAttributes.ContentState.Cardio) -> String { cardio.work ? "bolt.heart.fill" : "heart.fill" }
 
 /// The phase counting down when there is one, else the block's time counting up
 /// (or standing still while paused). The system ticks both.
@@ -167,7 +171,7 @@ private struct CardioLockScreenView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: cardio.running ? "heart.fill" : "pause.fill")
+                Image(systemName: cardio.running ? cardioSymbol(cardio) : "pause.fill")
                     .font(.title2)
                     .foregroundStyle(cardioTint(cardio))
                     .frame(width: 44, height: 44)

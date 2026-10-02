@@ -1,14 +1,14 @@
 "use client";
 
 import type { WaterDay } from "@pulso/contract";
-import { ChevronDown, Droplet, Plus } from "lucide-react";
+import { ChevronDown, CircleCheck, Droplet, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Card, CardTitle } from "../../../_ui/card";
 import { cn } from "../../../_ui/cn";
 import { useAction, useDieta } from "./client";
 import { buttonSoft, field } from "./sheet";
 
-const WATER = "var(--domain-fat)";
+const WATER = "var(--domain-water)";
 const litres = (ml: number) => `${(ml / 1000).toLocaleString("es", { maximumFractionDigits: 2 })} L`;
 
 /** Water: how far along the goal, one tap for the usual glass, the rest (bottle, other amount, undo) in a menu. */
@@ -52,7 +52,12 @@ export function WaterCard({ water, delay }: { water: WaterDay; delay?: number })
       <div className="flex items-baseline gap-1.5">
         <span className="tabular text-[28px] leading-none font-semibold tracking-tight">{litres(water.totalMl)}</span>
         <span className="text-muted-foreground text-[13px]">de {litres(water.goalMl)}</span>
-        {progress >= 1 && <span className="text-body ml-auto text-[12px] font-medium">Objetivo cumplido</span>}
+        {progress >= 1 && (
+          <span className="text-good ml-auto flex items-center gap-1 self-center text-[12px] font-medium">
+            <CircleCheck className="size-3.5" strokeWidth={2.4} aria-hidden />
+            Objetivo cumplido
+          </span>
+        )}
       </div>
       <div className="bg-muted mt-3 h-2 overflow-hidden rounded-full" role="progressbar" aria-valuemin={0} aria-valuemax={water.goalMl} aria-valuenow={water.totalMl} aria-label="Agua del día">
         <div className="h-full rounded-full transition-[width] duration-500 ease-out" style={{ width: `${progress * 100}%`, background: WATER }} />

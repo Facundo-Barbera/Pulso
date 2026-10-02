@@ -64,7 +64,7 @@ export function CompositionCard({ breakdown, sheet, delay }: { breakdown: Dated;
             {slices.map((s) => (
               <li key={s.label}>
                 <p className="text-muted-foreground flex items-center gap-1.5 text-[12px] whitespace-nowrap">
-                  <span className="size-1.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                  <span className="legend-dot size-2 shrink-0 rounded-full" style={{ background: s.color }} />
                   {s.label}
                 </p>
                 <p className="tabular mt-0.5 text-[15px] font-semibold">
@@ -111,12 +111,12 @@ export function SegmentalCard({ lean, fat, date, delay }: { lean: Segmental | nu
       <div className="text-muted-foreground mb-3 flex gap-4 text-[12px]">
         {lean && (
           <span className="flex items-center gap-1.5">
-            <span className="bg-foreground size-1.5 rounded-full" /> Masa magra
+            <span className="legend-dot bg-foreground size-2 rounded-full" /> Masa magra
           </span>
         )}
         {fat && (
           <span className="flex items-center gap-1.5">
-            <span className="size-1.5 rounded-full" style={{ background: "var(--domain-fat)" }} /> Grasa
+            <span className="legend-dot size-2 rounded-full" style={{ background: "var(--domain-fat)" }} /> Grasa
           </span>
         )}
       </div>
@@ -131,7 +131,7 @@ export function SegmentalCard({ lean, fat, date, delay }: { lean: Segmental | nu
             )}
             {fat && (
               <p className="tabular text-[13px] whitespace-nowrap" style={{ color: "var(--domain-fat)" }}>
-                {kg(fat[s.key])} <span className="text-muted-foreground text-[11px]">kg</span>
+                {kg(fat[s.key])} <span className="text-muted-foreground text-[11px]">kg grasa</span>
               </p>
             )}
           </div>

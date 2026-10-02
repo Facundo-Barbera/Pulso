@@ -43,7 +43,7 @@ export function DoseActions({ slot, takenLabel }: { slot: DoseSlot; takenLabel: 
       <span className="flex items-center gap-1">
         {logged ? (
           <>
-            <span className={cn("flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium", slot.status === "tomada" ? "text-success bg-success/12" : "text-muted-foreground bg-muted")}>
+            <span className={cn("flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium", slot.status === "tomada" ? "text-good bg-good/12" : "text-muted-foreground bg-muted")}>
               {slot.status === "tomada" ? <Check className="size-3.5" strokeWidth={3} /> : <X className="size-3.5" />}
               {slot.status === "tomada" ? `Tomada${takenLabel ? ` · ${takenLabel}` : ""}` : "Omitida"}
             </span>

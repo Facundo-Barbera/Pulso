@@ -68,7 +68,11 @@ struct HealthEventRow: View {
             }
             Spacer(minLength: 8)
             if event.isActive {
-                SeverityDots(value: event.severity, tint: event.status.tint)
+                // The status in words too: active and recovering differ only in tint otherwise.
+                VStack(alignment: .trailing, spacing: 4) {
+                    SeverityDots(value: event.severity, tint: event.status.tint)
+                    Text(event.status.label).font(.caption2.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                }
             } else {
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }

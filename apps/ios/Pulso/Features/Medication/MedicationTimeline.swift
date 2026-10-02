@@ -214,7 +214,7 @@ struct TimelineRow: View {
                 .font(.footnote.weight(item.state == .atrasada ? .semibold : .regular))
                 .fontDesign(.rounded)
                 .monospacedDigit()
-                .foregroundStyle(item.state == .atrasada ? AnyShapeStyle(Theme.energy) : AnyShapeStyle(.secondary))
+                .foregroundStyle(item.state == .atrasada ? AnyShapeStyle(Theme.caution) : AnyShapeStyle(.secondary))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(width: Self.timeWidth, alignment: .trailing)
@@ -245,7 +245,7 @@ struct TimelineRow: View {
         var text = AttributedString(item.when)
         if !item.isTaken && item.state != .omitida {
             var line = AttributedString(" · \(item.line)")
-            if item.state == .atrasada { line.foregroundColor = Theme.energy }
+            if item.state == .atrasada { line.foregroundColor = Theme.caution }
             if item.state == .ahora { line.foregroundColor = Color.accentColor }
             text += line
         }
@@ -255,7 +255,7 @@ struct TimelineRow: View {
 
     @ViewBuilder private var marker: some View {
         if item.isTaken {
-            Image(systemName: "checkmark.circle.fill").font(.title3).foregroundStyle(Theme.body).symbolEffect(.bounce, value: item.isTaken)
+            Image(systemName: "checkmark.circle.fill").font(.title3).foregroundStyle(Theme.good).symbolEffect(.bounce, value: item.isTaken)
         } else {
             switch item.state {
             case .entreno:
@@ -269,7 +269,8 @@ struct TimelineRow: View {
                 Circle().fill(Color.accentColor).frame(width: 14, height: 14)
                     .background(Circle().fill(Color.accentColor.opacity(0.25)).frame(width: 22, height: 22))
             case .atrasada:
-                Circle().strokeBorder(Theme.energy, lineWidth: 2).background(Circle().fill(Theme.energy.opacity(0.2))).frame(width: 18, height: 18)
+                // An exclamation, not only the warm ring, so "late" reads without colour.
+                Image(systemName: "exclamationmark.circle.fill").font(.title3).foregroundStyle(Theme.caution)
             case .omitida:
                 Image(systemName: "xmark.circle").font(.title3).foregroundStyle(.secondary)
             case .aDemanda:
@@ -290,7 +291,7 @@ struct TimelineRow: View {
                     .layoutPriority(1)
                     .sensoryFeedback(.success, trigger: slot.status)
             } else if slot.status == .tomada {
-                Text("Tomada").font(.caption.weight(.semibold)).foregroundStyle(Theme.body)
+                Text("Tomada").font(.caption.weight(.semibold)).foregroundStyle(Theme.good)
             }
         } else if item.state == .aDemanda {
             Button(item.intakes.isEmpty ? "Tomé una" : "Otra", systemImage: "plus") { Task { await store.takeNow(item.medication) } }
@@ -300,7 +301,7 @@ struct TimelineRow: View {
                 .layoutPriority(1)
                 .sensoryFeedback(.success, trigger: item.intakes.count)
         } else if item.state == .tomada {
-            Text("Tomada").font(.caption.weight(.semibold)).foregroundStyle(Theme.body)
+            Text("Tomada").font(.caption.weight(.semibold)).foregroundStyle(Theme.good)
         }
     }
 

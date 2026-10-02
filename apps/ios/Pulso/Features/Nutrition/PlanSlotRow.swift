@@ -34,7 +34,7 @@ extension SlotStatus {
     var tint: Color {
         switch self {
         case .planned: Theme.energy
-        case .eaten, .replaced: Theme.body
+        case .eaten, .replaced: Theme.good
         case .skipped: .secondary
         }
     }
@@ -107,7 +107,7 @@ struct PlanSlotRow: View {
                             Text(real.eaten, format: .dateTime.hour().minute())
                                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         } else if slot.isMissed {
-                            Text("Sin registrar").font(.caption.weight(.semibold)).foregroundStyle(Theme.energy)
+                            Text("Sin registrar").font(.caption.weight(.semibold)).foregroundStyle(Theme.caution)
                         } else if slot.status == .skipped {
                             Text(slot.status.title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         }
@@ -258,7 +258,7 @@ struct PlanSlotRow: View {
         } else {
             ZStack {
                 HStack {
-                    swipeHint(.eaten, Theme.body).opacity(drag > 40 ? 1 : 0)
+                    swipeHint(.eaten, Theme.good).opacity(drag > 40 ? 1 : 0)
                     Spacer()
                     swipeHint(.skipped, .secondary).opacity(drag < -40 ? 1 : 0)
                 }

@@ -185,7 +185,7 @@ function CopyLine({ label, value, hint }: { label?: string; value: string; hint?
       >
         {hint && <span className="text-muted-foreground shrink-0 text-[11px]">{hint}</span>}
         <code className="min-w-0 flex-1 truncate font-mono text-[12px]">{value}</code>
-        {copied ? <Check className="text-success size-3.5 shrink-0" /> : <Copy className="text-muted-foreground size-3.5 shrink-0" />}
+        {copied ? <Check className="text-good size-3.5 shrink-0" /> : <Copy className="text-muted-foreground size-3.5 shrink-0" />}
       </button>
     </div>
   );

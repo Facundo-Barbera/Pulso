@@ -130,7 +130,7 @@ private struct DayPill: View {
         if cooking {
             Image(systemName: "frying.pan.fill").foregroundStyle(Theme.energy)
         } else if !day.slots.isEmpty && day.pending == 0 {
-            Image(systemName: "checkmark").foregroundStyle(Theme.body)
+            Image(systemName: "checkmark").foregroundStyle(Theme.good)
         } else {
             Circle().fill(.quaternary).frame(width: 5, height: 5)
         }
@@ -181,7 +181,7 @@ struct PrepSessionCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Image(systemName: batch.cooked ? "checkmark.seal.fill" : "frying.pan.fill")
-                    .foregroundStyle(batch.cooked ? Theme.body : Theme.energy)
+                    .foregroundStyle(batch.cooked ? Theme.good : Theme.energy)
                     .contentTransition(.symbolEffect(.replace))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Cocinar: \(batch.recipeName) ×\(batch.portions)").font(.headline)
@@ -207,7 +207,7 @@ struct PrepSessionCard: View {
         }
         .padding(Theme.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular.tint((batch.cooked ? Theme.body : Theme.energy).opacity(0.12)), in: .rect(cornerRadius: Theme.corner))
+        .glassEffect(.regular.tint((batch.cooked ? Theme.good : Theme.energy).opacity(0.12)), in: .rect(cornerRadius: Theme.corner))
         .sensoryFeedback(.success, trigger: batch.cooked) { _, new in new }
     }
 

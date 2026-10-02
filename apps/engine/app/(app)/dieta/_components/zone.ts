@@ -1,4 +1,5 @@
 import type { NutrientZone } from "@pulso/contract";
+import { CircleArrowDown, CircleArrowUp, CircleCheck, type LucideIcon } from "lucide-react";
 import { fmtNumber } from "../../../_ui/format";
 
 /** The whole ring: room past the zone's max (or 125 % of the target) so the zone and any overflow both show. */
@@ -18,5 +19,12 @@ export function zoneRange(z: NutrientZone, unit: "kcal" | "g"): string {
   return `${fmtNumber(z.min)}–${fmtNumber(z.max)} ${unit}`;
 }
 
-/** The status colour: the nutrient's own below the zone, success in it, destructive past it. */
-export const zoneTone = (z: NutrientZone, color: string) => (z.status === "inZone" ? "var(--success)" : z.status === "above" ? "var(--destructive)" : color);
+/**
+ * The status as an icon, so it never rests on colour: ↓ short of the zone, ✓ in it,
+ * ↑ past it. The icon's tint is quiet below, blue in, orange past — never green against red.
+ */
+export const ZONE_STATUS: Record<NutrientZone["status"], { Icon: LucideIcon; className: string }> = {
+  below: { Icon: CircleArrowDown, className: "text-muted-foreground" },
+  inZone: { Icon: CircleCheck, className: "text-good" },
+  above: { Icon: CircleArrowUp, className: "text-caution" },
+};

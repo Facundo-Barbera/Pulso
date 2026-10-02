@@ -28,11 +28,14 @@ struct ProgressRing: View {
 }
 
 extension NutrientZone {
-    /// The whole ring: room past the zone's max (or 125 % of the target) so the zone and any overflow both show.
+    /// One lap of the ring: room past the zone's max (or 125 % of the target) so the zone and some overflow both show.
     var ringFull: Double { Swift.max(target * 1.25, (max ?? target) * 1.1, 1) }
 
-    /// Where `value` sits on the ring, 0…1.
-    func fraction(_ value: Double) -> Double { Swift.min(Swift.max(value / ringFull, 0), 1) }
+    /// Where `value` sits on the ring, in laps (past 1 it goes round again).
+    func laps(_ value: Double) -> Double { Swift.max(value / ringFull, 0) }
+
+    /// The zone's marks on the ring, in laps.
+    var marks: RingMarks { RingMarks(min: min.map(laps), max: max.map(laps), target: laps(target)) }
 
     /// «Faltan 42 g», «En tu zona» («Mínimo cumplido» for a minimum), «Te pasaste 120 kcal».
     func line(_ unit: String) -> String {
@@ -51,56 +54,122 @@ extension NutrientZone {
         return "\(n(min))–\(n(max)) \(unit)"
     }
 
-    /// The nutrient's own colour below the zone, success inside it, red past it.
-    func tone(_ color: Color) -> Color {
+    /// The status as a symbol, so it never rests on colour: ↓ short of the zone, ✓ in it, ↑ past it.
+    var statusSymbol: String {
         switch status {
-        case .below: color
-        case .inZone: Theme.body
-        case .above: .red
+        case .below: "arrow.down.circle"
+        case .inZone: "checkmark.circle.fill"
+        case .above: "arrow.up.circle.fill"
+        }
+    }
+
+    /// The symbol's tint: quiet below, blue in the zone, orange past it — never green against red.
+    var statusColor: Color {
+        switch status {
+        case .below: .secondary
+        case .inZone: Theme.good
+        case .above: Theme.caution
         }
     }
 }
 
-/// A ring that knows the target zone: a soft band on the track from the zone's min to its max,
-/// a tick at the target, and the progress arc — the nutrient's colour below the zone, glowing
-/// green inside it, and red past the max.
-struct ZoneRing: View {
-    let zone: NutrientZone
+/// A target zone on a ring, in laps.
+struct RingMarks: Equatable {
+    var min: Double?
+    var max: Double?
+    var target: Double
+}
+
+/// One ring in the manner of Apple's Activity rings: a tinted track, the arc from 12 o'clock with the
+/// nutrient's symbol at its start, and past a full lap a second lap whose end casts a shadow on the first.
+/// With `marks` it also shows the zone without relying on colour: the track between min and max is
+/// hatched, both ends are cut like brackets, the target is a notched tick, and whatever lies past the
+/// max is hatched on the arc itself. The view's frame holds the whole stroke.
+struct ActivityRing: View {
+    let progress: Double
     let color: Color
-    var lineWidth: CGFloat = 12
+    let symbol: String
+    var lineWidth: CGFloat = 22
+    var marks: RingMarks?
+
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
 
     var body: some View {
-        let progress = zone.fraction(zone.value)
-        let maxAt = zone.fraction(zone.max ?? zone.target)
-        let over = zone.status == .above
-        let tone = zone.tone(color)
+        let lap = Swift.min(progress, 1)
+        let second = Swift.min(Swift.max(progress - 1, 0), 1)
         ZStack {
-            Circle().stroke(color.opacity(0.14), lineWidth: lineWidth)
-            Circle()
-                .trim(from: zone.fraction(zone.min ?? 0), to: maxAt)
-                .stroke(Theme.body.opacity(0.38), lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: over ? maxAt : progress)
-                .stroke(
-                    AngularGradient(colors: [tone.mix(with: .white, by: 0.15), tone], center: .center),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .shadow(color: zone.status == .inZone ? Theme.body.opacity(0.7) : .clear, radius: lineWidth / 2)
-            if over {
+            Circle().stroke(color.opacity(0.22), lineWidth: lineWidth)
+            if let marks { zoneBand(marks, filled: lap) }
+            if lap > 0 {
+                RingCap(fraction: 0, lineWidth: lineWidth).fill(color.mix(with: .black, by: 0.08))
                 Circle()
-                    .trim(from: maxAt, to: progress)
-                    .stroke(Color.red, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .trim(from: 0, to: lap)
+                    .stroke(
+                        AngularGradient(colors: [color.mix(with: .black, by: 0.08), color], center: .center, startAngle: .zero, endAngle: .degrees(360 * Swift.max(lap, 0.01))),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                    )
             }
-            TargetTick(fraction: zone.fraction(zone.target), lineWidth: lineWidth)
-                .stroke(.primary.opacity(0.8), style: StrokeStyle(lineWidth: Swift.max(2, lineWidth / 6), lineCap: .round))
+            if second > 0 {
+                RingCap(fraction: second, lineWidth: lineWidth)
+                    .fill(color)
+                    .shadow(color: .black.opacity(0.55), radius: lineWidth / 4)
+                Circle()
+                    .trim(from: 0, to: second)
+                    .stroke(color.mix(with: .white, by: 0.12), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            }
+            if let marks, let max = marks.max, progress > max {
+                hatch(from: Swift.min(max, 1), to: lap, ink: .black.opacity(0.32))
+                if second > 0 { hatch(from: 0, to: second, ink: .black.opacity(0.32)) }
+            }
+            if let marks { cuts(marks) }
         }
         .rotationEffect(.degrees(-90))
-        .animation(.snappy(duration: 0.7), value: zone)
+        .compositingGroup()
+        .overlay(alignment: .top) {
+            Image(systemName: symbol)
+                .font(.system(size: lineWidth * 0.52, weight: .bold))
+                .foregroundStyle(lap > 0 ? Color.black.opacity(0.78) : color)
+                .frame(width: lineWidth, height: lineWidth)
+                .offset(y: -lineWidth / 2)
+        }
+        .padding(lineWidth / 2)
+        .animation(.snappy(duration: 0.7), value: progress)
+        .accessibilityHidden(true)
+    }
+
+    /// The zone on the unfilled track: a faint band with a comb of light stripes; with
+    /// "Diferenciar sin color" the comb also runs over the filled part, darker.
+    @ViewBuilder
+    private func zoneBand(_ marks: RingMarks, filled lap: Double) -> some View {
+        let from = Swift.min(marks.min ?? 0, 1), to = Swift.min(marks.max ?? marks.target, 1)
+        Circle().trim(from: from, to: to).stroke(Color.primary.opacity(0.10), lineWidth: lineWidth)
+        if lap < to { hatch(from: Swift.max(from, lap), to: to, ink: Color.primary.opacity(0.45)) }
+        if differentiate, lap > from { hatch(from: from, to: Swift.min(lap, to), ink: .black.opacity(0.25)) }
+    }
+
+    /// Short radial stripes along the ring: a dash pattern on a narrower stroke.
+    private func hatch(from: Double, to: Double, ink: some ShapeStyle) -> some View {
+        Circle()
+            .trim(from: from, to: Swift.max(from, to))
+            .stroke(ink, style: StrokeStyle(lineWidth: lineWidth * 0.6, dash: [1.5, 3.5]))
+    }
+
+    /// Bracket cuts through the ring at min and max, and the target: a wider cut holding a tick, notched at the rim.
+    @ViewBuilder
+    private func cuts(_ marks: RingMarks) -> some View {
+        ForEach([marks.min, marks.max].compactMap { $0 }.filter { $0 > 0 && $0 < 1 }, id: \.self) { at in
+            RingTick(fraction: at, lineWidth: lineWidth).stroke(.black, lineWidth: 2).blendMode(.destinationOut)
+        }
+        if marks.target < 1 {
+            RingTick(fraction: marks.target, lineWidth: lineWidth).stroke(.black, lineWidth: 6).blendMode(.destinationOut)
+            RingTick(fraction: marks.target, lineWidth: lineWidth).stroke(.primary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            RingNotch(fraction: marks.target, lineWidth: lineWidth).fill(.primary)
+        }
     }
 }
 
-/// A short mark across the ring at `fraction` of the way round (0 = the +x axis; the ring is rotated).
-private struct TargetTick: Shape {
+/// A line across the ring's stroke at `fraction` of a lap (0 = the +x axis; the ring is rotated).
+private struct RingTick: Shape {
     var fraction: Double
     let lineWidth: CGFloat
 
@@ -114,57 +183,99 @@ private struct TargetTick: Shape {
         let angle = fraction * 2 * .pi
         let point = { (r: CGFloat) in CGPoint(x: rect.midX + r * cos(angle), y: rect.midY + r * sin(angle)) }
         var path = Path()
-        path.move(to: point(radius - lineWidth / 2 - 2))
-        path.addLine(to: point(radius + lineWidth / 2 + 2))
+        path.move(to: point(radius - lineWidth / 2))
+        path.addLine(to: point(radius + lineWidth / 2))
         return path
     }
 }
 
-/// The hero: concentric kcal / protein / carbs / fat rings, each with its target zone, the day's
-/// kcal and where it stands in the middle, and a legend that says how far each macro is from its zone.
+/// The target's notch: a small triangle at the ring's outer rim pointing in.
+private struct RingNotch: Shape {
+    var fraction: Double
+    let lineWidth: CGFloat
+
+    var animatableData: Double {
+        get { fraction }
+        set { fraction = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let radius = Swift.min(rect.width, rect.height) / 2
+        let rim = radius + lineWidth / 2
+        let angle = fraction * 2 * .pi
+        let spread = (lineWidth * 0.32) / rim
+        let point = { (r: CGFloat, a: Double) in CGPoint(x: rect.midX + r * cos(a), y: rect.midY + r * sin(a)) }
+        var path = Path()
+        path.move(to: point(rim, angle - spread))
+        path.addLine(to: point(rim - lineWidth * 0.38, angle))
+        path.addLine(to: point(rim, angle + spread))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// A round end of the ring's stroke at `fraction` of a lap.
+private struct RingCap: Shape {
+    var fraction: Double
+    let lineWidth: CGFloat
+
+    var animatableData: Double {
+        get { fraction }
+        set { fraction = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let radius = Swift.min(rect.width, rect.height) / 2
+        let angle = fraction * 2 * .pi
+        let center = CGPoint(x: rect.midX + radius * cos(angle), y: rect.midY + radius * sin(angle))
+        return Path(ellipseIn: CGRect(x: center.x - lineWidth / 2, y: center.y - lineWidth / 2, width: lineWidth, height: lineWidth))
+    }
+}
+
+/// The hero: concentric kcal / protein / carbs / fat rings like Apple's Activity rings, each with its
+/// symbol at its start and its target zone marked; under them the day's kcal and where it stands, and
+/// a tile per macro that repeats the ring's symbol and says in words (and an icon) how far it is from its zone.
 struct MacroHero: View {
     let summary: NutritionSummary
     let onSetTargets: () -> Void
 
-    private static let macros: [(key: String, title: String, color: Color)] = [
-        ("protein", "Proteína", Theme.protein), ("carbs", "Carbos", Theme.carbs), ("fat", "Grasa", Theme.fat),
-    ]
-
-    private func ratio(_ value: Double, _ target: Double?) -> Double {
-        guard let target, target > 0 else { return 0 }
-        return value / target
+    private struct Nutrient {
+        let key: String, title: String, color: Color, symbol: String
     }
 
+    private static let kcal = Nutrient(key: "kcal", title: "Calorías", color: Theme.energy, symbol: Theme.energySymbol)
+    private static let macros = [
+        Nutrient(key: "protein", title: "Proteína", color: Theme.protein, symbol: Theme.proteinSymbol),
+        Nutrient(key: "carbs", title: "Carbos", color: Theme.carbs, symbol: Theme.carbsSymbol),
+        Nutrient(key: "fat", title: "Grasa", color: Theme.fat, symbol: Theme.fatSymbol),
+    ]
+
+    private static let lineWidth: CGFloat = 22
+    private static let gap: CGFloat = 3
+    private static let size: CGFloat = 228
+
     var body: some View {
-        let totals = summary.totals
         let zones = summary.zones
-        VStack(spacing: 20) {
+        VStack(spacing: 18) {
             ZStack {
-                ring("kcal", totals.kcal, Theme.energy, lineWidth: 20)
-                ring("protein", totals.protein, Theme.protein, lineWidth: 12).padding(24)
-                ring("carbs", totals.carbs, Theme.carbs, lineWidth: 12).padding(42)
-                ring("fat", totals.fat, Theme.fat, lineWidth: 12).padding(60)
-                center(totals: totals, zone: zones?["kcal"])
+                ForEach(Array(([Self.kcal] + Self.macros).enumerated()), id: \.offset) { index, n in
+                    ring(n).padding(CGFloat(index) * (Self.lineWidth + Self.gap))
+                }
             }
-            .frame(width: 236, height: 236)
-            .padding(10) // the outer stroke sits half outside its circle
+            .frame(width: Self.size, height: Self.size)
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilitySummary)
+
+            kcalReadout(zone: zones?["kcal"])
 
             if summary.targets == nil {
                 Button("Fijar objetivos", systemImage: "target", action: onSetTargets)
                     .buttonStyle(.glassProminent)
             } else {
-                if let kcal = zones?["kcal"] {
-                    Text("Tu zona: \(kcal.range("kcal")) · la marca es tu objetivo de \(Int(kcal.target).formatted())")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
                 HStack(spacing: 10) {
-                    ForEach(Self.macros, id: \.key) { m in
-                        legend(m.title, totals[m.key] ?? 0, zones?[m.key], summary.targets?[m.key], m.color)
+                    ForEach(Self.macros, id: \.key) { n in
+                        tile(n, summary.totals[n.key] ?? 0, zones?[n.key], summary.targets?[n.key])
                     }
                 }
             }
@@ -173,49 +284,50 @@ struct MacroHero: View {
         .sensoryFeedback(.success, trigger: zones?["kcal"]?.status) { old, new in old != nil && new == .inZone }
     }
 
-    @ViewBuilder
-    private func ring(_ key: String, _ value: Double, _ color: Color, lineWidth: CGFloat) -> some View {
-        if let zone = summary.zones?[key] {
-            ZoneRing(zone: zone, color: color, lineWidth: lineWidth)
-        } else {
-            ProgressRing(progress: ratio(value, summary.targets?[key]), color: color, lineWidth: lineWidth)
-        }
+    private func ring(_ n: Nutrient) -> some View {
+        let value = summary.totals[n.key] ?? 0
+        let zone = summary.zones?[n.key]
+        let progress = zone.map { $0.laps(value) } ?? summary.targets?[n.key].flatMap { $0 > 0 ? value / $0 : nil } ?? 0
+        return ActivityRing(progress: progress, color: n.color, symbol: n.symbol, lineWidth: Self.lineWidth, marks: zone?.marks)
     }
 
-    private func center(totals: NutritionMacros, zone: NutrientZone?) -> some View {
-        VStack(spacing: 0) {
-            Text(totals.kcal, format: .number.precision(.fractionLength(0)))
-                .font(.system(size: 30, weight: .bold))
-                .monospacedDigit()
-                .contentTransition(.numericText(value: totals.kcal))
+    private func kcalReadout(zone: NutrientZone?) -> some View {
+        VStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: Self.kcal.symbol).font(.title3).foregroundStyle(Self.kcal.color)
+                Text(summary.totals.kcal, format: .number.precision(.fractionLength(0)))
+                    .font(.system(size: 34, weight: .bold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: summary.totals.kcal))
+                Text("kcal").font(.headline).foregroundStyle(.secondary)
+            }
+            .animation(.snappy, value: summary.totals.kcal)
             if let zone {
-                Text(zone.line("kcal"))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(zone.status == .below ? Color.secondary : zone.tone(Theme.energy))
-                    .contentTransition(.numericText(value: zone.value))
+                StatusLine(zone: zone, unit: "kcal").font(.subheadline.weight(.semibold))
+                Text("Tu zona: \(zone.range("kcal")) · la muesca es tu objetivo de \(Int(zone.target).formatted())")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             } else if let target = summary.targets?.kcal {
-                let left = target - totals.kcal
-                Text(left >= 0 ? "quedan \(Int(left))" : "+\(Int(-left)) kcal")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(left >= 0 ? Color.secondary : Theme.energy)
-                    .contentTransition(.numericText(value: left))
-            } else {
-                Text("kcal").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                let left = target - summary.totals.kcal
+                Text(left >= 0 ? "Quedan \(Int(left).formatted()) de \(Int(target).formatted()) kcal" : "\(Int(-left).formatted()) kcal por encima de \(Int(target).formatted())")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
         }
-        // The innermost ring leaves ~100 pt; "Te pasaste 1.250 kcal" at large text must shrink to stay inside it.
-        .lineLimit(1)
-        .minimumScaleFactor(0.55)
-        .frame(maxWidth: 92)
-        .animation(.snappy, value: totals.kcal)
+        .lineLimit(2)
+        .minimumScaleFactor(0.7)
     }
 
-    private func legend(_ title: String, _ value: Double, _ zone: NutrientZone?, _ target: Double?, _ color: Color) -> some View {
+    private func tile(_ n: Nutrient, _ value: Double, _ zone: NutrientZone?, _ target: Double?) -> some View {
         VStack(spacing: 4) {
-            HStack(spacing: 5) {
-                Circle().fill(color).frame(width: 7, height: 7)
-                Text(title).font(.caption).foregroundStyle(.secondary)
+            Label {
+                Text(n.title).foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: n.symbol).foregroundStyle(n.color)
             }
+            .font(.caption)
+            .labelStyle(.titleAndIcon)
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(value, format: .number.precision(.fractionLength(0)))
                     .font(.headline).monospacedDigit()
@@ -227,10 +339,7 @@ struct MacroHero: View {
                 }
             }
             if let zone {
-                Text(zone.line("g"))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(zone.status == .below ? Color.secondary : zone.tone(color))
-                    .contentTransition(.numericText(value: zone.value))
+                StatusLine(zone: zone, unit: "g").font(.caption2.weight(.semibold))
             }
         }
         .lineLimit(1)
@@ -238,15 +347,10 @@ struct MacroHero: View {
         .padding(.horizontal, 4)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
-        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            if zone?.status == .inZone {
-                RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.body.opacity(0.5), lineWidth: 1)
-            }
-        }
+        .background(n.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .animation(.snappy, value: value)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(zone.map { "\(title): \(Int(value)) g. \($0.line("g")). Zona \($0.range("g"))" } ?? "\(title): \(Int(value)) g")
+        .accessibilityLabel(zone.map { "\(n.title): \(Int(value)) g. \($0.line("g")). Zona \($0.range("g"))" } ?? "\(n.title): \(Int(value)) g")
     }
 
     private var accessibilitySummary: String {
@@ -254,6 +358,28 @@ struct MacroHero: View {
         guard let zones = summary.zones else { return kcal }
         let parts = [("kcal", "Calorías", "kcal")] + Self.macros.map { ($0.key, $0.title, "g") }
         return ([kcal] + parts.compactMap { key, title, unit in zones[key].map { "\(title): \($0.line(unit))" } }).joined(separator: ". ")
+    }
+}
+
+/// «✓ En tu zona», «↓ Faltan 47 g», «↑ Te pasaste 120 kcal»: the words in ink, the symbol tinted.
+private struct StatusLine: View {
+    let zone: NutrientZone
+    let unit: String
+
+    var body: some View {
+        Label {
+            Text(zone.line(unit)).foregroundStyle(zone.status == .below ? .secondary : .primary)
+        } icon: {
+            Image(systemName: zone.statusSymbol).foregroundStyle(zone.statusColor)
+        }
+        .labelStyle(StatusLabelStyle())
+        .contentTransition(.numericText(value: zone.value))
+    }
+}
+
+private struct StatusLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) { configuration.icon; configuration.title }
     }
 }
 
@@ -270,7 +396,7 @@ extension NutritionMacros {
     }
 }
 
-/// "P 30 · C 45 · G 12" in the macro colors.
+/// "P 30 · C 45 · G 12" in the macro colors; the letters, not the colours, say which is which.
 struct MacroLine: View {
     let macros: NutritionMacros
 
@@ -319,11 +445,19 @@ func previewZones(kcal: Double, protein: Double, carbs: Double, fat: Double) -> 
     NarrowPreview { Card { MacroHero(summary: previewZones(kcal: 2_180, protein: 171, carbs: 214, fat: 66)) {} } }
 }
 
-#Preview("Anillos · te pasaste · claro") {
-    NarrowPreview { Card { MacroHero(summary: previewZones(kcal: 2_520, protein: 140, carbs: 290, fat: 92)) {} } }
+#Preview("Anillos · te pasaste · segunda vuelta · claro") {
+    NarrowPreview { Card { MacroHero(summary: previewZones(kcal: 2_520, protein: 230, carbs: 380, fat: 92)) {} } }
         .preferredColorScheme(.light)
 }
 
 #Preview("Anillos · proteína al mínimo · XXL") {
     NarrowPreview(dynamicType: .xxLarge) { Card { MacroHero(summary: previewZones(kcal: 1_900, protein: 162, carbs: 180, fat: 60)) {} } }
+}
+
+#Preview("Anillos · deuteranopía simulada") {
+    NarrowPreview {
+        ColorBlindnessPreview(kind: .deuteranopia, width: 343) {
+            Card { MacroHero(summary: previewZones(kcal: 1_536, protein: 113, carbs: 120, fat: 67)) {} }
+        }
+    }
 }

@@ -205,7 +205,7 @@ struct RegisterSheet: View {
                 Spacer(minLength: 8)
                 Image(systemName: done ? "checkmark.circle.fill" : "plus.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(done ? Theme.body : Theme.energy)
+                    .foregroundStyle(done ? Theme.good : Theme.energy)
                     .contentTransition(.symbolEffect(.replace))
             }
             .contentShape(Rectangle())
@@ -246,7 +246,7 @@ struct RegisterSheet: View {
                 Spacer(minLength: 8)
                 Image(systemName: done ? "checkmark.circle.fill" : "plus.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(done ? Theme.body : Theme.energy)
+                    .foregroundStyle(done ? Theme.good : Theme.energy)
                     .contentTransition(.symbolEffect(.replace))
             }
             .contentShape(Rectangle())

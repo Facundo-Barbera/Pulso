@@ -195,11 +195,11 @@ private struct MedicationHero: View {
     var body: some View {
         VStack(spacing: 14) {
             ZStack {
-                Circle().stroke((done ? Theme.body : Color.accentColor).opacity(0.15), lineWidth: 18)
+                Circle().stroke((done ? Theme.good : Color.accentColor).opacity(0.15), lineWidth: 18)
                 Circle()
                     .trim(from: 0, to: progress)
                     .stroke(
-                        done ? AnyShapeStyle(Theme.body.gradient) : AnyShapeStyle(AngularGradient(colors: [Color.accentColor, Theme.body], center: .center)),
+                        done ? AnyShapeStyle(Theme.good.gradient) : AnyShapeStyle(AngularGradient(colors: [Color.accentColor, Theme.good], center: .center)),
                         style: StrokeStyle(lineWidth: 18, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
@@ -207,7 +207,7 @@ private struct MedicationHero: View {
                     if left.isEmpty {
                         Image(systemName: free ? "moon.zzz.fill" : "checkmark")
                             .font(.system(size: 48, weight: .bold))
-                            .foregroundStyle(free ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.body))
+                            .foregroundStyle(free ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.good))
                             .symbolEffect(.bounce, value: done)
                         Text(free ? "Libre" : "Listo").font(.subheadline).foregroundStyle(.secondary)
                     } else {
@@ -227,7 +227,7 @@ private struct MedicationHero: View {
             Text(headline)
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center)
-                .foregroundStyle(done ? AnyShapeStyle(Theme.body) : AnyShapeStyle(.primary))
+                .foregroundStyle(done ? AnyShapeStyle(Theme.good) : AnyShapeStyle(.primary))
                 .contentTransition(.opacity)
 
             if !left.isEmpty {
@@ -268,14 +268,15 @@ private struct FlowChips: View {
         ForEach(items) { item in
             HStack(spacing: 5) {
                 if item.state == .entreno { Image(systemName: "figure.strengthtraining.traditional").foregroundStyle(Theme.training) }
+                if item.state == .atrasada { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Theme.caution) }
                 Text(item.medication.name).fontWeight(.semibold)
-                Text("· \(when(item))").foregroundStyle(item.state == .atrasada ? AnyShapeStyle(Theme.energy) : AnyShapeStyle(.secondary))
+                Text("· \(when(item))").foregroundStyle(item.state == .atrasada ? AnyShapeStyle(Theme.caution) : AnyShapeStyle(.secondary))
             }
             .font(.footnote)
             .lineLimit(1)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .glassEffect(.regular.tint(item.state == .atrasada ? Theme.energy.opacity(0.18) : nil), in: .capsule)
+            .glassEffect(.regular.tint(item.state == .atrasada ? Theme.caution.opacity(0.18) : nil), in: .capsule)
         }
     }
 
@@ -305,16 +306,20 @@ private struct MedicationRow: View {
             }
             Spacer(minLength: 0)
             if let stock = medication.stock {
-                Text("\(Int(stock))")
+                // Low stock gets an exclamation as well as the warm tint.
+                HStack(spacing: 3) {
+                    if medication.lowStock { Image(systemName: "exclamationmark.triangle.fill").imageScale(.small) }
+                    Text("\(Int(stock))")
+                }
                     .font(.subheadline.weight(.semibold))
                     .fontDesign(.rounded)
                     .monospacedDigit()
                     .lineLimit(1)
                     .layoutPriority(1)
-                    .foregroundStyle(medication.lowStock ? Theme.energy : .secondary)
+                    .foregroundStyle(medication.lowStock ? Theme.caution : .secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background((medication.lowStock ? Theme.energy : Color.secondary).opacity(0.12), in: .capsule)
+                    .background((medication.lowStock ? Theme.caution : Color.secondary).opacity(0.12), in: .capsule)
                     .accessibilityLabel("Quedan \(Int(stock)) dosis")
             }
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)

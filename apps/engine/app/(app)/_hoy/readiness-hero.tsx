@@ -1,37 +1,48 @@
 import type { Readiness, ReadinessFactor } from "@pulso/contract";
-import { Activity, HeartPulse, Moon, type LucideIcon } from "lucide-react";
+import { Activity, CircleCheck, CircleDashed, CircleDot, HeartPulse, Moon, TriangleAlert, type LucideIcon } from "lucide-react";
 import { Card } from "../../_ui/card";
 import { Ring } from "../../_ui/ring";
 
-const LEVEL: Record<Readiness["level"], { color: string; headline: string }> = {
-  high: { color: "var(--success)", headline: "Listo para exigirte" },
-  medium: { color: "var(--warning)", headline: "Un día normal" },
-  low: { color: "var(--destructive)", headline: "Mejor ir suave" },
-  unknown: { color: "var(--muted-foreground)", headline: "Todavía sin lectura" },
+/** Each level as colour, icon and word together: never green against red, never the colour alone. */
+const LEVEL: Record<Readiness["level"], { color: string; icon: LucideIcon; word: string; headline: string }> = {
+  high: { color: "var(--state-good)", icon: CircleCheck, word: "Alta", headline: "Listo para exigirte" },
+  medium: { color: "var(--state-fair)", icon: CircleDot, word: "Media", headline: "Un día normal" },
+  low: { color: "var(--state-caution)", icon: TriangleAlert, word: "Baja", headline: "Mejor ir suave" },
+  unknown: { color: "var(--muted-foreground)", icon: CircleDashed, word: "Sin datos", headline: "Todavía sin lectura" },
 };
 
 const FACTOR_ICON: Record<ReadinessFactor["key"], { icon: LucideIcon; color: string }> = {
   hrv: { icon: Activity, color: "var(--domain-heart)" },
-  resting_hr: { icon: HeartPulse, color: "var(--domain-protein)" },
+  resting_hr: { icon: HeartPulse, color: "var(--domain-heart)" },
   sleep: { icon: Moon, color: "var(--domain-sleep)" },
 };
 
 /** The page's one hero: the readiness ring, what it means today, and the three factors behind it. */
 export function ReadinessHero({ readiness }: { readiness: Readiness }) {
   const level = LEVEL[readiness.level];
+  const LevelIcon = level.icon;
   return (
     <Card className="relative overflow-hidden !p-6 md:!p-8">
       {/* The brand, once: a faint glow in the corner. */}
       <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.13] blur-3xl dark:opacity-20" style={{ background: "var(--pulso-gradient)" }} aria-hidden />
       <div className="relative flex flex-col items-center gap-7 md:flex-row md:items-center md:gap-10">
-        <Ring value={readiness.score} color={level.color} glow={readiness.score !== null} size={184} stroke={15} label={readiness.score === null ? "Preparación sin datos" : `Preparación ${readiness.score} de 100`}>
+        <Ring value={readiness.score} color={level.color} glow={readiness.score !== null} size={184} stroke={15} label={readiness.score === null ? "Preparación sin datos" : `Preparación ${level.word.toLowerCase()}: ${readiness.score} de 100`}>
           <div>
             <p className="tabular text-[52px] leading-none font-semibold tracking-tight">{readiness.score ?? "—"}</p>
             <p className="text-muted-foreground mt-1.5 text-[12px] font-medium tracking-wide uppercase">Preparación</p>
           </div>
         </Ring>
         <div className="w-full min-w-0 flex-1">
-          <p className="text-center text-[22px] font-semibold tracking-tight md:text-left" style={{ color: readiness.level === "unknown" ? undefined : level.color }}>
+          <p className="flex justify-center md:justify-start">
+            <span
+              className="inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold"
+              style={{ color: level.color, background: `color-mix(in oklab, ${level.color} 14%, transparent)` }}
+            >
+              <LevelIcon className="size-3.5" strokeWidth={2.4} aria-hidden />
+              Preparación {level.word.toLowerCase()}
+            </span>
+          </p>
+          <p className="mt-2 text-center text-[22px] font-semibold tracking-tight md:text-left" style={{ color: readiness.level === "unknown" ? undefined : level.color }}>
             {level.headline}
           </p>
           <p className="text-muted-foreground mt-1.5 text-center text-[15px] leading-relaxed md:text-left">{readiness.explanation}</p>

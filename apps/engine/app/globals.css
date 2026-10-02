@@ -1073,21 +1073,45 @@ html:not(.dark)[data-telar-shell][data-translucent] {
   --pulso-violet: #8a2be2;
   --pulso-gradient: linear-gradient(135deg, var(--pulso-coral), var(--pulso-rose) 50%, var(--pulso-violet));
 
-  /* Domain colours, the same as iOS's Theme.swift so a chart reads the same on both. */
-  --domain-training: rgb(140 107 250);
-  --domain-body: rgb(51 199 158);
-  --domain-energy: rgb(250 115 51);
-  --domain-protein: rgb(245 92 107);
-  --domain-carbs: rgb(250 184 64);
-  --domain-fat: rgb(89 158 250);
+  /* Domain colours, the same as iOS's Theme.swift so a chart reads the same on both.
+     Picked for red-green colour blindness: kcal / protein / carbs / fat (the Dieta
+     rings) and body / energy / training (the Hoy goals) stay apart under
+     deuteranopia, protanopia and tritanopia by lightness and the blue–yellow axis.
+     Light steps here, dark steps under .dark below. Never the only cue: rings
+     carry an icon, legends a label. */
+  --domain-training: #7a55e8;
+  --domain-body: #0fa88c;
+  --domain-energy: #e8650f;
+  --domain-protein: #2b5fd9;
+  --domain-carbs: #16b0c8;
+  --domain-fat: #e0a800;
+  --domain-water: #2e9be0;
   --domain-sleep: oklch(0.66 0.14 285);
   --domain-medication: oklch(0.7 0.11 190);
   --domain-heart: oklch(0.66 0.19 18);
+
+  /* State without red-vs-green: good is blue, "look at this" is orange, the middle
+     of a three-step score is amber. Always with an icon and words. */
+  --state-good: #2563eb;
+  --state-fair: #b88a00;
+  --state-caution: #d9600b;
 
   /* The Mac window's header: the traffic lights are centred in it (apps/desktop/main.js). */
   --titlebar-height: 48px;
   --sidebar-width: 248px;
   --sidebar-collapsed-width: 72px;
+}
+.dark {
+  --domain-training: #a07cff;
+  --domain-body: #2ccfb0;
+  --domain-energy: #f5862a;
+  --domain-protein: #3f7df5;
+  --domain-carbs: #59d8e6;
+  --domain-fat: #f7d44c;
+  --domain-water: #4fb8ff;
+  --state-good: #4d9bff;
+  --state-fair: #f7d44c;
+  --state-caution: #ff9f45;
 }
 /* Lights at x 18 + three 12px lights and two 8px gaps (ends at 70) + a margin. */
 [data-telar-shell="macos"] {
@@ -1104,6 +1128,10 @@ html:not(.dark)[data-telar-shell][data-translucent] {
   --color-sleep: var(--domain-sleep);
   --color-medication: var(--domain-medication);
   --color-heart: var(--domain-heart);
+  --color-water: var(--domain-water);
+  --color-good: var(--state-good);
+  --color-fair: var(--state-fair);
+  --color-caution: var(--state-caution);
 }
 
 /* Numbers line up and do not jitter as they change. */
@@ -1135,3 +1163,70 @@ html:not(.dark)[data-telar-shell][data-translucent] {
 /* The phone browser: room for the home indicator and the notch. */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
 .pt-safe { padding-top: env(safe-area-inset-top); }
+
+/* Sleep stages: one blue ramp told apart by lightness (deep darkest, REM lightest)
+   and awake in orange, so the four read apart without hue. Always with a label. */
+:root {
+  --sleep-deep: #2f3fb8;
+  --sleep-core: #3c7ff0;
+  --sleep-rem: #5fbff0;
+  --sleep-awake: #e8650f;
+}
+.dark {
+  --sleep-deep: #4b5bea;
+  --sleep-core: #4d9bff;
+  --sleep-rem: #a8deff;
+  --sleep-awake: #ffa24d;
+}
+
+/* A dot that keys a series next to its label: a hairline edge keeps light steps
+   (REM, fat) visible on the card. */
+.legend-dot {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent);
+}
+
+/* More contrast asked for: tracks and zone marks stop being whispers, legend dots
+   get a real edge, the in-zone band in charts gets solid edges. */
+@media (prefers-contrast: more) {
+  .ring-track {
+    stroke: color-mix(in oklab, var(--foreground) 22%, var(--muted));
+  }
+  /* The Dieta rings keep each ring's own tint on the track, just stronger. */
+  .activity-track {
+    stroke-opacity: 0.4;
+  }
+  .zone-hatch {
+    opacity: 1;
+    stroke-opacity: 0.9;
+    stroke-width: 2px;
+  }
+  .zone-mark {
+    opacity: 1;
+    stroke-opacity: 1;
+    stroke-width: 3px;
+  }
+  .zone-band {
+    fill-opacity: 0.24;
+  }
+  .zone-band-edge {
+    stroke-opacity: 0.9;
+  }
+  .legend-dot {
+    box-shadow: 0 0 0 1.5px var(--foreground);
+  }
+}
+
+/* Windows high contrast and the like: let the system colours through, keep the
+   stage and legend marks visible as outlines rather than vanishing fills. */
+@media (forced-colors: active) {
+  .legend-dot {
+    forced-color-adjust: none;
+    outline: 1px solid CanvasText;
+  }
+  .ring-track {
+    stroke: GrayText;
+  }
+  .zone-mark {
+    stroke: CanvasText;
+  }
+}

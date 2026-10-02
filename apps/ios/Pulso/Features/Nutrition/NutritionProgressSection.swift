@@ -17,11 +17,11 @@ struct NutritionProgressSection: View {
             let averages = WeekAverages(week: week, water: water)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 StatTile(title: "Media diaria", value: averages.kcal.map { Int($0).formatted() } ?? "—", unit: "kcal",
-                         systemImage: "flame.fill", tint: Theme.energy)
+                         systemImage: Theme.energySymbol, tint: Theme.energy)
                 StatTile(title: "Proteína media", value: averages.protein.map { Int($0).formatted() } ?? "—", unit: "g",
-                         systemImage: "bolt.heart.fill", tint: Theme.protein)
+                         systemImage: Theme.proteinSymbol, tint: Theme.protein)
                 StatTile(title: "Días en zona", value: "\(averages.onTarget)", unit: "de \(averages.logged) días",
-                         systemImage: "target", tint: Theme.body)
+                         systemImage: "target", tint: Theme.good)
                 StatTile(title: "Agua media", value: averages.waterMl.map { settings.format($0) } ?? "—",
                          systemImage: "drop.fill", tint: Theme.water)
             }

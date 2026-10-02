@@ -1,14 +1,20 @@
 import type { SleepNight, SleepStage } from "@pulso/contract";
+import { CircleCheck } from "lucide-react";
 import { Card } from "../../../_ui/card";
+import { cn } from "../../../_ui/cn";
 import { fmtMinutes, fmtTime } from "../../../_ui/format";
 import { Ring } from "../../../_ui/ring";
 
-/** The four stages as drawn, deepest last; colours match Hoy's sleep card. */
+/**
+ * The four stages as drawn, deepest last; Hoy's sleep card uses these too.
+ * Asleep stages are one blue ramp apart by lightness, awake is orange: every
+ * mark carries its label, so none depends on hue.
+ */
 export const STAGES = [
-  { key: "awake", label: "Despierto", color: "var(--domain-carbs)" },
-  { key: "rem", label: "REM", color: "oklch(0.78 0.1 230)" },
-  { key: "core", label: "Ligero", color: "var(--domain-sleep)" },
-  { key: "deep", label: "Profundo", color: "oklch(0.5 0.16 285)" },
+  { key: "awake", label: "Despierto", color: "var(--sleep-awake)" },
+  { key: "rem", label: "REM", color: "var(--sleep-rem)" },
+  { key: "core", label: "Ligero", color: "var(--sleep-core)" },
+  { key: "deep", label: "Profundo", color: "var(--sleep-deep)" },
 ] as const;
 
 type StageKey = (typeof STAGES)[number]["key"];
@@ -32,6 +38,7 @@ function vsTarget(asleep: number, target: number): string {
 export function NightHero({ night, targetMin }: { night: SleepNight; targetMin: number }) {
   const m = night.minutes;
   const staged = m.deep + m.core + m.rem + m.awake;
+  const met = m.asleep >= targetMin - 5;
   return (
     <Card className="relative overflow-hidden !p-6 md:!p-8">
       <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: "var(--domain-sleep)" }} aria-hidden />
@@ -45,7 +52,8 @@ export function NightHero({ night, targetMin }: { night: SleepNight; targetMin: 
         <div className="w-full min-w-0 flex-1">
           <p className="text-muted-foreground text-center text-[13px] font-medium md:text-left">Dormiste</p>
           <p className="tabular text-center text-[40px] leading-tight font-semibold tracking-tight md:text-left">{fmtMinutes(m.asleep)}</p>
-          <p className="mt-1 text-center text-[15px] md:text-left" style={{ color: m.asleep >= targetMin - 5 ? "var(--success)" : undefined }}>
+          <p className={cn("mt-1 flex items-center justify-center gap-1.5 text-[15px] md:justify-start", met && "text-good font-medium")}>
+            {met && <CircleCheck className="size-4 shrink-0" strokeWidth={2.4} aria-hidden />}
             {vsTarget(m.asleep, targetMin)}
           </p>
           <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">
@@ -53,13 +61,13 @@ export function NightHero({ night, targetMin }: { night: SleepNight; targetMin: 
           </p>
           {staged > 0 && night.stagePct && (
             <div className="mt-5">
-              <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full">
+              <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={[...STAGES].reverse().map((s) => `${s.label} ${fmtMinutes(m[s.key])}`).join(", ")}>
                 {[...STAGES].reverse().map((s) => (m[s.key] > 0 ? <div key={s.key} style={{ flexGrow: m[s.key], background: s.color }} title={`${s.label}: ${fmtMinutes(m[s.key])}`} /> : null))}
               </div>
               <div className="text-muted-foreground mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
                 {[...STAGES].reverse().map((s) => (
                   <span key={s.key} className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full" style={{ background: s.color }} />
+                    <span className="legend-dot size-2 rounded-full" style={{ background: s.color }} />
                     {s.label} <span className="tabular text-foreground font-medium">{fmtMinutes(m[s.key])}</span>
                   </span>
                 ))}
@@ -91,7 +99,7 @@ export function Hypnogram({ night }: { night: SleepNight }) {
         <div className="grid" style={{ gridTemplateRows: `repeat(${rows.length}, ${ROW_H}px)` }}>
           {STAGES.map((s) => (
             <span key={s.key} className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
-              <span className="size-1.5 rounded-full" style={{ background: s.color }} />
+              <span className="legend-dot size-2 rounded-full" style={{ background: s.color }} />
               {s.label}
             </span>
           ))}
@@ -105,7 +113,11 @@ export function Hypnogram({ night }: { night: SleepNight }) {
             if (!row) return null;
             const r = rows.indexOf(row);
             const stage = STAGES[r]!;
-            return <rect key={i} x={x(seg.start)} y={r * ROW_H + 4} width={Math.max(1.5, x(seg.end) - x(seg.start))} height={ROW_H - 8} rx="3" fill={stage.color} opacity={seg.stage === "asleep" ? 0.55 : 1} />;
+            return (
+              <rect key={i} x={x(seg.start)} y={r * ROW_H + 4} width={Math.max(1.5, x(seg.end) - x(seg.start))} height={ROW_H - 8} rx="3" fill={stage.color} opacity={seg.stage === "asleep" ? 0.55 : 1}>
+                <title>{`${stage.label}: ${fmtTime(seg.start)} – ${fmtTime(seg.end)}`}</title>
+              </rect>
+            );
           })}
         </svg>
       </div>
@@ -122,7 +134,7 @@ export function Hypnogram({ night }: { night: SleepNight }) {
         {[...STAGES].reverse().map((s) => (
           <div key={s.key}>
             <p className="text-muted-foreground flex items-center gap-1.5 text-[12px] font-medium">
-              <span className="size-1.5 rounded-full" style={{ background: s.color }} />
+              <span className="legend-dot size-2 rounded-full" style={{ background: s.color }} />
               {s.label}
             </p>
             <p className="tabular mt-1 text-[18px] font-semibold tracking-tight">{fmtMinutes(night.minutes[s.key])}</p>

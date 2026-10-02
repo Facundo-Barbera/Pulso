@@ -197,7 +197,7 @@ function Actions({ text, className }: { text: string; className?: string }) {
   return (
     <div className={cn("-ml-1.5 flex items-center gap-0.5 transition-opacity", className)}>
       <button onClick={async () => setCopied(await copyText(text))} className={button} aria-label={copied ? "Copiado" : "Copiar"} title={copied ? "Copiado" : "Copiar"}>
-        {copied ? <Check className="text-success size-4" /> : <Copy className="size-4" />}
+        {copied ? <Check className="text-good size-4" /> : <Copy className="size-4" />}
       </button>
       {canShare && (
         <button onClick={() => navigator.share({ text }).catch(() => undefined)} className={button} aria-label="Compartir" title="Compartir">

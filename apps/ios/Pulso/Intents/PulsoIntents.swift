@@ -119,7 +119,12 @@ struct ReadinessSnippet: View {
             }
             .frame(width: 84, height: 84)
             VStack(alignment: .leading, spacing: 4) {
-                Text(readiness.title).font(.headline).lineLimit(2)
+                Label {
+                    Text(readiness.title).lineLimit(2)
+                } icon: {
+                    if readiness.score != nil { Image(systemName: readiness.symbol).foregroundStyle(readiness.color) }
+                }
+                .font(.headline)
                 Text(readiness.explanation).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
         }

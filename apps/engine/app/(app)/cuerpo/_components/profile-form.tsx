@@ -61,7 +61,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         {busy ? "Guardando…" : "Guardar perfil"}
       </button>
       {done && !dirty ? (
-        <span className="text-success flex items-center gap-1 text-[13px] font-medium" aria-live="polite">
+        <span className="text-good flex items-center gap-1 text-[13px] font-medium" aria-live="polite">
           <Check className="size-4" /> Guardado
         </span>
       ) : (
