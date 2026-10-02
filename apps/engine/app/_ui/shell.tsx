@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CommandPalette } from "./command-palette";
 import { cn } from "./cn";
 import { PulsoMark } from "./pulso-mark";
-import { isActive, SECTIONS, type Section } from "./sections";
+import { GROUPS, isActive, SECTIONS, type Section } from "./sections";
 
 export const SIDEBAR_COOKIE = "pulso_sidebar";
 
@@ -76,13 +76,29 @@ export function Shell({ collapsed: initiallyCollapsed, who, children }: { collap
           )}
         </div>
 
-        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pt-2" aria-label="Secciones">
-          {SECTIONS.map((section, i) => (
-            <SidebarRow key={section.href} section={section} index={i} active={isActive(section.href, pathname)} collapsed={collapsed} />
-          ))}
+        <nav className="flex flex-1 flex-col overflow-y-auto px-3 pt-1" aria-label="Secciones">
+          {GROUPS.map((group, g) => {
+            const rows = SECTIONS.filter((s) => s.group === group.id);
+            if (rows.length === 0) return null;
+            return (
+              <section key={group.id} aria-labelledby={`nav-${group.id}`} className={cn("flex flex-col gap-0.5", g > 0 && (collapsed ? "mt-2" : "mt-4"))}>
+                {/* Folded, a hairline stands in for the heading. */}
+                {collapsed && g > 0 && <span className="bg-sidebar-border mx-auto mb-2 h-px w-6" aria-hidden />}
+                <h2 id={`nav-${group.id}`} className={cn("text-muted-foreground/80 px-2.5 pb-1 text-[11px] font-semibold tracking-wide uppercase", collapsed && "sr-only")}>
+                  {group.label}
+                </h2>
+                {rows.map((section) => (
+                  <SidebarRow key={section.href} section={section} index={SECTIONS.indexOf(section)} active={isActive(section.href, pathname)} collapsed={collapsed} />
+                ))}
+              </section>
+            );
+          })}
         </nav>
 
         <div className={cn("flex shrink-0 flex-col gap-1 p-3", collapsed && "items-center")}>
+          {SECTIONS.filter((s) => !s.group).map((section) => (
+            <SidebarRow key={section.href} section={section} index={SECTIONS.indexOf(section)} active={isActive(section.href, pathname)} collapsed={collapsed} />
+          ))}
           <button
             onClick={() => setPalette(true)}
             className={cn(
