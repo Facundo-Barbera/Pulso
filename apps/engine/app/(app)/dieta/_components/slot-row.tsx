@@ -1,7 +1,7 @@
 "use client";
 
 import type { SlotStatus } from "@pulso/contract";
-import { ArrowLeftRight, Check, ChefHat, Ellipsis, Minus, PenLine, RotateCcw, SkipForward, Store, Utensils, type LucideIcon } from "lucide-react";
+import { ArrowRightLeft, Check, ChefHat, Ellipsis, PenLine, RotateCcw, SkipForward, Store, Trash2, Utensils, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SlotView } from "@/src/web/dieta-plan";
 import { cn } from "../../../_ui/cn";
@@ -15,34 +15,48 @@ export const statusLabel = (slot: SlotView) => (slot.missed ? "Sin registrar" : 
 
 const fmtKcal = new Intl.NumberFormat("es", { maximumFractionDigits: 0 });
 
-/** The circle at the start of a row: what happened to the meal; on a pending one, a tap eats it. */
-function StatusMark({ slot, onEat, onUneat, busy }: { slot: SlotView; onEat: () => void; onUneat: () => void; busy: boolean }) {
-  const base = "focus-visible:ring-ring grid size-8 shrink-0 place-items-center rounded-full outline-none transition-colors focus-visible:ring-2";
-  if (slot.status === "planned" && slot.later) return <span className={cn(base, "border-border border-2 border-dashed")} aria-hidden />;
-  if (slot.status === "planned")
+/** The one mark a meal shows, same as the phone: filled as planned, half for something else, hollow pending, dashed when skipped or unanswered. */
+export type MealMark = "asPlanned" | "changed" | "pending" | "unanswered" | "skipped";
+
+export function markOf(slot: SlotView): MealMark {
+  if (slot.status === "planned") return slot.missed ? "unanswered" : "pending";
+  if (slot.status === "skipped") return "skipped";
+  if (slot.status === "eaten") return slot.real?.asPlanned === false ? "changed" : "asPlanned";
+  return slot.real?.asPlanned ? "asPlanned" : "changed";
+}
+
+const MARK_LABELS: Record<MealMark, string> = { asPlanned: "Como estaba planeado", changed: "Otra cosa", pending: "Pendiente", unanswered: "Sin registrar", skipped: "Saltada" };
+
+/** The mark at the start of a row, shape first (colour only backs it up); on a pending meal of today, a tap eats it. */
+function StatusMark({ slot, onEat, busy }: { slot: SlotView; onEat: () => void; busy: boolean }) {
+  const mark = markOf(slot);
+  const dot = "block size-3.5 rounded-full";
+  const shape = {
+    asPlanned: <span className={cn(dot, "bg-good")} />,
+    changed: <span className={cn(dot, "border-good border-2")} style={{ background: "linear-gradient(90deg, var(--color-good) 50%, transparent 50%)" }} />,
+    pending: <span className={cn(dot, "border-muted-foreground/60 border-2")} />,
+    unanswered: <span className={cn(dot, "border-caution border-2 border-dashed")} />,
+    skipped: <span className={cn(dot, "border-muted-foreground/40 border-2 border-dashed")} />,
+  }[mark];
+  const base = "focus-visible:ring-ring grid size-8 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-2";
+  if (mark === "pending" && !slot.later)
     return (
-      <button onClick={onEat} disabled={busy} className={cn(base, "group border-border hover:border-body hover:bg-body/10 border-2")} aria-label={`Me lo comí: ${slot.label}`} title="Me lo comí">
-        <Check className="text-body size-4 opacity-0 transition-opacity group-hover:opacity-60" strokeWidth={3} />
+      <button onClick={onEat} disabled={busy} className={cn(base, "group hover:bg-good/10")} aria-label={`Me lo comí: ${slot.label}`} title="Me lo comí">
+        <span className="group-hover:hidden">{shape}</span>
+        <Check className="text-good hidden size-4 group-hover:block" strokeWidth={3} />
       </button>
     );
-  if (slot.status === "eaten")
-    return (
-      <button onClick={onUneat} disabled={busy} className={cn(base, "bg-body text-background")} aria-label={`Desmarcar ${slot.label}`} title="Comida · tocar para desmarcar">
-        <Check className="size-4" strokeWidth={3} />
-      </button>
-    );
-  const Icon = slot.status === "replaced" ? ArrowLeftRight : Minus;
   return (
-    <span className={cn(base, slot.status === "replaced" ? "bg-body/15 text-body" : "bg-muted text-muted-foreground")} aria-hidden>
-      <Icon className="size-4" strokeWidth={2.4} />
+    <span className={base} role="img" aria-label={MARK_LABELS[mark]}>
+      {shape}
     </span>
   );
 }
 
-type MenuItem = { label: string; icon: LucideIcon; run: () => void };
+export type MenuItem = { label: string; icon: LucideIcon; run: () => void; danger?: boolean };
 
 /** A small popover menu: closes on a pick, a click outside or Escape. */
-function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
+export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -81,9 +95,9 @@ function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
                   setOpen(false);
                   item.run();
                 }}
-                className="hover:bg-muted focus-visible:bg-muted flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-[14px] outline-none"
+                className={cn("hover:bg-muted focus-visible:bg-muted flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-left text-[14px] outline-none", item.danger && "text-destructive")}
               >
-                <item.icon className="text-muted-foreground size-4" />
+                <item.icon className={cn("size-4", item.danger ? "text-destructive" : "text-muted-foreground")} />
                 {item.label}
               </button>
             </li>
@@ -95,13 +109,13 @@ function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
 }
 
 /**
- * One meal of the day as Planeado → Real: what was eaten, prominent, over what
- * was planned, small and struck; a pending meal shows the plan, and once well
- * past its time («sin registrar») two quick answers. The menu has what can
- * happen to it — eaten, something else (opens «Registrar» tied to it), eaten
- * out, skipped, or no time to cook today.
+ * One meal of the day, folded to a line like on the phone: the meal and its time,
+ * what was eaten (or what's planned, quieter), a small «en lugar de …» when it
+ * changed, and the kcal. Once well past its time («sin registrar») two quick
+ * answers. The menu has what can happen to it — pending: eaten, something else,
+ * eaten out, skipped, no time to cook; eaten: move it to another meal or delete it.
  */
-export function SlotRow({ slot, onOpen, showTitle = true }: { slot: SlotView; onOpen?: () => void; showTitle?: boolean }) {
+export function SlotRow({ slot, onOpen, showTitle = true, time, moveTargets = [] }: { slot: SlotView; onOpen?: () => void; showTitle?: boolean; time?: string; moveTargets?: SlotView[] }) {
   const { register } = useDieta();
   const actions = usePlanActions();
   const [busy, setBusy] = useState(false);
@@ -124,41 +138,37 @@ export function SlotRow({ slot, onOpen, showTitle = true }: { slot: SlotView; on
           { label: slot.later ? "Me lo voy a saltar" : "Me lo salté", icon: SkipForward, run: busyWhile(() => actions.skip(slot)) },
           ...(slot.cooks ? [{ label: slot.later ? "Ese día no cocino" : "Hoy no cocino", icon: ChefHat, run: busyWhile(() => actions.noTimeToCook(slot)) }] : []),
         ]
-      : slot.status === "eaten"
-        ? [{ label: "No me lo comí", icon: RotateCcw, run: busyWhile(() => actions.uneat(slot)) }]
+      : slot.entryIds.length > 0
+        ? [
+            ...moveTargets.map((target) => ({ label: `Mover a ${target.title.toLowerCase()}`, icon: ArrowRightLeft, run: busyWhile(() => actions.move(slot.entryIds, target)) })),
+            { label: slot.status === "eaten" ? "No me lo comí" : "Borrar lo que comí", icon: slot.status === "eaten" ? RotateCcw : Trash2, run: busyWhile(() => actions.uneat(slot)), danger: slot.status !== "eaten" },
+          ]
         : [];
 
   const real = slot.real;
+  const mark = markOf(slot);
+  const eaten = mark === "asPlanned" || mark === "changed";
   const kcal = real ? real.macros.kcal : slot.kcal;
-  const detail = [showTitle && slot.title, slot.source].filter(Boolean).join(" · ");
-  const tone = slot.missed ? "text-energy" : slot.status === "planned" || slot.status === "skipped" ? "text-muted-foreground" : "text-body";
   const quick = "bg-muted hover:bg-accent focus-visible:ring-ring inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium outline-none focus-visible:ring-2 disabled:opacity-50";
+  // The first line: the meal and its time, or what's planned's source on the plan's own rows.
+  const head = showTitle ? slot.title : (slot.source ?? null);
+  const state = mark === "unanswered" || mark === "skipped" ? MARK_LABELS[mark] : null;
 
   return (
-    <li className={cn("hover:bg-muted/50 flex min-h-14 items-center gap-3 rounded-xl px-2 py-1.5", busy && "opacity-60")}>
-      <StatusMark slot={slot} busy={busy} onEat={busyWhile(() => actions.eat(slot))} onUneat={busyWhile(() => actions.uneat(slot))} />
+    <li className={cn("hover:bg-muted/50 flex min-h-14 items-center gap-3 rounded-xl px-2 py-2", busy && "opacity-60")}>
+      <StatusMark slot={slot} busy={busy} onEat={busyWhile(() => actions.eat(slot))} />
       <div className="min-w-0 flex-1">
         <button type="button" onClick={onOpen} disabled={!onOpen} className="focus-visible:ring-ring block w-full min-w-0 rounded-lg text-left outline-none focus-visible:ring-2 disabled:cursor-default">
-          {real ? (
-            <>
-              <span className="block truncate text-[14px] font-medium">{real.label}</span>
-              <span className="text-muted-foreground block truncate text-[12px]">
-                {real.asPlanned ? (
-                  "Como estaba planeado"
-                ) : (
-                  <>
-                    Planeado: <span className="line-through decoration-1">{slot.label}</span>
-                  </>
-                )}
-                {showTitle && ` · ${slot.title}`}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className={cn("block truncate text-[14px] font-medium", slot.status === "skipped" && "text-muted-foreground line-through decoration-1")}>{slot.label}</span>
-              <span className="text-muted-foreground block truncate text-[12px]">{detail || statusLabel(slot)}</span>
-            </>
+          {(head || time || state) && (
+            <span className="flex items-baseline gap-1.5">
+              {head && <span className={cn("truncate", showTitle ? "text-[14px] font-semibold" : "text-muted-foreground text-[12px]")}>{head}</span>}
+              {time && <span className="text-muted-foreground tabular shrink-0 text-[12px]">{time}</span>}
+              {state && <span className={cn("shrink-0 text-[12px] font-medium", mark === "unanswered" ? "text-caution" : "text-muted-foreground")}>{state}</span>}
+            </span>
           )}
+          <span className={cn("block truncate text-[14px]", eaten ? "text-foreground" : "text-muted-foreground")}>{real?.label ?? slot.label}</span>
+          {mark === "changed" && real && <span className="text-muted-foreground block truncate text-[12px]">en lugar de {slot.label}</span>}
+          <span className="sr-only">{MARK_LABELS[mark]}</span>
         </button>
         {slot.missed && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -173,11 +183,7 @@ export function SlotRow({ slot, onOpen, showTitle = true }: { slot: SlotView; on
           </div>
         )}
       </div>
-      <span className="hidden shrink-0 text-right sm:block">
-        <span className={cn("block text-[12px] font-medium", tone)}>{statusLabel(slot)}</span>
-        <span className="text-muted-foreground tabular block text-[12px]">{fmtKcal.format(kcal)} kcal</span>
-      </span>
-      <span className="text-muted-foreground tabular shrink-0 text-[12px] sm:hidden">{fmtKcal.format(kcal)}</span>
+      <span className={cn("tabular shrink-0 text-[13px] font-medium", eaten ? "text-foreground" : "text-muted-foreground", mark === "skipped" && "opacity-60")}>{fmtKcal.format(kcal)} kcal</span>
       <RowMenu label={slot.label} items={items} />
     </li>
   );

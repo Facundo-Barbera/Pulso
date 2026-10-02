@@ -97,6 +97,8 @@ export function usePlanActions() {
       noTimeToCook: (slot: SlotView) => op({ op: "no_time_to_cook", date: slot.date, slot: slot.slot }),
       /** «Lo cambié por…» after the replacement was logged: ties it to the slot. Undoing also deletes the log. */
       replace: (slot: SlotView, entry: MealEntry) => op({ op: "replace", slotId: slot.id, date: slot.date, entryIds: [entry.id] }, () => forget([entry.id])),
+      /** «Mover a la cena»: entries already logged now count for that meal; the one they leave settles. */
+      move: (entryIds: string[], slot: SlotView) => op({ op: "replace", slotId: slot.id, date: slot.date, entryIds }),
       cooked: (prep: PrepBatch, cooked = true) => op({ op: "prep_cooked", prepId: prep.id, cooked }),
     }),
     [pending, undo, op, fail, notify, forget, refresh],

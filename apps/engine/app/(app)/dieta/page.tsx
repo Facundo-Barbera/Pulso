@@ -10,6 +10,7 @@ import { DietaProvider, RegisterButton } from "./_components/client";
 import { MacroHero, Timeline, TodayPlan, WeekCard } from "./_components/hoy";
 import { LivingPlanView, NoPlan } from "./_components/plan";
 import { ProgressView } from "./_components/progress";
+import { Extras } from "./_components/extras";
 import { WaterCard } from "./_components/water-card";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,8 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
   const progress = dietaProgress(today);
   const slots = view === "hoy" ? dietaDaySlots(date, today) : null;
   const living = view === "plan" ? dietaLivingPlan(today) : null;
+  const entries = day.moments.flatMap((m) => m.entries);
+  const extras = slots ? entries.filter((e) => slots.extraIds.includes(e.id)) : [];
   const next = date === today ? (slots?.slots.find((s) => s.status === "planned") ?? null) : null;
 
   const arrow = "text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2";
@@ -112,7 +115,10 @@ export default async function Dieta({ searchParams }: { searchParams: Promise<Pa
             <MacroHero summary={day.summary} next={next} />
             <div className="mt-5 grid items-start gap-5 md:grid-cols-2 xl:grid-flow-dense xl:grid-cols-3">
               {slots && slots.slots.length > 0 ? (
-                <TodayPlan day={slots} recipes={slots.recipes} entries={day.moments.flatMap((m) => m.entries)} title={date === today ? "Hoy" : "El día"} className="md:col-span-2 md:row-span-2" delay={40} />
+                <>
+                  <TodayPlan day={slots} recipes={slots.recipes} entries={entries} className="md:col-span-2 md:row-span-2" delay={40} />
+                  {extras.length > 0 && <Extras entries={extras} slots={slots.slots} delay={80} />}
+                </>
               ) : (
                 <Timeline day={day} className="md:col-span-2 md:row-span-2" delay={60} />
               )}
