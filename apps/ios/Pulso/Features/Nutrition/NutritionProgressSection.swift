@@ -20,7 +20,7 @@ struct NutritionProgressSection: View {
                          systemImage: "flame.fill", tint: Theme.energy)
                 StatTile(title: "Proteína media", value: averages.protein.map { Int($0).formatted() } ?? "—", unit: "g",
                          systemImage: "bolt.heart.fill", tint: Theme.protein)
-                StatTile(title: "En objetivo", value: "\(averages.onTarget)", unit: "de \(averages.logged) días",
+                StatTile(title: "Días en zona", value: "\(averages.onTarget)", unit: "de \(averages.logged) días",
                          systemImage: "target", tint: Theme.body)
                 StatTile(title: "Agua media", value: averages.waterMl.map { settings.format($0) } ?? "—",
                          systemImage: "drop.fill", tint: Theme.water)

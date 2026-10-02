@@ -1,18 +1,21 @@
 import Charts
 import SwiftUI
 
-/// Last 7 days of kcal against the target. A day "cumple" within ±10 % of it.
-/// Touch a bar to read that day.
+/// Last 7 days of kcal against the target zone (the green band). A day counts when it is in
+/// zone: kcal inside it and protein at least its minimum. Touch a bar to read that day.
 struct AdherenceChart: View {
     let days: [NutritionSummary]
     @State private var selected: Date?
 
     static func onTarget(_ day: NutritionSummary) -> Bool {
+        if let inZone = day.inZone { return inZone }
+        // Older engines: within ±10 % of the kcal target.
         guard let target = day.targets?.kcal, target > 0, day.entries > 0 else { return false }
         return abs(day.totals.kcal - target) / target <= 0.10
     }
 
     private var target: Double? { days.last?.targets?.kcal }
+    private var zone: TargetZone? { days.last?.targets?.zones?["kcal"] }
 
     private var selectedDay: NutritionSummary? {
         guard let selected else { return nil }
@@ -29,6 +32,11 @@ struct AdherenceChart: View {
                     .minimumScaleFactor(0.8)
             }
             Chart {
+                if let zone, let high = zone.max {
+                    RectangleMark(yStart: .value("Mínimo", zone.min ?? 0), yEnd: .value("Máximo", high))
+                        .foregroundStyle(Theme.body.opacity(0.14))
+                        .accessibilityLabel("Tu zona")
+                }
                 ForEach(days) { day in
                     let date = NutritionDate.date(day.date) ?? .now
                     let color = Self.onTarget(day) ? Theme.body : Theme.energy
@@ -65,7 +73,7 @@ struct AdherenceChart: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
         } else if target != nil {
-            Text("\(days.filter(Self.onTarget).count) de \(days.count) en objetivo")
+            Text("\(days.filter(Self.onTarget).count) de \(days.count) en tu zona")
                 .font(.caption.weight(.semibold)).foregroundStyle(Theme.body)
         }
     }
