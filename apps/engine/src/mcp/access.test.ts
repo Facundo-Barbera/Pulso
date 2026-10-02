@@ -13,13 +13,16 @@ test("an unclassified tool counts as write", () => {
   expect(accessOf("brand_new_tool")).toBe("write");
 });
 
-test("read-only clients see no write tool; read+write see everything", () => {
+test("read-only clients see no write tool; read+write see everything but the sensitive ones", () => {
   const readOnly = visibleTools("read").map((t) => t.name);
   expect(readOnly).toContain("get_profile");
   expect(readOnly).not.toContain("update_profile");
   expect(readOnly.every((name) => accessOf(name) === "read")).toBe(true);
-  expect(visibleTools("read+write")).toHaveLength(TOOLS.length);
-  expect(toolInfos().filter((t) => t.access === "write").length).toBe(TOOLS.length - readOnly.length);
+  const sensitive = toolInfos().filter((t) => t.sensitive).length;
+  expect(sensitive).toBeGreaterThan(0);
+  expect(visibleTools("read+write")).toHaveLength(TOOLS.length - sensitive);
+  expect(visibleTools("read+write", true)).toHaveLength(TOOLS.length);
+  expect(toolInfos().filter((t) => t.access === "write" && !t.sensitive).length).toBe(TOOLS.length - sensitive - readOnly.length);
 });
 
 test("profile and medication tools warn that the data is personal", () => {

@@ -58,8 +58,18 @@ test("scope changes and revocation", async () => {
   const revoked: McpClient = await (await revokeDELETE(new Request(`${BASE}/clients/${client.id}`, { method: "DELETE" }), params(client.id))).json();
   expect(revoked.revokedAt).toBeNumber();
   expect(authenticateClient(`Bearer ${secret}`)).toBeUndefined();
-  // A revoked client cannot be brought back by changing its scope.
+  // A revoked client cannot be brought back by changing its scope or grant.
+  expect((await scopePATCH(new Request(`${BASE}/clients/${client.id}`, json("PATCH", { sensitive: true })), params(client.id))).status).toBe(404);
   expect((await scopePATCH(new Request(`${BASE}/clients/${client.id}`, json("PATCH", { scope: "read+write" })), params(client.id))).status).toBe(404);
+});
+
+test("the sensitive grant is off by default and toggles on its own", async () => {
+  const { client } = await create("Telar");
+  expect(client.sensitive).toBe(false);
+  const granted: McpClient = await (await scopePATCH(new Request(`${BASE}/clients/${client.id}`, json("PATCH", { sensitive: true })), params(client.id))).json();
+  expect(granted).toMatchObject({ sensitive: true, scope: "read" });
+  expect((await scopePATCH(new Request(`${BASE}/clients/${client.id}`, json("PATCH", { sensitive: "yes" })), params(client.id))).status).toBe(400);
+  expect((await scopePATCH(new Request(`${BASE}/clients/${client.id}`, json("PATCH", {})), params(client.id))).status).toBe(400);
 });
 
 test("the audit log lists calls newest first, filterable by client", async () => {

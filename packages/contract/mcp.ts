@@ -13,6 +13,8 @@ export type McpClient = {
   id: string;
   name: string;
   scope: McpScope;
+  /** Granted the sensitive scope: may also see Sustancias tools. Off unless the person turns it on. */
+  sensitive: boolean;
   createdAt: number;
   lastUsedAt: number | null;
   /** Set once revoked; the secret stops working and the row stays for the audit log. */
@@ -36,14 +38,14 @@ export type McpConnection = {
 };
 
 /** POST /api/mcp-admin/clients */
-export type McpClientCreate = { name: string; scope?: McpScope };
+export type McpClientCreate = { name: string; scope?: McpScope; sensitive?: boolean };
 /** The secret is returned this once and never again. */
 export type McpClientCreated = { client: McpClient; secret: string; connection: McpConnection };
 /** PATCH /api/mcp-admin/clients/:id */
-export type McpClientUpdate = { scope: McpScope };
+export type McpClientUpdate = { scope?: McpScope; sensitive?: boolean };
 
-/** A tool as exposed to clients: `write` tools are hidden from read-only ones. */
-export type McpToolInfo = { name: string; access: "read" | "write" };
+/** A tool as exposed to clients: `write` tools are hidden from read-only ones, `sensitive` ones from clients without that grant. */
+export type McpToolInfo = { name: string; access: "read" | "write"; sensitive: boolean };
 
 /** One call. Never holds arguments or results, only which tool and how it went. */
 export type McpAuditEntry = {

@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+
 /** External MCP clients (each with its own secret and scope) and what they called. */
 export const MCP_SCHEMA = `
   CREATE TABLE IF NOT EXISTS mcp_clients (
@@ -18,3 +20,9 @@ export const MCP_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS mcp_audit_at ON mcp_audit (at DESC);
 `;
+
+/** `sensitive` (the Sustancias grant) came later; SQLite has no `ADD COLUMN IF NOT EXISTS`, so it is checked first. */
+export function migrateMcp(database: Database): void {
+  const existing = database.query<{ name: string }, []>("PRAGMA table_info(mcp_clients)").all();
+  if (!existing.some((c) => c.name === "sensitive")) database.exec("ALTER TABLE mcp_clients ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0");
+}
