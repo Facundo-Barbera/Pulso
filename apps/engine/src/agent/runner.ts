@@ -2,7 +2,7 @@ import { createSdkMcpServer, query, type HookCallback, type Options, type SDKUse
 import type { AgentAttachment, AgentMessage, AgentProduct, AgentStreamEvent } from "@pulso/contract";
 import { describeProduct } from "../nutrition/portion";
 import { readImageBase64 } from "./attachments";
-import { hasOutput, newTurnState, translate, type TurnState } from "./events";
+import { hasOutput, newTurnState, rememberBefore, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
 import { childEnv, claudeExecutable, providerEnv } from "./provider";
 import { TOOLS } from "./registry";
@@ -80,6 +80,13 @@ const confineTo =
     return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Only files inside this conversation's directory are available." } };
   };
 
+/** Reads what a pulso tool is about to change, for its action card's before → after. Never blocks the tool. */
+const snapshot: HookCallback = async (input, toolUseID) => {
+  if (input.hook_event_name === "PreToolUse") rememberBefore(toolUseID ?? input.tool_use_id, input.tool_name, input.tool_input);
+  return {};
+};
+const SNAPSHOT_HOOK = { matcher: "mcp__pulso__.*", hooks: [snapshot] };
+
 /**
  * A clean start: the agent knows only the conversation, the profile and the
  * pulso tools. No settings, hooks, plugins, skills, CLAUDE.md files or memory
@@ -101,7 +108,7 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     // Nobody is at the Mac to approve anything: what is not allowed above is denied, never asked.
     permissionMode: "dontAsk",
     permissionPrompts: "none",
-    hooks: { PreToolUse: [{ matcher: "Read|Write", hooks: [confineTo(cwd)] }] },
+    hooks: { PreToolUse: [{ matcher: "Read|Write", hooks: [confineTo(cwd)] }, SNAPSHOT_HOOK] },
     includePartialMessages: true,
     maxTurns: 40,
     // Like Telar: the installed CLI and a clean env with the configured provider (./provider.ts).
@@ -121,7 +128,7 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: TOOLS.filter((t) => mode.tools.includes(t.name)) }) },
     tools: [],
     allowedTools: ["mcp__pulso"],
-    hooks: {},
+    hooks: { PreToolUse: [SNAPSHOT_HOOK] },
     maxTurns: 8,
   };
 }
