@@ -1,9 +1,9 @@
 import path from "node:path";
 import type { NextConfig } from "next";
-import { tailnetIp } from "./scripts/tailnet-ip.mjs";
+import { tailnetCertDomain, tailnetIp } from "./scripts/tailnet-ip.mjs";
 
 const repoRoot = path.join(process.cwd(), "..", "..");
-const tailnet = tailnetIp();
+const tailnet = [tailnetIp(), tailnetCertDomain()].filter((host): host is string => Boolean(host));
 
 const config: NextConfig = {
   transpilePackages: ["@pulso/contract"],
@@ -11,7 +11,7 @@ const config: NextConfig = {
   outputFileTracingRoot: repoRoot,
   // Next blocks /_next/* in dev from non-local origins; without this a browser
   // on the tailnet gets the HTML and a dead UI.
-  allowedDevOrigins: tailnet ? [tailnet] : [],
+  allowedDevOrigins: tailnet,
   devIndicators: false,
   agentRules: false,
 };

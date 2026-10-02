@@ -48,13 +48,14 @@ export function callerOf(headers: Headers, now = Date.now()): Caller {
  * A write carrying the cookie must come from Pulso's own page. SameSite keeps
  * other sites' pages from sending it on a POST; this is the second lock. The
  * tailnet proxy rewrites `Host`, so the one the browser wrote comes as `x-pulso-host`.
+ * Either scheme: http on the tailnet IP, https through `tailscale serve`.
  */
 export function sameOrigin(method: string, headers: Headers): boolean {
   const upper = method.toUpperCase();
   if (upper === "GET" || upper === "HEAD" || upper === "OPTIONS") return true;
   const host = headers.get(HOST_HEADER);
   const origin = headers.get("origin");
-  return Boolean(host && origin && origin === `http://${host}`);
+  return Boolean(host && origin && (origin === `http://${host}` || origin === `https://${host}`));
 }
 
 /** Where pairing sends the browser: only a path on this site. `next` comes from the URL and must not lead elsewhere. */

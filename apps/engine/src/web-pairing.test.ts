@@ -116,6 +116,12 @@ describe("the cookie at the door", () => {
     expect(sameOrigin("GET", new Headers())).toBe(true);
   });
 
+  test("a write through tailscale serve's https address is the same origin", () => {
+    const headers = (origin: string) => new Headers({ "x-pulso-host": "mini.tail.ts.net:8443", origin });
+    expect(sameOrigin("POST", headers("https://mini.tail.ts.net:8443"))).toBe(true);
+    expect(sameOrigin("POST", headers("https://evil.ts.net:8443"))).toBe(false);
+  });
+
   test("a revoked browser is refused and its cookie cleared", async () => {
     const { token } = await pairBrowser("Revocado");
     const id = listDevices().find((d) => d.name === "Revocado")!.id;

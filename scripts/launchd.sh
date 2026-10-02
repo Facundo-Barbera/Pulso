@@ -13,6 +13,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
+# The tailnet proxy runs on Node: Bun's node:http drops writes to an upgraded socket, so WebSockets die.
+NODE="$(command -v node || echo /opt/homebrew/bin/node)"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/Pulso"
 LABELS=(com.bixku.pulso.engine com.bixku.pulso.tailnet)
@@ -46,7 +48,7 @@ $args  </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>$(dirname "$BUN"):/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>$(dirname "$BUN"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>$HOME</string>
   </dict>
@@ -63,7 +65,7 @@ case "${1:-status}" in
   install)
     mkdir -p "$AGENTS" "$LOGS"
     plist com.bixku.pulso.engine "$ROOT/apps/engine" "$BUN" --bun next dev --hostname 127.0.0.1 --port 3230 > "$AGENTS/com.bixku.pulso.engine.plist"
-    plist com.bixku.pulso.tailnet "$ROOT" "$BUN" "$ROOT/apps/engine/scripts/tailnet-proxy.mjs" > "$AGENTS/com.bixku.pulso.tailnet.plist"
+    plist com.bixku.pulso.tailnet "$ROOT" "$NODE" "$ROOT/apps/engine/scripts/tailnet-proxy.mjs" > "$AGENTS/com.bixku.pulso.tailnet.plist"
     for label in "${LABELS[@]}"; do
       launchctl bootout "gui/$UID/$label" 2>/dev/null || true
       launchctl bootstrap "gui/$UID" "$AGENTS/$label.plist"

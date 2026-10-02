@@ -11,3 +11,10 @@ test("a client cannot forge the proxy's headers", () => {
   expect(headers["x-pulso-via"]).toBe("tailnet");
   expect(headers["x-pulso-host"]).toBeUndefined();
 });
+
+test("tailscale serve's forwarded headers are dropped, so Next keeps answering on plain http", () => {
+  const headers = forwardHeaders({ host: "mini.tail.ts.net:8443", "x-forwarded-proto": "https", "x-forwarded-host": "mini.tail.ts.net:8443", "x-forwarded-for": "100.64.0.9" }, 3230);
+  expect(headers["x-pulso-host"]).toBe("mini.tail.ts.net:8443");
+  expect(headers["x-forwarded-proto"]).toBeUndefined();
+  expect(headers["x-forwarded-for"]).toBeUndefined();
+});

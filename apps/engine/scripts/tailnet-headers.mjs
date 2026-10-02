@@ -11,6 +11,8 @@ export function forwardHeaders(incoming, targetPort) {
   const headers = { ...incoming };
   delete headers["x-pulso-via"];
   delete headers["x-pulso-host"];
+  // `tailscale serve` adds these; with `x-forwarded-proto: https` Next would rewrite to https://localhost, where nothing listens.
+  for (const name of ["x-forwarded-proto", "x-forwarded-host", "x-forwarded-port", "x-forwarded-for"]) delete headers[name];
   headers["x-pulso-via"] = "tailnet";
   if (incoming.host) headers["x-pulso-host"] = incoming.host;
   headers.host = `127.0.0.1:${targetPort}`;

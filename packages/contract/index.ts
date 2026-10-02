@@ -5,6 +5,10 @@ import type { HeartRatePoint } from "./workouts";
 export const ENGINE_PORT = 3230;
 /** Tailnet proxy port. Not 8088 (Delta). */
 export const TAILNET_PORT = 8090;
+/** `tailscale serve` publishes the web app at https://<this Mac>.ts.net:8443 (443 is Telar's). A secure context: randomUUID, clipboard, camera. */
+export const TAILNET_HTTPS_PORT = 8443;
+/** Loopback port where the tailnet proxy takes what `tailscale serve` forwards, so it gets stamped like the rest. */
+export const TAILNET_SERVE_PORT = 8091;
 
 /** Header the tailnet proxy stamps on every forwarded request. */
 export const VIA_HEADER = "x-pulso-via";
