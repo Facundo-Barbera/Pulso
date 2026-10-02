@@ -1,11 +1,11 @@
 import SwiftUI
 import UIKit
 
-/// What RootView shows instead of the app while it's locked: the mark, one line,
-/// and "Desbloquear". Asks for Face ID by itself once, as soon as the scene is active.
+/// What covers the app while it's locked: the mark, one line, and "Desbloquear".
+/// Asks for Face ID by itself once the app is active. It lives in `LockCover`'s
+/// own window, outside the SwiftUI scene, so it reads the app state from UIKit.
 struct LockScreen: View {
     let lock: AppLock
-    @Environment(\.scenePhase) private var scenePhase
     @State private var prompted = false
     @State private var failures = 0
 
@@ -27,11 +27,16 @@ struct LockScreen: View {
                 .padding(.bottom, 24)
             }
             .sensoryFeedback(.error, trigger: failures)
-            .task(id: scenePhase) {
-                guard scenePhase == .active, !prompted else { return }
-                prompted = true
-                await unlock()
+            .task { await promptOnce() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                Task { await promptOnce() }
             }
+    }
+
+    private func promptOnce() async {
+        guard UIApplication.shared.applicationState == .active, !prompted else { return }
+        prompted = true
+        await unlock()
     }
 
     private func unlock() async {
@@ -113,5 +118,46 @@ final class PrivacyShield {
         window.isHidden = true
         self.window = nil
         hiding = nil
+    }
+}
+
+/// Shows `LockScreen` above the app, sheets and full-screen views included, in a
+/// window of its own: locking covers the app instead of tearing it down, so a
+/// live workout, an open Coach chat or a half-filled sheet are still there after
+/// unlocking. Above `PrivacyShield`, so the two can overlap without a flash.
+@MainActor
+final class LockCover {
+    static let shared = LockCover()
+    private var window: UIWindow?
+
+    func update(locked: Bool) {
+        locked ? show() : hide()
+    }
+
+    private func show() {
+        if let window {
+            window.alpha = 1
+            return
+        }
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        let window = UIWindow(windowScene: scene)
+        window.windowLevel = .alert + 2
+        let host = UIHostingController(rootView: LockScreen(lock: .shared))
+        host.view.backgroundColor = .systemBackground
+        window.rootViewController = host
+        // Key, so VoiceOver and the keyboard can't reach the app underneath.
+        window.makeKeyAndVisible()
+        self.window = window
+    }
+
+    private func hide() {
+        guard let window else { return }
+        self.window = nil
+        UIView.animate(withDuration: 0.25) {
+            window.alpha = 0
+        } completion: { _ in
+            window.isHidden = true
+            window.windowScene?.windows.first { $0.windowLevel == .normal }?.makeKey()
+        }
     }
 }

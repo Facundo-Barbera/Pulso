@@ -44,6 +44,19 @@ final class LockPolicyTests: XCTestCase {
         XCTAssertTrue(fifteen.shouldLock(coldLaunch: false, backgroundedAt: away(900), now: now))
     }
 
+    func testLiveWorkoutDoesNotRelockBetweenSets() {
+        for interval in LockPolicy.Interval.allCases {
+            let policy = LockPolicy(enabled: true, interval: interval)
+            XCTAssertFalse(policy.shouldLock(coldLaunch: false, backgroundedAt: away(5), now: now, liveSession: true))
+            XCTAssertFalse(policy.shouldLock(coldLaunch: false, backgroundedAt: away(45 * 60), now: now, liveSession: true))
+            // A session left running for hours was forgotten: lock as usual.
+            XCTAssertTrue(policy.shouldLock(coldLaunch: false, backgroundedAt: away(LockPolicy.forgottenSession), now: now, liveSession: true))
+        }
+        // A relaunch always locks, live session or not; and off stays off.
+        XCTAssertTrue(LockPolicy(enabled: true, interval: .fiveMinutes).shouldLock(coldLaunch: true, backgroundedAt: nil, now: now, liveSession: true))
+        XCTAssertFalse(LockPolicy(enabled: false, interval: .immediately).shouldLock(coldLaunch: false, backgroundedAt: away(3 * 3600), now: now, liveSession: true))
+    }
+
     func testClockThatWentBackwardsLocks() {
         let policy = LockPolicy(enabled: true, interval: .fifteenMinutes)
         XCTAssertTrue(policy.shouldLock(coldLaunch: false, backgroundedAt: now.addingTimeInterval(120), now: now))

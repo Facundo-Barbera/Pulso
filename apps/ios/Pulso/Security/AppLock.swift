@@ -2,9 +2,10 @@ import Foundation
 import LocalAuthentication
 import Observation
 
-/// The app-wide Face ID lock. RootView swaps its content for `LockScreen` while
-/// `locked`; stores and their tasks live outside the view tree, so Coach replies,
-/// the live workout and its Live Activity and reminders keep running underneath.
+/// The app-wide Face ID lock. While `locked`, `LockCover` puts `LockScreen` in a
+/// window above everything; the app underneath stays mounted (tabs, navigation,
+/// sheets, the live workout's full-screen view), so unlocking returns the person
+/// exactly where they were, and Coach replies, the Live Activity and reminders go on.
 /// Also the authenticator for screens that ask again even when unlocked (Sustancias).
 @MainActor
 @Observable
@@ -71,10 +72,10 @@ final class AppLock {
 
     /// Locks if the app was away long enough. Returns whether it just locked.
     @discardableResult
-    func becameActive(at now: Date = .now) -> Bool {
+    func becameActive(at now: Date = .now, liveSession: Bool = false) -> Bool {
         defer { backgroundedAt = nil }
         guard !locked, Self.canLock,
-              Self.policy.shouldLock(coldLaunch: false, backgroundedAt: backgroundedAt, now: now)
+              Self.policy.shouldLock(coldLaunch: false, backgroundedAt: backgroundedAt, now: now, liveSession: liveSession)
         else { return false }
         locked = true
         return true

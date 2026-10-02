@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Paired: five tabs, one per feature folder under `Features/`, each with the
 /// Ajustes button, and an offline accessory above the tab bar when the Mac is
-/// unreachable; while `AppLock` is locked, only the lock screen. Not paired:
+/// unreachable; while `AppLock` is locked, `LockCover` hides it all. Not paired:
 /// onboarding and nothing else. A privacy cover hides the app whenever the
 /// scene isn't active (app switcher, Control Center).
 struct RootView: View {
@@ -20,18 +20,14 @@ struct RootView: View {
             if model.credentials == nil {
                 OnboardingView(model: model)
                     .transition(.opacity)
-            } else if lock.locked {
-                // Swapped out, not covered: nothing of the app is drawn, sheets
-                // included. Stores and their tasks don't live in views, so they go on.
-                LockScreen(lock: lock)
-                    .transition(.opacity)
             } else {
+                // Always mounted: the lock covers it from its own window (LockCover),
+                // so navigation, sheets and the live workout survive a re-lock.
                 tabs
                     .transition(.opacity)
             }
         }
         .animation(.snappy, value: model.credentials == nil)
-        .animation(.snappy, value: lock.locked)
         .sensoryFeedback(.success, trigger: model.credentials != nil) { _, paired in paired }
         .sensoryFeedback(.impact(weight: .light), trigger: lock.locked) { was, now in was && !now }
         // Kept outside the tabs so a request that arrives while locked (Siri, a
@@ -41,6 +37,7 @@ struct RootView: View {
         .onChange(of: launcher.tabRequest?.id) { _, id in if id != nil, let next = launcher.takeTab() { tab = next } }
         // A session started from Siri, a widget or another tab shows where it lives.
         .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
+        .onChange(of: lock.locked, initial: true) { _, locked in LockCover.shared.update(locked: locked) }
         .task {
             await model.refresh()
             // A finished workout the Mac didn't get goes now, whatever tab opens first.
@@ -50,7 +47,7 @@ struct RootView: View {
             switch phase {
             case .active:
                 // Lock before the cover lifts, then give closing sheets a moment behind it.
-                let relocked = lock.becameActive()
+                let relocked = lock.becameActive(liveSession: training.live != nil)
                 PrivacyShield.shared.hide(after: relocked ? .milliseconds(450) : .zero)
                 Task {
                     await model.refresh()
