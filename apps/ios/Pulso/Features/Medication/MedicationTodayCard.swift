@@ -61,7 +61,7 @@ struct MedicationTodayCard: View {
             DoseGroupsView(slots: visibleSlots(day), store: store, compact: true)
             if let next = day.next, let time = next.time {
                 Label {
-                    Text("Próxima: \(next.name) a las \(LocalClock.display(time))")
+                    Text(next.window.map { "Próxima: \(next.name), \(next.moment.title.lowercased()) (\($0.range))" } ?? "Próxima: \(next.name) a las \(LocalClock.display(time))")
                 } icon: {
                     Image(systemName: "bell.badge")
                 }
@@ -150,6 +150,12 @@ private struct MomentHeader: View {
             Label(group.moment.title, systemImage: group.moment.symbol)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(group.moment == .entreno ? AnyShapeStyle(Theme.training) : AnyShapeStyle(.secondary))
+            if let window = group.slots.first?.window {
+                Text(window.range)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
             if let training = group.trainingStatus {
                 Text(training.status)
                     .font(.caption)
@@ -204,9 +210,14 @@ struct DoseRow: View {
         }
     }
 
-    /// The time it's due, or a training glyph while it waits for the workout.
+    /// The time it's due (a window's start), «Hoy» for any time, or a training glyph while it waits for the workout.
     @ViewBuilder private var trailing: some View {
-        if let time = slot.time {
+        if slot.moment == .dia {
+            Text("Hoy")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(TodayItem.anyTimeLine)
+        } else if let time = slot.time {
             Text(LocalClock.display(time))
                 .font(.subheadline.weight(.semibold))
                 .fontDesign(.rounded)
@@ -241,9 +252,12 @@ struct DoseRow: View {
         }
     }
 
-    /// Past the training window, or half an hour past its time.
+    /// Past the training window or a day part's window, or half an hour past its time. Any time is never late today.
     private var isLate: Bool {
-        guard slot.isPending else { return false }
+        guard slot.isPending, slot.moment != .dia else { return false }
+        if let window = slot.window {
+            return LocalClock.instant(date: slot.date, time: window.end).map { $0 < .now } ?? false
+        }
         if slot.training?.state == .trained, let until = slot.training?.until {
             return LocalClock.instant(date: slot.date, time: until).map { $0 < .now } ?? false
         }
@@ -256,7 +270,8 @@ struct DoseRow: View {
             return "Tomada a las \(Date(timeIntervalSince1970: takenAt / 1000).formatted(date: .omitted, time: .shortened))"
         }
         if slot.status == .pospuesta { return "Pospuesta · \(slot.doseText)" }
-        return [slot.doseText, compact ? nil : slot.instructions].compactMap { $0 }.joined(separator: " · ")
+        let when = slot.moment == .dia ? "cuando quieras" : nil
+        return [slot.doseText, when, compact ? nil : slot.instructions].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
