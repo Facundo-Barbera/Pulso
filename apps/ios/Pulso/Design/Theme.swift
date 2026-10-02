@@ -6,14 +6,30 @@ enum Theme {
     static let corner: CGFloat = 18
     static let padding: CGFloat = 16
 
-    /// Macro and domain colors, consistent across every chart and ring.
-    static let protein = Color(red: 0.96, green: 0.36, blue: 0.42)
-    static let carbs = Color(red: 0.98, green: 0.72, blue: 0.25)
-    static let fat = Color(red: 0.35, green: 0.62, blue: 0.98)
-    static let energy = Color(red: 0.98, green: 0.45, blue: 0.20)
-    static let training = Color(red: 0.55, green: 0.42, blue: 0.98)
-    static let body = Color(red: 0.20, green: 0.78, blue: 0.62)
-    static let water = Color(red: 0.22, green: 0.70, blue: 0.95)
+    /// Macro and domain colors, consistent across every chart and ring (web: `--domain-*` in globals.css).
+    /// Chosen for red-green colour blindness: the four that share the Dieta rings (kcal, protein, carbs,
+    /// fat) stay apart under deuteranopia and protanopia (and tritanopia) by lightness and the blue–yellow
+    /// axis; so do the Hoy goals (body, energy, training). Each has its own step for light and dark.
+    /// Colour still never works alone: rings carry a symbol, legends a label.
+    static let energy = Color(light: 0xE8650F, dark: 0xF5862A)
+    static let protein = Color(light: 0x2B5FD9, dark: 0x3F7DF5)
+    static let carbs = Color(light: 0x16B0C8, dark: 0x59D8E6)
+    static let fat = Color(light: 0xE0A800, dark: 0xF7D44C)
+    static let training = Color(light: 0x7A55E8, dark: 0xA07CFF)
+    static let body = Color(light: 0x0FA88C, dark: 0x2CCFB0)
+    static let water = Color(light: 0x2E9BE0, dark: 0x4FB8FF)
+
+    /// State, never green against red: good is blue, "look at this" is orange, and both ship with
+    /// a symbol and words (`checkmark`, `arrow.up`…). `fair` is the middle of a three-step score.
+    static let good = Color(light: 0x2563EB, dark: 0x4D9BFF)
+    static let fair = Color(light: 0xB88A00, dark: 0xF7D44C)
+    static let caution = Color(light: 0xD9600B, dark: 0xFF9F45)
+
+    /// The symbol each ring wears at its start and its legend repeats, so identity never rests on hue.
+    static let energySymbol = "flame.fill"
+    static let proteinSymbol = "fish.fill"
+    static let carbsSymbol = "laurel.leading"
+    static let fatSymbol = "drop.fill"
 
     /// The app icon's gradient (Branding/pulso-icon.svg): onboarding, the brand mark, rare hero moments.
     static let brand = [
@@ -22,6 +38,19 @@ enum Theme {
         Color(red: 0.54, green: 0.17, blue: 0.89),
     ]
     static let brandGradient = LinearGradient(colors: brand, startPoint: .topLeading, endPoint: .bottomTrailing)
+}
+
+extension Color {
+    /// A colour with its own step per appearance, from `0xRRGGBB`.
+    init(light: UInt32, dark: UInt32) {
+        func ui(_ hex: UInt32) -> UIColor {
+            let r = CGFloat((hex >> 16) & 0xFF) / 255
+            let g = CGFloat((hex >> 8) & 0xFF) / 255
+            let b = CGFloat(hex & 0xFF) / 255
+            return UIColor(red: r, green: g, blue: b, alpha: 1)
+        }
+        self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? ui(dark) : ui(light) })
+    }
 }
 
 /// A rounded card on the grouped background. `Card { ... }`.
