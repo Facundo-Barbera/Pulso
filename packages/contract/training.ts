@@ -1,5 +1,7 @@
 /** Training: exercise library, programs the Coach writes, logged strength sessions. Weights are kg, times epoch ms. */
 
+import type { JoinCandidate, SessionRecording } from "./workouts";
+
 export type MuscleGroup =
   | "chest"
   | "back"
@@ -86,6 +88,8 @@ export type CardioLog = {
   avgHr: number | null;
   kcal: number | null;
   doneAt: number;
+  /** Read only: the Health workout whose minutes, distance, kcal or heart rate filled what this log left empty. */
+  recordedBy?: string | null;
 };
 
 /**
@@ -445,10 +449,20 @@ export type TrainingSession = {
   cardio: CardioLog[];
   /** Sum of the cardio blocks, minutes. */
   cardioMinutes: number;
+  /**
+   * Read only. True when Health workouts recorded during the session (the
+   * Watch's strength workout, its treadmill walk) were merged into it: they are
+   * this session, not more training.
+   */
+  merged?: boolean;
+  /** Read only: what those workouts recorded (kcal, heart rate, distance). */
+  recorded?: SessionRecording | null;
+  /** Read only, one session's detail: Health workouts nearby it could be joined with. */
+  joinable?: JoinCandidate[];
 };
 
 /** What the phone posts when a session ends. `id` is client-made, so retries upsert. */
-export type SessionInput = Omit<TrainingSession, "programId" | "dayId" | "notes" | "cardio" | "cardioMinutes"> & {
+export type SessionInput = Omit<TrainingSession, "programId" | "dayId" | "notes" | "cardio" | "cardioMinutes" | "merged" | "recorded" | "joinable"> & {
   programId?: string | null;
   dayId?: string | null;
   notes?: string | null;

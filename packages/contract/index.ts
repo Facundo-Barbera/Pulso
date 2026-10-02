@@ -1,4 +1,5 @@
 import type { DeviceKind } from "./web";
+import type { HeartRatePoint } from "./workouts";
 
 /** Engine port on loopback. Not 3000 (Telar) nor 3210 (Delta). */
 export const ENGINE_PORT = 3230;
@@ -27,6 +28,14 @@ export type Workout = {
   sourceBundle: string | null;
   /** Display name of that source, e.g. "Apple Watch de Facundo". */
   sourceName: string | null;
+  /**
+   * HealthKit's `HKMetadataKeyExternalUUID`. Pulso writes its finished sessions
+   * to Salud with the session id ("<sessionId>" strength, "<sessionId>-<n>" cardio).
+   */
+  externalRef?: string | null;
+  /** bpm, from the workout's heart-rate statistics */
+  avgHeartRate?: number | null;
+  maxHeartRate?: number | null;
 };
 
 /**
@@ -34,10 +43,15 @@ export type Workout = {
  * twice (two apps); the engine returns only the canonical one, so clients
  * never need to merge.
  */
-export type WorkoutInput = Omit<Workout, "id" | "source" | "sourceBundle" | "sourceName"> & {
+export type WorkoutInput = Omit<Workout, "id" | "source" | "sourceBundle" | "sourceName" | "externalRef" | "avgHeartRate" | "maxHeartRate"> & {
   externalId: string;
   sourceBundle?: string | null;
   sourceName?: string | null;
+  externalRef?: string | null;
+  avgHeartRate?: number | null;
+  maxHeartRate?: number | null;
+  /** Heart rate during the workout, about one point a minute. */
+  heartRate?: HeartRatePoint[] | null;
 };
 
 export type PairRequest = { code: string; name: string };
@@ -60,3 +74,4 @@ export * from "./calendar";
 export * from "./shopping";
 export * from "./diet";
 export * from "./substances";
+export * from "./workouts";
