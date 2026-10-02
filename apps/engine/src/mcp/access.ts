@@ -8,6 +8,7 @@ import { TOOLS, type PulsoTool } from "../agent/registry";
  */
 const ACCESS: Record<string, McpToolInfo["access"]> = {
   list_workouts: "read",
+  list_activity: "read",
   get_profile: "read",
   update_profile: "write",
   log_meal: "write",
