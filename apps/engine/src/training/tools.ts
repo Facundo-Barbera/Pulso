@@ -83,6 +83,13 @@ const liveOp = z.discriminatedUnion("op", [
     exercise: exerciseRef,
     reason: z.string().max(200).optional().describe('Short Spanish note, e.g. "Cansado".'),
   }),
+  z.object({
+    op: z.literal("drop"),
+    exercise: exerciseRef.optional().describe("Omit for the set done last in the session."),
+    set: z.number().int().min(1).optional().describe("1-based set of `exercise` (needs exercise); omit for its last done set."),
+    weightKg: z.number().min(0).max(1000).describe("The lighter load they finished with, kg (convert from the exercise's unit; it lands on that unit's steps)."),
+    reps: z.number().int().min(1).max(50).describe("Reps done at that load."),
+  }),
 ]);
 
 /** How supersets work, shared by the tools that write them. */
@@ -215,7 +222,7 @@ export const trainingTools = [
 
   tool(
     "get_live_session",
-    "The strength/cardio session the person is doing right now on the phone, or null: each exercise with its position, live id, library id, sets (weightKg, reps, done or not), cardio target, skipped flag, cutShort (cardio ended early), supersetId (exercises sharing one are done as a superset), `focus` (index of the one on screen) and `cardioClock` (the running cardio timer: elapsed = accumulatedSeconds + now − runningSince; the summary has it in minutes). Use it before edit_live_session.",
+    "The strength/cardio session the person is doing right now on the phone, or null: each exercise with its position, live id, library id, sets (weightKg and reps of the top segment, `segments` when the load dropped mid-set, done or not), cardio target, skipped flag, cutShort (cardio ended early), supersetId (exercises sharing one are done as a superset), `focus` (index of the one on screen) and `cardioClock` (the running cardio timer: elapsed = accumulatedSeconds + now − runningSince; the summary has it in minutes). Use it before edit_live_session.",
     {},
     async () =>
       guard(() => {
@@ -226,7 +233,7 @@ export const trainingTools = [
 
   tool(
     "edit_live_session",
-    'Change the session in progress right now — today only, the program stays as is. Ops run in order, all or nothing: swap (another exercise for the same target; done sets stay logged under the old one; the new one keeps its superset), update (sets, reps, load for the sets not done, rest, cardio target, supersetId to pair/unpair), add (strength or cardio, at a position, optionally into a superset), remove (only if nothing was logged; else skip), skip, move (reorder), focus (show it), finish_cardio (end a cardio block early, keeping the minutes done: it counts as done, not skipped; the phone stops its timer). A cardio block with time on its running clock cannot be skipped, removed or swapped: finish_cardio it first. The phone shows the change at once with an undo. Returns the updated session and one line per change. ' +
+    'Change the session in progress right now — today only, the program stays as is. Ops run in order, all or nothing: swap (another exercise for the same target; done sets stay logged under the old one; the new one keeps its superset), update (sets, reps, load for the sets not done, rest, cardio target, supersetId to pair/unpair), add (strength or cardio, at a position, optionally into a superset), remove (only if nothing was logged; else skip), skip, move (reorder), focus (show it), finish_cardio (end a cardio block early, keeping the minutes done: it counts as done, not skipped; the phone stops its timer), drop (they lowered the load mid-set to finish it, "bajé a 60 para terminar 3 más": adds that load × reps as one more segment of the set they just did, shown "80 kg × 5 → 60 kg × 3"; volume counts it, records and next loads read only the top segment). A cardio block with time on its running clock cannot be skipped, removed or swapped: finish_cardio it first. The phone shows the change at once with an undo. Returns the updated session and one line per change. ' +
       SUPERSETS +
       " To pair two exercises, update both with the same supersetId in one call (move them next to each other first if needed); a pairing that can't stand is refused. A move, remove or skip that leaves a member alone or apart takes it out of its superset.",
     { ops: z.array(liveOp).min(1).max(10) },
@@ -239,7 +246,7 @@ export const trainingTools = [
 
   tool(
     "list_sessions",
-    "Logged training sessions, newest first, with every set (exerciseId, weightKg, reps, rpe, setIndex) and cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). Times are epoch ms. Pass exerciseId to only get sessions that included it.",
+    "Logged training sessions, newest first, with every set (exerciseId, weightKg, reps, rpe, setIndex; `segments` lists each load of a set where the load dropped mid-set, top first, weightKg/reps being the top one) and cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). Times are epoch ms. Pass exerciseId to only get sessions that included it.",
     {
       limit: z.number().int().min(1).max(100).default(10),
       exerciseId: z.string().optional(),
@@ -249,7 +256,7 @@ export const trainingTools = [
 
   tool(
     "exercise_history",
-    "One exercise's progress, oldest first: per session the top weight (kg), best Epley e1RM (kg), total reps and volume (kg×reps), plus all-time best e1RM and heaviest load. Use it to judge progress or stalls before changing a program.",
+    "One exercise's progress, oldest first: per session the top weight (kg), best Epley e1RM (kg; both from top segments only), total reps and volume (kg×reps, counting every segment of drop sets), plus all-time best e1RM and heaviest load. Use it to judge progress or stalls before changing a program.",
     {
       exerciseId: z.string().describe("Exercise id from list_exercises."),
       limit: z.number().int().min(1).max(200).default(30).describe("Most recent sessions to include."),

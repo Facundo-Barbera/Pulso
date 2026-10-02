@@ -318,3 +318,14 @@ test("Retomar a block over HTTP", async () => {
   expect(resumed.blocks!.at(-1)!.resumedFrom).toBe(old.id);
   expect((await resumePOST(req({ method: "POST" }), id("missing"))).status).toBe(400);
 });
+
+test("a set's segments travel through POST /sessions; an old client's set comes back as one", async () => {
+  const at = new Date(2026, 4, 3, 18).getTime();
+  const set = (weightKg: number, reps: number, segments?: { weightKg: number; reps: number }[]) => ({ exerciseId: "cruce-poleas", setIndex: 0, weightKg, reps, rpe: null, doneAt: at, ...(segments && { segments }) });
+  const post = (id: string, s: ReturnType<typeof set>) =>
+    sessionsPOST(req({ method: "POST", body: JSON.stringify({ id, name: "Pecho", startedAt: at, endedAt: at + 3_600_000, sets: [s] }) })).then((r) => r.json());
+  const drop = await post("route-drop", set(25, 6, [{ weightKg: 25, reps: 6 }, { weightKg: 20, reps: 4 }]));
+  expect(drop.session.sets[0].segments).toEqual([{ weightKg: 25, reps: 6 }, { weightKg: 20, reps: 4 }]);
+  const plain = await post("route-plain", set(25, 8));
+  expect(plain.session.sets[0].segments).toEqual([{ weightKg: 25, reps: 8 }]);
+});

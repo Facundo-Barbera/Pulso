@@ -80,6 +80,12 @@ const cardioLog = z.object({
   doneAt: z.number().finite(),
 });
 
+/** A set's segments, top first (`SetSegments`); the flat weightKg/reps still win for the top. */
+const segments = z
+  .array(z.object({ weightKg: z.number().min(0).max(1000), reps: z.number().int().min(0).max(200) }))
+  .max(10)
+  .optional();
+
 /** A finished session as the phone posts it. Times epoch ms, weight kg. */
 export const sessionInput = z.object({
   id: z.string().min(1).max(64),
@@ -98,6 +104,7 @@ export const sessionInput = z.object({
         reps: z.number().int().min(0).max(200),
         rpe: reading(1, 10),
         doneAt: z.number().finite(),
+        segments,
       }),
     )
     .max(300),
@@ -110,8 +117,8 @@ const liveSet = z.object({
   reps: z.number().int().min(0).max(200),
   rpe: reading(1, 10),
   doneAt: z.number().finite().nullable(),
+  segments,
 });
-
 
 /** The phone's copy of the session in progress (`LiveSession`). */
 export const liveSessionInput = z.object({

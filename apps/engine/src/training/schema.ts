@@ -164,6 +164,9 @@ export function migrateTraining(database: Database): void {
   for (const column of ["cardio TEXT", "weight_kg REAL", "weight_set_at INTEGER", "superset_id TEXT"]) {
     if (!existing.has(column.split(" ")[0]!)) database.exec(`ALTER TABLE program_exercises ADD COLUMN ${column}`);
   }
+  // A set's segments after the top one (weight_kg/reps), as SetSegment JSON; NULL = a plain set.
+  const sets = new Set(database.query<{ name: string }, []>("PRAGMA table_info(set_logs)").all().map((c) => c.name));
+  if (!sets.has("drops")) database.exec("ALTER TABLE set_logs ADD COLUMN drops TEXT");
   // Programs are blocks: switching ends one (ended_at, end_reason) instead of just deactivating it.
   const programs = new Set(database.query<{ name: string }, []>("PRAGMA table_info(programs)").all().map((c) => c.name));
   for (const column of ["ended_at INTEGER", "end_reason TEXT", "resumed_from TEXT"]) {

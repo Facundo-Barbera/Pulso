@@ -25,6 +25,7 @@ import type {
   SessionInput,
   SessionSaved,
   SetLog,
+  SetSegment,
   TrainingBlock,
   TrainingSession,
   TrainingSettings,
@@ -38,6 +39,7 @@ import { ANATOMY } from "./anatomy";
 import { CARDIO, INCREMENT_KG } from "./library";
 import { bests, nextLoad, performance, recordsFor, type Prescription } from "./math";
 import { mediaFor, mediaSourceOf } from "./media";
+import { repsOf, segmentsOf, volumeOf } from "./segments";
 import { supersetIds } from "./superset";
 import { TECHNIQUE } from "./technique";
 import { VIDEOS } from "./videos";
@@ -457,7 +459,7 @@ const programExerciseInput = (ex: ProgramExercise): ProgramExerciseInput => ({
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
 type SessionRow = { id: string; program_id: string | null; day_id: string | null; name: string; started_at: number; ended_at: number; notes: string | null };
-type SetRow = { session_id: string; exercise_id: string; set_index: number; weight_kg: number; reps: number; rpe: number | null; done_at: number };
+type SetRow = { session_id: string; exercise_id: string; set_index: number; weight_kg: number; reps: number; rpe: number | null; done_at: number; drops: string | null };
 type CardioRow = {
   session_id: string;
   exercise_id: string;
@@ -481,7 +483,11 @@ const toCardio = (r: CardioRow): CardioLog => ({
   doneAt: r.done_at,
 });
 
-const toSet = (r: SetRow): SetLog => ({ exerciseId: r.exercise_id, setIndex: r.set_index, weightKg: r.weight_kg, reps: r.reps, rpe: r.rpe, doneAt: r.done_at });
+const toSet = (r: SetRow): SetLog => {
+  const top = { weightKg: r.weight_kg, reps: r.reps };
+  const drops = r.drops ? (JSON.parse(r.drops) as SetSegment[]) : [];
+  return { exerciseId: r.exercise_id, setIndex: r.set_index, ...top, rpe: r.rpe, doneAt: r.done_at, segments: segmentsOf({ ...top, segments: [top, ...drops] }) };
+};
 
 function withSets(rows: SessionRow[]): TrainingSession[] {
   if (rows.length === 0) return [];
@@ -564,7 +570,8 @@ export function saveSession(input: SessionInput): SessionSaved {
     for (const s of input.sets) {
       const index = counts.get(s.exerciseId) ?? 0;
       counts.set(s.exerciseId, index + 1);
-      database.run("INSERT INTO set_logs (session_id, exercise_id, set_index, weight_kg, reps, rpe, done_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+      const drops = segmentsOf(s).slice(1);
+      database.run("INSERT INTO set_logs (session_id, exercise_id, set_index, weight_kg, reps, rpe, done_at, drops) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
         input.id,
         s.exerciseId,
         index,
@@ -572,6 +579,7 @@ export function saveSession(input: SessionInput): SessionSaved {
         s.reps,
         s.rpe ?? null,
         s.doneAt,
+        drops.length ? JSON.stringify(drops) : null,
       ]);
     }
     cardio.forEach((c, position) => {
@@ -607,8 +615,8 @@ export function exerciseHistory(exerciseId: string, limit = 50): ExerciseHistory
         date: session.startedAt,
         topWeightKg: best.weight,
         bestE1rm: best.e1rm,
-        totalReps: sets.reduce((n, s) => n + s.reps, 0),
-        volumeKg: sets.reduce((n, s) => n + s.weightKg * s.reps, 0),
+        totalReps: sets.reduce((n, s) => n + repsOf(s), 0),
+        volumeKg: sets.reduce((n, s) => n + volumeOf(s), 0),
         sets,
       };
     })
@@ -657,7 +665,7 @@ export function activeProgramView(now = Date.now()): ActiveProgramResponse {
 
 // ── Adjusting the next session ───────────────────────────────────────────────
 
-/** The top load of an exercise's last session, kg; null without one. */
+/** The top load of an exercise's last session, kg (top segments: a drop never sets it); null without one. */
 function lastTopKg(exerciseId: string): number | null {
   const [last] = listSessions(1, exerciseId);
   const loads = last?.sets.filter((s) => s.exerciseId === exerciseId).map((s) => s.weightKg) ?? [];

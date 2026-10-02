@@ -422,15 +422,31 @@ export type ActiveProgramResponse = {
   adjustment?: NextAdjustment | null;
 };
 
+/** One stretch of a set at one load. */
+export type SetSegment = { weightKg: number; reps: number };
+
+/**
+ * A set where the load dropped mid-set ("80 kg × 5 → 60 kg × 3") has several
+ * segments, in the order done. `weightKg`/`reps` are always the first (top)
+ * segment and win over `segments[0]`: clients that only know them keep working,
+ * and the engine rewrites `segments[0]` from them. The engine always returns
+ * `segments` (one for a plain set); clients may omit it (= one segment).
+ * Volume and total reps sum every segment; records, e1RM, progression and the
+ * review signals read the top segment only.
+ */
+export type SetSegments = { segments?: SetSegment[] };
+
 export type SetLog = {
   exerciseId: string;
   /** 0-based order within the exercise in this session. */
   setIndex: number;
+  /** The top segment's load. */
   weightKg: number;
+  /** The top segment's reps. */
   reps: number;
   rpe: number | null;
   doneAt: number;
-};
+} & SetSegments;
 
 export type TrainingSession = {
   id: string;
@@ -457,6 +473,7 @@ export type SessionInput = Omit<TrainingSession, "programId" | "dayId" | "notes"
 
 // ── The session in progress ──────────────────────────────────────────────────
 
+/** `weightKg`/`reps` are the top segment; see `SetSegments`. */
 export type LiveSet = {
   id: string;
   weightKg: number;
@@ -464,7 +481,7 @@ export type LiveSet = {
   rpe: number | null;
   /** Epoch ms; null until checked off. */
   doneAt: number | null;
-};
+} & SetSegments;
 
 /** One exercise of the session in progress: the program's prescription, as changed for today. */
 export type LiveExercise = {
@@ -559,7 +576,9 @@ export type HistoryPoint = {
   date: number;
   topWeightKg: number;
   bestE1rm: number;
+  /** Every segment's reps. */
   totalReps: number;
+  /** Every segment's kg × reps. */
   volumeKg: number;
   sets: SetLog[];
 };

@@ -1,4 +1,5 @@
 import type { ExercisePerformance, LoadSuggestion, PersonalRecord, SetLog, WeightUnit } from "@pulso/contract";
+import { volumeOf } from "./segments";
 import { formatWeight, fromUnit, snap, stepDown, stepUp } from "./units";
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -11,7 +12,7 @@ export function e1rm(weightKg: number, reps: number): number {
 
 type Bests = { e1rm: number; weight: number; reps: number };
 
-/** Best e1RM, heaviest load and most bodyweight reps across sets. */
+/** Best e1RM, heaviest load and most bodyweight reps across sets, from each set's top segment (drops never count). */
 export function bests(sets: Pick<SetLog, "weightKg" | "reps">[]): Bests {
   const out: Bests = { e1rm: 0, weight: 0, reps: 0 };
   for (const s of sets) {
@@ -53,7 +54,8 @@ export type Prescription = { sets: number; repMin: number; repMax: number };
  * drop to `repMin`. Every set at that weight short of `repMin` → back off one
  * step. Otherwise keep the weight and chase one more rep. Loads land on the
  * steps of the exercise's `unit` (a pound machine moves by 5 lb) and a change
- * always moves at least one step.
+ * always moves at least one step. Only top segments count: a set that dropped
+ * the load to finish counts as the reps done at the top.
  */
 export function nextLoad(
   exerciseId: string,
@@ -95,13 +97,14 @@ export function nextLoad(
  * the first session that reached it; ties on the heaviest load go to more reps.
  * Bodyweight-only work has no load, so its records stay null.
  */
-export function performance(exerciseId: string, sessions: { at: number; sets: Pick<SetLog, "weightKg" | "reps">[] }[]): ExercisePerformance {
+export function performance(exerciseId: string, sessions: { at: number; sets: Pick<SetLog, "weightKg" | "reps" | "segments">[] }[]): ExercisePerformance {
   const out: ExercisePerformance = { exerciseId, maxWeight: null, bestE1rm: null, maxVolume: null, history: [] };
   for (const session of [...sessions].sort((a, b) => a.at - b.at)) {
     const work = session.sets.filter((s) => s.reps > 0);
     if (work.length === 0) continue;
     const best = bests(work);
-    const volumeKg = round1(work.reduce((n, s) => n + s.weightKg * s.reps, 0));
+    // Volume counts drops; records stay on top segments.
+    const volumeKg = round1(work.reduce((n, s) => n + volumeOf(s), 0));
     out.history.push({ at: session.at, topWeightKg: best.weight, e1rm: best.e1rm, volumeKg });
     if (best.weight > 0) {
       const reps = Math.max(...work.filter((s) => s.weightKg === best.weight).map((s) => s.reps));

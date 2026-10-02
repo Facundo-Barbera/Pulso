@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CardioLog, CardioTarget, Exercise, LiveCardioClock, LiveExercise, LiveSession, LiveSet, SessionInput, TrainingSession } from "@pulso/contract";
 import { db } from "../db";
 import { getExercise, getSession, listSessions, saveSession, suggestLoad, TrainingError, unitOf } from "./store";
+import { formatSet, hasDrops, segmentsOf, withSegments } from "./segments";
 import { withSupersets } from "./superset";
 import { formatBoth, formatWeight, snapKg } from "./units";
 
@@ -15,8 +16,8 @@ type Row = { id: string; data: string; version: number; thread_id: string | null
 
 const toSession = (r: Row): LiveSession => {
   const data = JSON.parse(r.data) as LiveSession;
-  // Copies stored before supersets (or the synced clock) lack those fields.
-  const exercises = data.exercises.map((e) => ({ ...e, supersetId: e.supersetId ?? null }));
+  // Copies stored before supersets, segments (or the synced clock) lack those fields.
+  const exercises = data.exercises.map((e) => ({ ...e, sets: e.sets.map(withSegments), supersetId: e.supersetId ?? null }));
   return { ...data, exercises, cardioClock: data.cardioClock ?? null, version: r.version, threadId: r.thread_id, updatedAt: r.updated_at };
 };
 
@@ -25,7 +26,9 @@ export function getLive(): LiveSession | null {
   return row ? toSession(row) : null;
 }
 
-function write(session: LiveSession, version: number, threadId: string | null, now: number): LiveSession {
+function write(written: LiveSession, version: number, threadId: string | null, now: number): LiveSession {
+  // Every set leaves with its segments, the top one rebuilt from weightKg/reps.
+  const session = { ...written, exercises: written.exercises.map((e) => ({ ...e, sets: e.sets.map(withSegments) })) };
   const database = db();
   database.transaction(() => {
     database.run("DELETE FROM live_sessions WHERE id <> ?", [session.id]);
@@ -62,7 +65,7 @@ export function sessionFromLive(live: LiveSession, endedAt: number): SessionInpu
   const finite = (n: number | null | undefined) => (n != null && Number.isFinite(n) ? n : null);
   const sets = live.exercises
     .filter((ex) => ex.kind !== "cardio")
-    .flatMap((ex) => ex.sets.filter((s) => s.doneAt != null && Number.isFinite(s.weightKg) && Number.isFinite(s.reps)).map((s) => ({ exerciseId: ex.exerciseId, weightKg: s.weightKg, reps: s.reps, rpe: finite(s.rpe), doneAt: s.doneAt! })))
+    .flatMap((ex) => ex.sets.filter((s) => s.doneAt != null && Number.isFinite(s.weightKg) && Number.isFinite(s.reps)).map((s) => ({ exerciseId: ex.exerciseId, weightKg: s.weightKg, reps: s.reps, rpe: finite(s.rpe), doneAt: s.doneAt!, segments: segmentsOf(s) })))
     .sort((a, b) => a.doneAt - b.doneAt)
     .map((s, setIndex) => ({ ...s, setIndex }));
   const cardio: CardioLog[] = live.exercises
@@ -142,7 +145,9 @@ export type LiveOp =
   | { op: "skip"; exercise: ExerciseRef }
   | { op: "move"; exercise: ExerciseRef; to: number }
   | { op: "focus"; exercise: ExerciseRef }
-  | { op: "finish_cardio"; exercise: ExerciseRef; reason?: string };
+  | { op: "finish_cardio"; exercise: ExerciseRef; reason?: string }
+  /** The load dropped mid-set: one more segment on a done set (default: the last one done in the session, or in `exercise`). */
+  | { op: "drop"; exercise?: ExerciseRef; set?: number; weightKg: number; reps: number };
 
 // A cardio block cut short is done even before the phone writes its log.
 const done = (ex: LiveExercise) => (ex.kind === "cardio" ? ex.cardioLog != null || ex.cutShort != null : ex.sets.length > 0 && ex.sets.every((s) => s.doneAt != null));
@@ -353,6 +358,17 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested, now: numb
       session.focus = indexOf(session, op.exercise);
       return `Ahora: ${list[session.focus]!.name}`;
     }
+    case "drop": {
+      const candidates = (op.exercise == null ? list : [list[indexOf(session, op.exercise)]!]).filter((e) => e.kind !== "cardio");
+      const doneSets = candidates.flatMap((ex) => ex.sets.filter((s) => s.doneAt != null).map((s) => ({ ex, s })));
+      const pick = op.set != null ? candidates.length === 1 && candidates[0]!.sets[op.set - 1]?.doneAt != null ? { ex: candidates[0]!, s: candidates[0]!.sets[op.set - 1]! } : undefined : doneSets.sort((a, b) => b.s.doneAt! - a.s.doneAt!)[0];
+      if (!pick) {
+        throw new TrainingError(op.set != null ? `Set ${op.set} is not a done set of ${candidates[0]?.name ?? "that exercise"}; give the exercise and the 1-based number of a done set.` : "No done strength set to add the drop to yet.");
+      }
+      const weightKg = snapKg(op.weightKg, unitOf(pick.ex.exerciseId));
+      pick.s.segments = [...segmentsOf(pick.s), { weightKg, reps: op.reps }];
+      return `${pick.ex.name}: ${formatSet(pick.s, unitOf(pick.ex.exerciseId))}`;
+    }
     case "finish_cardio": {
       const i = indexOf(session, op.exercise);
       const ex = list[i]!;
@@ -419,9 +435,11 @@ export function describeLive(session: LiveSession, now = Date.now()): string {
       const cut = ex.cutShort ? ` (terminado antes${ex.cardioLog ? `, ${Math.round(ex.cardioLog.durationSeconds / 60)} min` : ""})` : "";
       return `${i + 1}. ${ex.name} [${ex.exerciseId}] — cardio ${target}${timing}${cut || status}${mark}`;
     }
-    const doneSets = ex.sets.filter((s) => s.doneAt != null).length;
+    const doneSets = ex.sets.filter((s) => s.doneAt != null);
     const weight = ex.sets.find((s) => s.doneAt == null) ?? ex.sets.at(-1);
-    return `${i + 1}. ${ex.name} [${ex.exerciseId}, ${ex.equipment}] — ${ex.sets.length}×${ex.repMin}–${ex.repMax}${weight ? ` · ${load(weight.weightKg, ex.exerciseId)}` : ""} · ${doneSets}/${ex.sets.length} series${ex.supersetId ? ` · superserie ${ex.supersetId}` : ""}${status}${mark}`;
+    // Sets where the load dropped mid-set, as one set each ("serie 2: 80 kg × 5 → 60 kg × 3").
+    const logged = ex.sets.flatMap((s, n) => (s.doneAt != null && hasDrops(s) ? [` · serie ${n + 1}: ${formatSet(s, unitOf(ex.exerciseId))}`] : [])).join("");
+    return `${i + 1}. ${ex.name} [${ex.exerciseId}, ${ex.equipment}] — ${ex.sets.length}×${ex.repMin}–${ex.repMax}${weight ? ` · ${load(weight.weightKg, ex.exerciseId)}` : ""} · ${doneSets.length}/${ex.sets.length} series${logged}${ex.supersetId ? ` · superserie ${ex.supersetId}` : ""}${status}${mark}`;
   });
   return [`Sesión "${session.name}", ${minutes} min en marcha.`, ...lines].join("\n");
 }
