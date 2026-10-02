@@ -8,6 +8,7 @@ import { bodyTools } from "../body/tools";
 import { calendarTools } from "../calendar/tools";
 import { coachTools } from "../coach/tools";
 import { dailyTools } from "../daily/tools";
+import { knowledgeTools } from "../knowledge/tools";
 import { medicationTools } from "../medication/tools";
 import { nutritionTools } from "../nutrition/tools";
 import { shoppingTools } from "../shopping/tools";
@@ -32,4 +33,5 @@ export const TOOLS: PulsoTool[] = [
   ...calendarTools,
   ...shoppingTools,
   ...substanceTools,
+  ...knowledgeTools,
 ];
