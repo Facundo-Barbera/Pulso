@@ -1,7 +1,7 @@
 "use client";
 
-import type { DoseMeal, Medication, MedicationInput, MedicationKind, MedicationSchedule } from "@pulso/contract";
-import { BedDouble, Clock, Dumbbell, Plus, Trash2, Utensils, X, type LucideIcon } from "lucide-react";
+import { DAY_PART_RANGES, DEFAULT_ANY_TIME_REMINDER, type DayPart, type DoseMeal, type DoseWindow, type Medication, type MedicationInput, type MedicationKind, type MedicationSchedule } from "@pulso/contract";
+import { BedDouble, CalendarCheck, Clock, Dumbbell, Plus, Sun, Trash2, Utensils, X, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createContext, useContext, useState } from "react";
 import { cn } from "../../../_ui/cn";
@@ -57,6 +57,8 @@ export function EditMedicationRow({ medication, children, className }: { medicat
 }
 
 type RestDay = "time" | "none";
+/** Step 1, «¿Cada cuándo?». */
+type Frequency = "daily" | "weekdays" | "interval" | "monthly" | "asNeeded";
 
 type Draft = {
   name: string;
@@ -65,8 +67,12 @@ type Draft = {
   unit: string;
   form: string;
   instructions: string;
-  asNeeded: boolean;
-  /** Which "Cuándo" parts are on; their settings are kept while off so toggling back loses nothing. */
+  frequency: Frequency;
+  every: number;
+  everyUnit: "day" | "week";
+  intervalStart: string;
+  monthDay: number;
+  /** Which «¿A qué hora?» parts are on; their settings are kept while off so toggling back loses nothing. */
   useTimes: boolean;
   times: string[];
   useTraining: boolean;
@@ -76,6 +82,11 @@ type Draft = {
   useMeals: boolean;
   meals: DoseMeal[];
   bedtime: boolean;
+  useWindows: boolean;
+  windows: DoseWindow[];
+  anyTime: boolean;
+  remind: boolean;
+  reminder: string;
   days: number[];
   startDate: string;
   endDate: string;
@@ -87,8 +98,13 @@ type Draft = {
 
 const DEFAULT_UNIT: Record<MedicationKind, string> = { medicamento: "mg", suplemento: "g" };
 
-const draftOf =(m: Medication | null, kind: MedicationKind, today: string): Draft => {
+const frequencyOf = (s: MedicationSchedule): Frequency =>
+  s.asNeeded ? "asNeeded" : s.monthDay ? "monthly" : s.interval ? "interval" : s.days.length ? "weekdays" : "daily";
+
+const draftOf = (m: Medication | null, kind: MedicationKind, today: string): Draft => {
   const s = m && !m.schedule.asNeeded ? m.schedule : null;
+  // Something already timed some other way doesn't also get a default hour.
+  const timedElsewhere = !!s && (s.anyTime || s.windows.length > 0 || !!s.training || s.meals.length > 0 || s.bedtime);
   return {
     name: m?.name ?? "",
     kind: m?.kind ?? kind,
@@ -96,8 +112,12 @@ const draftOf =(m: Medication | null, kind: MedicationKind, today: string): Draf
     unit: m?.unit ?? DEFAULT_UNIT[kind],
     form: m?.form ?? "",
     instructions: m?.instructions ?? "",
-    asNeeded: m?.schedule.asNeeded ?? false,
-    useTimes: s ? s.times.length > 0 : true,
+    frequency: m ? frequencyOf(m.schedule) : "daily",
+    every: s?.interval?.every ?? 2,
+    everyUnit: s?.interval?.unit ?? "week",
+    intervalStart: s?.interval?.start ?? m?.startDate ?? today,
+    monthDay: s?.monthDay ?? Number(today.slice(8, 10)),
+    useTimes: s ? s.times.length > 0 || !timedElsewhere : true,
     times: s?.times.length ? s.times : ["09:00"],
     useTraining: !!s?.training,
     withinMinutes: s?.training?.withinMinutes ?? 60,
@@ -106,6 +126,11 @@ const draftOf =(m: Medication | null, kind: MedicationKind, today: string): Draf
     useMeals: !!s?.meals.length,
     meals: s?.meals.length ? s.meals : ["desayuno"],
     bedtime: s?.bedtime ?? false,
+    useWindows: !!s?.windows.length,
+    windows: s?.windows.length ? s.windows : [{ part: "manana", ...DAY_PART_RANGES.manana }],
+    anyTime: s?.anyTime ?? false,
+    remind: s ? !s.anyTime || s.reminder !== null : true,
+    reminder: s?.reminder ?? DEFAULT_ANY_TIME_REMINDER,
     days: m?.schedule.days ?? [],
     startDate: m?.startDate ?? today,
     endDate: m?.endDate ?? "",
@@ -138,7 +163,8 @@ function applyPreset(d: Draft, p: Preset): Draft {
     dose: String(p.dose),
     unit: p.unit,
     form: p.form,
-    asNeeded: false,
+    frequency: "daily",
+    days: [],
     useTimes: !!s.times?.length,
     useTraining: !!s.training,
     withinMinutes: s.training?.withinMinutes ?? d.withinMinutes,
@@ -147,6 +173,8 @@ function applyPreset(d: Draft, p: Preset): Draft {
     useMeals: !!s.meals?.length,
     meals: s.meals?.length ? s.meals : d.meals,
     bedtime: !!s.bedtime,
+    useWindows: false,
+    anyTime: false,
   };
 }
 
@@ -158,6 +186,20 @@ const FORMS: Record<MedicationKind, string[]> = {
   medicamento: ["comprimido", "cápsula", "gotas", "polvo", "jarabe", "sobre", "inyección", "spray", "crema"],
   suplemento: ["polvo", "cápsula", "gomita", "comprimido", "líquido", "gotas"],
 };
+
+const FREQUENCIES: { value: Frequency; label: string }[] = [
+  { value: "daily", label: "Diario" },
+  { value: "weekdays", label: "Algunos días" },
+  { value: "interval", label: "Cada N semanas" },
+  { value: "monthly", label: "Cada mes" },
+  { value: "asNeeded", label: "Cuando haga falta" },
+];
+
+const PARTS: { value: DayPart; label: string }[] = [
+  { value: "manana", label: "Mañana" },
+  { value: "tarde", label: "Tarde" },
+  { value: "noche", label: "Noche" },
+];
 
 const MEALS: { value: DoseMeal; label: string }[] = [
   { value: "desayuno", label: "Desayuno" },
@@ -173,9 +215,14 @@ function problem(d: Draft): string | null {
   if (!d.name.trim()) return "Ponle un nombre.";
   if (!(dose > 0)) return "La dosis tiene que ser un número mayor que cero.";
   if (!d.unit.trim()) return "Falta la unidad (mg, g, cápsula…).";
-  if (!d.asNeeded) {
-    if (!d.useTimes && !d.useTraining && !d.useMeals && !d.bedtime) return "Elige cuándo tomarlo, o «Cuando haga falta».";
+  if (d.frequency !== "asNeeded") {
+    if (d.frequency === "weekdays" && d.days.length === 0) return "Marca al menos un día.";
+    if (d.frequency === "interval" && !(Number.isInteger(d.every) && d.every >= 1 && d.every <= 52)) return "Elige cada cuántos días o semanas (1 a 52).";
+    if (!d.useTimes && !d.useTraining && !d.useMeals && !d.bedtime && !d.useWindows && !d.anyTime) return "Elige a qué hora tomarlo; si no hay una hora fija, «Cualquier hora».";
     if (d.useTimes && d.times.filter(Boolean).length === 0) return "Añade al menos una hora.";
+    if (d.useWindows && d.windows.length === 0) return "Elige mañana, tarde o noche.";
+    if (d.useWindows && d.windows.some((w) => !w.start || !w.end || w.start >= w.end)) return "Cada franja tiene que empezar antes de terminar.";
+    if (d.anyTime && d.remind && !d.reminder) return "Pon la hora del aviso, o elige «Sin aviso».";
     if (d.useMeals && d.meals.length === 0) return "Elige con qué comida.";
     if (d.useTraining && d.restDay === "time" && !d.restDayTime) return "Pon la hora para los días sin entreno, o elige «No tomar».";
   }
@@ -185,14 +232,21 @@ function problem(d: Draft): string | null {
 }
 
 function scheduleOf(d: Draft): MedicationSchedule {
-  if (d.asNeeded) return { asNeeded: true, days: [], ...noSchedule };
+  const none = { days: [], interval: null, monthDay: null, windows: [], anyTime: false, reminder: null };
+  if (d.frequency === "asNeeded") return { asNeeded: true, ...none, ...noSchedule };
+  const weekly = d.frequency === "weekdays" || (d.frequency === "interval" && d.everyUnit === "week");
   return {
     asNeeded: false,
     times: d.useTimes ? d.times.filter(Boolean) : [],
-    days: d.days,
+    days: weekly ? d.days : [],
+    interval: d.frequency === "interval" ? { every: d.every, unit: d.everyUnit, start: d.intervalStart } : null,
+    monthDay: d.frequency === "monthly" ? d.monthDay : null,
     training: d.useTraining ? { withinMinutes: d.withinMinutes, restDayTime: d.restDay === "time" ? d.restDayTime : null } : null,
     meals: d.useMeals ? d.meals : [],
     bedtime: d.bedtime,
+    windows: d.useWindows ? d.windows : [],
+    anyTime: d.anyTime,
+    reminder: d.anyTime && d.remind ? d.reminder : null,
   };
 }
 
@@ -241,6 +295,16 @@ function Part({ title, hint, children }: { title: string; hint?: string; childre
       {hint && <p className="text-muted-foreground mt-0.5 text-[12px] leading-relaxed">{hint}</p>}
       {children && <div className="mt-3 space-y-3">{children}</div>}
     </div>
+  );
+}
+
+/** A "HH:MM" input in the editor's rounded field. */
+function TimeInput({ value, onChange, label, prefix }: { value: string; onChange: (value: string) => void; label: string; prefix?: string }) {
+  return (
+    <span className="bg-card border-border flex items-center gap-1 rounded-xl border pl-3">
+      {prefix && <span className="text-muted-foreground text-[13px]">{prefix}</span>}
+      <input type="time" className="tabular h-10 bg-transparent px-2 text-[15px] outline-none" value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} />
+    </span>
   );
 }
 
@@ -330,13 +394,68 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
         ))}
       </datalist>
 
-      <FieldGroup label="Cuándo" hint={draft.asNeeded ? "No cuenta para la adherencia: anótala cuando la tomes." : undefined}>
-        <Segmented<"scheduled" | "asNeeded"> label="Cuándo" value={draft.asNeeded ? "asNeeded" : "scheduled"} onChange={(v) => set("asNeeded", v === "asNeeded")} options={[{ value: "scheduled", label: "Con horario" }, { value: "asNeeded", label: "Cuando haga falta" }]} className="w-full" />
-        {!draft.asNeeded && (
-          <div className="mt-3 space-y-3">
+      <FieldGroup label="¿Cada cuándo?" hint={draft.frequency === "asNeeded" ? "No cuenta para la adherencia: anótala cuando la tomes." : undefined}>
+        <div className="flex flex-wrap gap-2">
+          {FREQUENCIES.map(({ value, label }) => (
+            <Chip key={value} on={draft.frequency === value} onClick={() => set("frequency", value)}>
+              {label}
+            </Chip>
+          ))}
+        </div>
+        {draft.frequency === "weekdays" && (
+          <div className="mt-3">
+            <WeekdayPicker value={draft.days} onChange={(days) => set("days", days)} color={MED} />
+          </div>
+        )}
+        {draft.frequency === "interval" && (
+          <div className="mt-3">
+            <Part title="Cada cuánto">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground text-[13px]">Cada</span>
+                <input className={cn(inputClass, "tabular w-20 text-center")} inputMode="numeric" value={String(draft.every)} onChange={(e) => set("every", Number(e.target.value.replace(/\D/g, "")) || 0)} aria-label="Cada cuántos" />
+                <Segmented<"day" | "week"> label="Unidad" value={draft.everyUnit} onChange={(v) => set("everyUnit", v)} options={[{ value: "week", label: "semanas" }, { value: "day", label: "días" }]} />
+              </div>
+              <Field label="A partir del">
+                <input type="date" className={inputClass} value={draft.intervalStart} onChange={(e) => set("intervalStart", e.target.value || draft.startDate)} />
+              </Field>
+              {draft.everyUnit === "week" && (
+                <FieldGroup label="Qué día" hint={draft.days.length === 0 ? "Sin días marcados: el mismo día de la semana que el inicio." : undefined}>
+                  <WeekdayPicker value={draft.days} onChange={(days) => set("days", days)} color={MED} />
+                </FieldGroup>
+              )}
+            </Part>
+          </div>
+        )}
+        {draft.frequency === "monthly" && (
+          <div className="mt-3">
+            <Part title="Cada mes" hint={draft.monthDay > 28 ? "En los meses más cortos, el último día." : undefined}>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-[13px]">El día</span>
+                <select className={cn(inputClass, "tabular w-24")} value={draft.monthDay} onChange={(e) => set("monthDay", Number(e.target.value))} aria-label="Día del mes">
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </Part>
+          </div>
+        )}
+      </FieldGroup>
+
+      {draft.frequency !== "asNeeded" && (
+        <FieldGroup label="¿A qué hora?">
+          <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
               <Chip on={draft.useTimes} onClick={() => set("useTimes", !draft.useTimes)} icon={Clock}>
-                A horas fijas
+                A una hora
+              </Chip>
+              <Chip on={draft.useWindows} onClick={() => set("useWindows", !draft.useWindows)} icon={Sun}>
+                En la mañana…
+              </Chip>
+              <Chip on={draft.anyTime} onClick={() => set("anyTime", !draft.anyTime)} icon={CalendarCheck}>
+                Cualquier hora
               </Chip>
               <Chip on={draft.useTraining} onClick={() => set("useTraining", !draft.useTraining)} icon={Dumbbell}>
                 Después de entrenar
@@ -350,7 +469,7 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
             </div>
 
             {draft.useTimes && (
-              <Part title="A horas fijas">
+              <Part title="A una hora">
                 <div className="flex flex-wrap gap-2">
                   {draft.times.map((time, i) => (
                     <span key={i} className="bg-card border-border flex items-center rounded-xl border pl-1">
@@ -371,6 +490,42 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
               </Part>
             )}
 
+            {draft.useWindows && (
+              <Part title="En una parte del día" hint="Una toma cuando quieras dentro de la franja. Cuenta como olvidada solo al acabar el día.">
+                <div className="flex flex-wrap gap-2">
+                  {PARTS.map(({ value, label }) => {
+                    const on = draft.windows.some((w) => w.part === value);
+                    const toggled = on ? draft.windows.filter((w) => w.part !== value) : [...draft.windows, { part: value, ...DAY_PART_RANGES[value] }];
+                    return (
+                      <Chip key={value} on={on} onClick={() => set("windows", PARTS.flatMap((p) => toggled.filter((w) => w.part === p.value)))}>
+                        {label}
+                      </Chip>
+                    );
+                  })}
+                </div>
+                {draft.windows.map((w) => {
+                  const edit = (patch: Partial<DoseWindow>) => set("windows", draft.windows.map((x) => (x.part === w.part ? { ...x, ...patch } : x)));
+                  const label = PARTS.find((p) => p.value === w.part)!.label;
+                  return (
+                    <div key={w.part} className="flex flex-wrap items-center gap-2">
+                      <span className="w-16 text-[13px] font-medium">{label}</span>
+                      <TimeInput value={w.start} onChange={(start) => edit({ start })} label={`${label}: desde`} prefix="de" />
+                      <TimeInput value={w.end} onChange={(end) => edit({ end })} label={`${label}: hasta`} prefix="a" />
+                    </div>
+                  );
+                })}
+              </Part>
+            )}
+
+            {draft.anyTime && (
+              <Part title="Cualquier hora" hint="Toca ese día, cuando quieras. Cuenta como olvidada solo si se acaba el día sin tomarla.">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Segmented<"on" | "off"> label="Aviso" value={draft.remind ? "on" : "off"} onChange={(v) => set("remind", v === "on")} options={[{ value: "on", label: "Avisar si no la tomé" }, { value: "off", label: "Sin aviso" }]} />
+                  {draft.remind && <TimeInput value={draft.reminder} onChange={(v) => set("reminder", v)} label="Hora del aviso" prefix="a las" />}
+                </div>
+              </Part>
+            )}
+
             {draft.useTraining && (
               <Part title="Después de entrenar" hint="Cuando termina una sesión de Pulso o un entreno de Salud. Si tienes una sesión en el Calendario, espera a que acabe.">
                 <FieldGroup label="Tómala dentro de">
@@ -379,12 +534,7 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
                 <FieldGroup label="En días sin entreno">
                   <div className="flex flex-wrap items-center gap-2">
                     <Segmented<RestDay> label="En días sin entreno" value={draft.restDay} onChange={(v) => set("restDay", v)} options={[{ value: "time", label: "A una hora" }, { value: "none", label: "No tomar" }]} />
-                    {draft.restDay === "time" && (
-                      <span className="bg-card border-border flex items-center gap-1 rounded-xl border pl-3">
-                        <span className="text-muted-foreground text-[13px]">a las</span>
-                        <input type="time" className="tabular h-10 bg-transparent px-2 text-[15px] outline-none" value={draft.restDayTime} onChange={(e) => set("restDayTime", e.target.value)} aria-label="Hora en días sin entreno" />
-                      </span>
-                    )}
+                    {draft.restDay === "time" && <TimeInput value={draft.restDayTime} onChange={(v) => set("restDayTime", v)} label="Hora en días sin entreno" prefix="a las" />}
                   </div>
                 </FieldGroup>
               </Part>
@@ -406,13 +556,9 @@ function MedicationForm({ medication, prefill, kind, today, onKind, onDone }: { 
             )}
 
             {draft.bedtime && <Part title="Antes de dormir" hint="Media hora antes de tu hora de dormir del Calendario." />}
-
-            <FieldGroup label="Qué días" hint={draft.days.length === 0 ? "Sin días marcados: todos los días." : undefined}>
-              <WeekdayPicker value={draft.days} onChange={(days) => set("days", days)} color={MED} />
-            </FieldGroup>
           </div>
-        )}
-      </FieldGroup>
+        </FieldGroup>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Forma">

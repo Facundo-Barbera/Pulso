@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import type { DoseSlot } from "@pulso/contract";
-import { addDays, localNow } from "../medication/schedule";
+import { addDays, isoWeekday, localNow } from "../medication/schedule";
 import { addMedication, listMedications, logDose, updateMedication } from "../medication/store";
-import { groupSlots, HISTORY_DAYS, isLeft, medicationPage, scheduleLine, slotLabel, trainingLine, unitFor } from "./medication";
+import { groupSlots, HISTORY_DAYS, isLeft, leftLabel, medicationPage, scheduleLine, slotLabel, trainingLine, unitFor } from "./medication";
 import { ownDatabase } from "./test-db";
 
 ownDatabase("web-medication");
@@ -63,7 +63,7 @@ test("today as one timeline: taken by the clock, what is left with its state, th
     ["Omega 3", "ahora", "11:30", "A las 11:30", "Toca ahora"],
     ["Magnesio B", "pendiente", "15:00", "A las 15:00", "En 3 h"],
     ["Semaglutida", "a-demanda", null, "Cuando haga falta", "Ninguna hoy"], // never taken
-    ["Hierro", "no-toca", null, "L · 10:00", "Toca el lunes"],
+    ["Hierro", "no-toca", null, "Semanal · lunes · 10:00", "Toca el lunes"],
     ["Whey", "no-toca", null, "Después de entrenar · solo días de entreno", "Hoy descansas · solo los días de entreno"],
   ]);
   expect(page.today.filter(isLeft).map((i) => i.medication.name)).toEqual(["Creatina", "Omega 3", "Magnesio B"]);
@@ -92,6 +92,8 @@ const slot = (over: Partial<DoseSlot>): DoseSlot => ({
   moment: "hora",
   time: "09:00",
   training: null,
+  window: null,
+  remindAt: null,
   status: "pendiente",
   eventId: null,
   takenAt: null,
@@ -123,7 +125,7 @@ test("groupSlots: fixed times by the clock, meals and bedtime by moment, every t
 });
 
 test("schedules, slot keys and units read in Spanish", () => {
-  const base = { asNeeded: false, times: [], days: [], training: null, meals: [], bedtime: false };
+  const base = { asNeeded: false, times: [], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null };
   expect(scheduleLine({ ...base, training: { withinMinutes: 60, restDayTime: "09:00" } })).toBe("Después de entrenar · días sin entreno 09:00");
   expect(scheduleLine({ ...base, training: { withinMinutes: 60, restDayTime: null } })).toBe("Después de entrenar · solo días de entreno");
   expect(scheduleLine({ ...base, meals: ["comida"] })).toBe("Con la comida");
@@ -134,4 +136,39 @@ test("schedules, slot keys and units read in Spanish", () => {
 
   expect(["09:00", "entreno", "desayuno", "dormir"].map(slotLabel)).toEqual(["las 09:00", "después de entrenar", "con el desayuno", "antes de dormir"]);
   expect([unitFor(1, "cápsulas"), unitFor(2, "cápsula"), unitFor(1, "scoop"), unitFor(5, "g")]).toEqual(["cápsula", "cápsulas", "scoop", "g"]);
+});
+
+test("flexible schedules read in Spanish: any time, day parts and every-N/monthly frequencies", () => {
+  const base = { asNeeded: false, times: [], days: [], training: null, meals: [], bedtime: false, interval: null, monthDay: null, windows: [], anyTime: false, reminder: null };
+  expect(scheduleLine({ ...base, days: [4], anyTime: true, reminder: "19:00" })).toBe("Semanal · jueves · cualquier hora");
+  expect(scheduleLine({ ...base, windows: [{ part: "manana", start: "07:00", end: "12:00" }, { part: "noche", start: "19:00", end: "23:00" }] })).toBe("En la mañana y en la noche");
+  expect(scheduleLine({ ...base, times: ["08:00"], interval: { every: 3, unit: "day", start: today } })).toBe("Cada 3 días · 08:00");
+  expect(scheduleLine({ ...base, anyTime: true, days: [7], interval: { every: 2, unit: "week", start: today } })).toBe("Cada 2 semanas · domingo · cualquier hora");
+  expect(scheduleLine({ ...base, anyTime: true, monthDay: 1 })).toBe("Cada mes · día 1 · cualquier hora");
+  expect(["dia", "manana"].map(slotLabel)).toEqual(["cualquier hora", "en la mañana"]);
+});
+
+test("today: an any-time dose waits as «Hoy toca · cuando quieras» until taken; a window is due inside it", () => {
+  const thursday = isoWeekday(today);
+  const sema = addMedication({ name: "Semaglutida", dose: 1, unit: "mg", schedule: { asNeeded: false, times: [], days: [thursday], anyTime: true }, startDate: today }, today);
+  const zinc = addMedication({ name: "Zinc", dose: 1, unit: "cápsula", schedule: { asNeeded: false, times: [], days: [], windows: [{ part: "manana", start: "08:00", end: "13:00" }] }, startDate: today }, today);
+  let page = medicationPage(NOW);
+  const anyTime = page.today.find((i) => i.medication.id === sema.id)!;
+  expect(anyTime).toMatchObject({ state: "dia", at: null, when: "Cualquier hora", line: "Hoy toca · cuando quieras" });
+  expect(isLeft(anyTime)).toBe(true);
+  expect(leftLabel(anyTime)).toBe("cuando quieras");
+  const morning = page.today.find((i) => i.medication.id === zinc.id)!;
+  expect(morning).toMatchObject({ state: "ahora", at: "08:00", when: "En la mañana · 08:00–13:00", line: "Cuando quieras hasta las 13:00" });
+  expect(leftLabel(morning)).toBe("hasta las 13:00");
+  expect(groupSlots(page.day.slots, "12:00").find((g) => g.key === "dia")).toMatchObject({ title: "Cualquier hora", time: null, slots: [{ line: "Hoy toca · cuando quieras" }] });
+
+  logDose({ medicationId: sema.id, date: today, scheduledTime: "dia", status: "tomada", takenAt: NOW.getTime() });
+  page = medicationPage(NOW);
+  expect(page.today.find((i) => i.medication.id === sema.id)).toMatchObject({ state: "tomada", at: "12:00" });
+  // Not today: when it is next (today is Thursday the 14th).
+  const monthly = (name: string, monthDay: number) => addMedication({ name, dose: 1, unit: "ampolla", schedule: { asNeeded: false, times: [], days: [], monthDay, anyTime: true }, startDate: today }, today).id;
+  const [b12, iron] = [monthly("B12", 17), monthly("Hierro", 13)];
+  page = medicationPage(NOW);
+  expect(page.today.find((i) => i.medication.id === b12)).toMatchObject({ state: "no-toca", when: "Cada mes · día 17 · cualquier hora", line: "Toca el domingo" });
+  expect(page.today.find((i) => i.medication.id === iron)?.line).toBe("Toca el 13 de agosto");
 });

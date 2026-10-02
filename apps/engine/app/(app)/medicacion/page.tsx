@@ -2,7 +2,7 @@ import type { AdherenceReport, AdherenceWindow, Medication, MedicationKind } fro
 import { AlarmClock, CalendarCheck, Check, CircleCheckBig, Dumbbell, Flame, History, List, Pill, Tablets, TrendingUp, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { cookies } from "next/headers";
 import { TIME } from "@/src/medication/schedule";
-import { isLeft, medicationPage, scheduleLine, slotLabel, unitFor, type MedicationPage, type TodayItem, type TodayState } from "@/src/web/medication";
+import { isLeft, leftLabel, medicationPage, scheduleLine, slotLabel, unitFor, type MedicationPage, type TodayItem, type TodayState } from "@/src/web/medication";
 import { Card, CardTitle } from "../../_ui/card";
 import { cn } from "../../_ui/cn";
 import { EmptyState } from "../../_ui/empty-state";
@@ -113,10 +113,11 @@ function Hero({ page }: { page: MedicationPage }) {
               {left.map((i) => (
                 <li key={i.key} className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium", i.state === "atrasada" ? "bg-caution/12 text-caution" : "bg-muted/80")}>
                   {i.state === "entreno" && <Dumbbell className="size-3.5" style={{ color: MED }} />}
+                  {i.state === "dia" && <CalendarCheck className="size-3.5" style={{ color: MED }} />}
                   {i.state === "atrasada" && <AlarmClock className="size-3.5" aria-hidden />}
                   {i.medication.name}
                   <span className={cn("font-normal", i.state !== "atrasada" && "text-muted-foreground")}>
-                    · {i.state === "entreno" ? "al terminar de entrenar" : i.state === "atrasada" ? `era a las ${i.at}` : i.state === "ahora" ? "ahora" : `a las ${i.at}`}
+                    · {leftLabel(i)}
                   </span>
                 </li>
               ))}
@@ -141,7 +142,7 @@ function Hero({ page }: { page: MedicationPage }) {
   );
 }
 
-const MARKER: Record<Exclude<TodayState, "tomada" | "entreno" | "ahora">, string> = {
+const MARKER: Record<Exclude<TodayState, "tomada" | "entreno" | "dia" | "ahora">, string> = {
   omitida: "border-muted-foreground/40 bg-muted",
   atrasada: "border-caution bg-caution/25",
   pendiente: "border-muted-foreground/50 bg-card",
@@ -157,12 +158,14 @@ function Marker({ state }: { state: TodayState }) {
         <Check className="size-3" strokeWidth={3.2} />
       </span>
     );
-  if (state === "entreno")
+  if (state === "entreno" || state === "dia") {
+    const Icon = state === "entreno" ? Dumbbell : CalendarCheck;
     return (
       <span className="grid size-5 place-items-center rounded-full" style={{ background: `color-mix(in oklab, ${MED} 18%, var(--card))`, color: MED }}>
-        <Dumbbell className="size-3" strokeWidth={2.4} />
+        <Icon className="size-3" strokeWidth={2.4} />
       </span>
     );
+  }
   if (state === "ahora") return <span className="size-5 rounded-full" style={{ background: MED, boxShadow: `0 0 0 4px color-mix(in oklab, ${MED} 22%, transparent)` }} />;
   // Late reads by its clock, not only by its orange.
   if (state === "atrasada")
@@ -223,6 +226,7 @@ function TimelineRow({ item, page }: { item: TodayItem; page: MedicationPage }) 
 /** Today as one timeline: by the clock with a «now» mark, then what can wait and what isn't due. */
 function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
   const clock = page.today.filter((i) => i.at !== null || i.state === "entreno");
+  const anyTime = page.today.filter((i) => i.state === "dia");
   const whenNeeded = page.today.filter((i) => i.state === "a-demanda" && i.at === null);
   const off = page.today.filter((i) => i.state === "no-toca");
   // «Now» sits before the first thing still ahead (a workout counts as ahead).
@@ -246,6 +250,16 @@ function TodayCard({ page, delay }: { page: MedicationPage; delay: number }) {
                 <TimelineRow key={item.key} item={item} page={page} />
               ))}
             </ol>
+          )}
+          {anyTime.length > 0 && (
+            <section>
+              <h3 className="text-muted-foreground text-[12px] font-semibold tracking-wide uppercase">Hoy, cuando quieras</h3>
+              <ul>
+                {anyTime.map((item) => (
+                  <TimelineRow key={item.key} item={item} page={page} />
+                ))}
+              </ul>
+            </section>
           )}
           {whenNeeded.length > 0 && (
             <section>
