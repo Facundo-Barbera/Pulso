@@ -186,7 +186,7 @@ export type ProgressDay = {
   protein: number;
   entries: number;
   waterMl: number;
-  /** Within ±10 % of the kcal target, on a day with something logged. */
+  /** In zone: something logged, kcal in its zone and protein at least its minimum (DailySummary.inZone). */
   onTarget: boolean;
   /** Share of the active plan's items eaten that day (0–1); null before the plan started or without one. */
   planShare: number | null;
@@ -202,7 +202,6 @@ export type DietaProgress = {
 
 const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null);
 
-export const onTarget = (s: DailySummary) => !!s.targets && s.targets.kcal > 0 && s.entries > 0 && Math.abs(s.totals.kcal - s.targets.kcal) / s.targets.kcal <= 0.1;
 
 /** The last `count` days ending `today`: kcal, protein, water and how much of the plan was followed. */
 export function dietaProgress(today = localDate(), count = 14): DietaProgress {
@@ -221,7 +220,7 @@ export function dietaProgress(today = localDate(), count = 14): DietaProgress {
       const eaten = new Set(meals.filter((m) => m.date === s.date && m.planItemId).map((m) => m.planItemId));
       planShare = items.length ? items.filter((i) => eaten.has(i.id)).length / items.length : null;
     }
-    return { date: s.date, kcal: s.totals.kcal, protein: s.totals.protein, entries: s.entries, waterMl: water[s.date] ?? 0, onTarget: onTarget(s), planShare };
+    return { date: s.date, kcal: s.totals.kcal, protein: s.totals.protein, entries: s.entries, waterMl: water[s.date] ?? 0, onTarget: s.inZone, planShare };
   });
 
   const logged = out.filter((d) => d.entries > 0);

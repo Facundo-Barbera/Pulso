@@ -266,6 +266,42 @@ struct NutritionTargets: Codable, Equatable {
     var fat: Double
     var fiber: Double
     var updatedAt: Double?
+    /// Each nutrient's zone by key ("kcal", "protein"…); absent from older engines.
+    var zones: [String: TargetZone]? = nil
+
+    subscript(nutrient: String) -> Double? {
+        switch nutrient {
+        case "kcal": kcal
+        case "protein": protein
+        case "carbs": carbs
+        case "fat": fat
+        case "fiber": fiber
+        default: nil
+        }
+    }
+}
+
+/// The "estás bien aquí" band around a target. `min` = reach at least `min` (past `max` is fine,
+/// it only ends the band drawn); `range` = stay between; `max` = stay under.
+struct TargetZone: Codable, Equatable {
+    enum Kind: String, Codable { case min, range, max }
+    var kind: Kind
+    var min: Double?
+    var max: Double?
+    /// Set by the Coach or the person rather than derived from the target.
+    var custom: Bool
+}
+
+/// One nutrient of one day against its zone.
+struct NutrientZone: Codable, Equatable {
+    enum Status: String, Codable { case below, inZone, above }
+    var kind: TargetZone.Kind
+    var min: Double?
+    var max: Double?
+    var custom: Bool
+    var value: Double
+    var target: Double
+    var status: Status
 }
 
 struct NutritionSummary: Codable, Equatable, Identifiable {
@@ -278,6 +314,10 @@ struct NutritionSummary: Codable, Equatable, Identifiable {
     /// The day's caffeine (mg) and alcohol (g); absent from older engines.
     var caffeineMg: Double? = nil
     var alcoholG: Double? = nil
+    /// Each nutrient against its zone, and whether the day counts as in zone (kcal in zone, protein
+    /// reached); absent from older engines and without targets.
+    var zones: [String: NutrientZone]? = nil
+    var inZone: Bool? = nil
     var id: String { date }
 }
 

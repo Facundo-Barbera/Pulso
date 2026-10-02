@@ -1,4 +1,4 @@
-import type { DailySummary, MealSlot } from "@pulso/contract";
+import type { DailySummary, MealSlot, NutrientZone } from "@pulso/contract";
 import { BarChart3, ClipboardList, Clock, Coffee, Cookie, CupSoda, Moon, Sandwich, Sunrise, Utensils, UtensilsCrossed, Wine, Zap, type LucideIcon } from "lucide-react";
 import type { DietaDay, DietaEntry, DietaProgress, Moment } from "@/src/web/dieta";
 import type { DietaLivingPlan, DayView, SlotView } from "@/src/web/dieta-plan";
@@ -14,6 +14,8 @@ import { PrepChip } from "./prep-chip";
 import { EatButton } from "./slot-row";
 import { SlotList } from "./slot-sheet";
 import { fmtAmount } from "./units";
+import { zoneLine, zoneRange, zoneTone } from "./zone";
+import { ZoneRing } from "./zone-ring";
 
 const ENERGY = "var(--domain-energy)";
 const MACROS = [
@@ -31,49 +33,75 @@ export const SLOT_ICONS: Record<MealSlot, LucideIcon> = {
   snack: Sandwich,
 };
 
-const pct = (value: number, target: number | undefined) => (target ? (value / target) * 100 : null);
-
-/** The hero: kcal against the target in the big ring, the three macros beside it, and what comes next in the plan. */
+/**
+ * The hero: kcal in the big ring, the three macros beside it, and what comes next
+ * in the plan. Each ring shows its target zone (see ZoneRing) and says in words
+ * how far from it the day is.
+ */
 export function MacroHero({ summary, next }: { summary: DailySummary; next: SlotView | null }) {
-  const { totals, targets, remaining } = summary;
+  const { totals, zones } = summary;
+  const tone = zones ? zoneTone(zones.kcal, ENERGY) : ENERGY;
   return (
     <Card className="relative overflow-hidden">
-      <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-[0.10] blur-3xl" style={{ background: ENERGY }} aria-hidden />
+      <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-[0.10] blur-3xl transition-colors duration-500" style={{ background: tone }} aria-hidden />
       <div className="relative flex flex-col items-center gap-6 md:flex-row md:items-center md:gap-10">
-        <Ring value={pct(totals.kcal, targets?.kcal)} size={184} stroke={15} color={ENERGY} glow label={`${Math.round(totals.kcal)} de ${targets?.kcal ?? "—"} kcal`}>
-          <div>
-            <p className="tabular text-[36px] leading-none font-semibold tracking-tight">{fmtNumber(totals.kcal)}</p>
-            <p className="text-muted-foreground mt-1.5 text-[12px]">{targets ? `de ${fmtNumber(targets.kcal)} kcal` : "kcal"}</p>
-          </div>
-        </Ring>
+        {zones ? (
+          <ZoneRing zone={zones.kcal} size={184} stroke={15} color={ENERGY} glow label={`${fmtNumber(totals.kcal)} kcal. ${zoneLine(zones.kcal, "kcal")}. Zona: ${zoneRange(zones.kcal, "kcal")}, objetivo ${fmtNumber(zones.kcal.target)}.`}>
+            <div>
+              <p className="tabular text-[36px] leading-none font-semibold tracking-tight">{fmtNumber(totals.kcal)}</p>
+              <p className={cn("mt-1.5 text-[12px] font-semibold", zones.kcal.status === "below" && "text-muted-foreground")} style={zones.kcal.status === "below" ? undefined : { color: tone }}>
+                {zoneLine(zones.kcal, "kcal")}
+              </p>
+            </div>
+          </ZoneRing>
+        ) : (
+          <Ring value={null} size={184} stroke={15} color={ENERGY} label={`${fmtNumber(totals.kcal)} kcal, sin objetivos`}>
+            <div>
+              <p className="tabular text-[36px] leading-none font-semibold tracking-tight">{fmtNumber(totals.kcal)}</p>
+              <p className="text-muted-foreground mt-1.5 text-[12px]">kcal</p>
+            </div>
+          </Ring>
+        )}
         <div className="w-full min-w-0 flex-1">
-          <p className="text-center text-[17px] font-semibold tracking-tight md:text-left">
-            {remaining ? (
-              remaining.kcal >= 0 ? (
-                <>
-                  Te quedan <span className="tabular">{fmtNumber(remaining.kcal)}</span> kcal
-                </>
-              ) : (
-                <>
-                  Te pasaste <span className="tabular text-energy">{fmtNumber(-remaining.kcal)}</span> kcal
-                </>
-              )
-            ) : (
-              "Sin objetivos diarios"
-            )}
-          </p>
-          {!targets && <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">Pídele al Coach tus objetivos de kcal y macros y aparecen aquí.</p>}
+          {zones ? (
+            <>
+              <p className="text-center text-[17px] font-semibold tracking-tight md:text-left">{headline(zones.kcal)}</p>
+              <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">
+                Tu zona: <span className="tabular">{zoneRange(zones.kcal, "kcal")}</span> · la marca es tu objetivo de <span className="tabular">{fmtNumber(zones.kcal.target)}</span>
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-center text-[17px] font-semibold tracking-tight md:text-left">Sin objetivos diarios</p>
+              <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">Pídele al Coach tus objetivos de kcal y macros y aparecen aquí.</p>
+            </>
+          )}
           <div className="mt-4 grid grid-cols-3 gap-3">
             {MACROS.map((m) => {
-              const target = targets?.[m.key];
+              const zone = zones?.[m.key];
               return (
                 <div key={m.key} className="flex flex-col items-center gap-2 md:flex-row md:gap-3">
-                  <Ring value={pct(totals[m.key], target)} size={60} stroke={7} color={m.color} label={`${m.label}: ${Math.round(totals[m.key])} de ${target ?? "—"} g`}>
-                    <span className="tabular text-[13px] font-semibold">{fmtNumber(totals[m.key])}</span>
-                  </Ring>
-                  <div className="text-center md:text-left">
+                  {zone ? (
+                    <ZoneRing zone={zone} size={60} stroke={7} color={m.color} label={`${m.label}: ${fmtNumber(zone.value)} g. ${zoneLine(zone, "g")}. Zona: ${zoneRange(zone, "g")}.`}>
+                      <span className="tabular text-[13px] font-semibold">{fmtNumber(totals[m.key])}</span>
+                    </ZoneRing>
+                  ) : (
+                    <Ring value={null} size={60} stroke={7} color={m.color} label={`${m.label}: ${fmtNumber(totals[m.key])} g`}>
+                      <span className="tabular text-[13px] font-semibold">{fmtNumber(totals[m.key])}</span>
+                    </Ring>
+                  )}
+                  <div className="min-w-0 text-center md:text-left">
                     <p className="text-[13px] font-medium">{m.label}</p>
-                    <p className="text-muted-foreground tabular text-[12px]">{target ? `de ${fmtNumber(target)} g` : "g"}</p>
+                    {zone ? (
+                      <>
+                        <p className={cn("tabular text-[12px] font-semibold", zone.status === "below" && "text-muted-foreground")} style={zone.status === "below" ? undefined : { color: zoneTone(zone, m.color) }}>
+                          {zoneLine(zone, "g")}
+                        </p>
+                        <p className="text-muted-foreground tabular text-[11px]">{zoneRange(zone, "g")}</p>
+                      </>
+                    ) : (
+                      <p className="text-muted-foreground tabular text-[12px]">g</p>
+                    )}
                   </div>
                 </div>
               );
@@ -84,6 +112,13 @@ export function MacroHero({ summary, next }: { summary: DailySummary; next: Slot
       </div>
     </Card>
   );
+}
+
+/** The hero's sentence about kcal: how far to the zone, that the day is in it, or how far past it. */
+function headline(z: NutrientZone) {
+  if (z.status === "inZone") return "Vas bien: estás en tu zona";
+  if (z.status === "above") return <>Te pasaste <span className="tabular text-destructive">{fmtNumber(z.value - (z.max ?? 0))}</span> kcal de tu zona</>;
+  return <>Te faltan <span className="tabular">{fmtNumber((z.min ?? 0) - z.value)}</span> kcal para tu zona</>;
 }
 
 function NextMeal({ meal }: { meal: SlotView }) {
@@ -210,7 +245,7 @@ export function WeekCard({ progress, href, delay }: { progress: DietaProgress; h
         <>
           <p className="flex items-baseline gap-1.5">
             <span className="tabular text-[26px] leading-none font-semibold">{week.filter((d) => d.onTarget).length}</span>
-            <span className="text-muted-foreground text-[13px]">de {logged.length} días en objetivo</span>
+            <span className="text-muted-foreground text-[13px]">de {logged.length} días en tu zona</span>
           </p>
           <Sparkline
             className="mt-3"

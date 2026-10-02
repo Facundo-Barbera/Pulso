@@ -27,6 +27,13 @@ export const NUTRITION_SCHEMA = `
     fiber REAL NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  -- Zones the Coach or the person set by hand; nutrients without a row get one derived from the target.
+  CREATE TABLE IF NOT EXISTS nutrition_target_zones (
+    nutrient TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    min REAL,
+    max REAL
+  );
   CREATE TABLE IF NOT EXISTS diet_plans (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

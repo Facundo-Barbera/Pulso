@@ -115,6 +115,21 @@ export const targetsShape = {
   carbs: grams.describe("Daily carbohydrates in grams"),
   fat: grams.describe("Daily fat in grams"),
   fiber: grams.optional().describe("Daily fiber in grams. Defaults to 14 g per 1000 kcal"),
+  zones: z
+    .partialRecord(
+      z.enum(["kcal", "protein", "carbs", "fat", "fiber"]),
+      z
+        .object({
+          min: z.number().min(0).max(20000).nullish().describe("Lower bound (kcal or g): eating less is 'below'"),
+          max: z.number().min(0).max(20000).nullish().describe("Upper bound (kcal or g): eating more is 'above'; for kind 'min' it only ends the band drawn"),
+          kind: z.enum(["min", "range", "max"]).optional().describe("min = reach at least min; range = stay between; max = stay under. Defaults from the bounds given"),
+        })
+        .refine((zone) => zone.min == null || zone.max == null || zone.min <= zone.max, "min must not exceed max"),
+    )
+    .optional()
+    .describe(
+      "Custom zones (the 'estás bien aquí' band each ring shows), only where the derived ones don't fit. Omitted nutrients are derived from the target and the body goal: kcal −10/+5 % on a fat-loss goal (±5 % maintaining, −5/+10 % gaining), protein and fiber at least the target, carbs and fat −20/+10 %. Every call replaces all custom zones.",
+    ),
 };
 export const targetsSchema = z.object(targetsShape);
 

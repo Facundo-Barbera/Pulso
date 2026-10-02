@@ -14,6 +14,7 @@ import type {
   NutritionDay,
   NutritionTargets,
   PlanDay,
+  ZoneInput,
   PlanForDay,
 } from "@pulso/contract";
 import { db } from "../db";
@@ -24,6 +25,7 @@ import { attachDish, dropEmptyDishes, listSavedDishes } from "./dishes";
 import { reconcileGroup, repairOnce, untie } from "./reconcile";
 import { dayRow, itemsOf, materialize, planDayIndex, slotRows } from "./slots";
 import { waterDay } from "./water";
+import { bodyDirection, customZone, dayInZone, resolveZones, saveCustomZones, zonesOf } from "./zones";
 
 export { add, addDays, localDate, MACRO_KEYS, planDayIndex, round, zero };
 
@@ -242,19 +244,31 @@ type TargetsRow = Macros & { updated_at: number };
 
 export function getTargets(): NutritionTargets | null {
   const row = db().query<TargetsRow, []>("SELECT kcal, protein, carbs, fat, fiber, updated_at FROM nutrition_targets WHERE id = 1").get();
-  return row ? { kcal: row.kcal, protein: row.protein, carbs: row.carbs, fat: row.fat, fiber: row.fiber, updatedAt: row.updated_at } : null;
+  if (!row) return null;
+  const macros: Macros = { kcal: row.kcal, protein: row.protein, carbs: row.carbs, fat: row.fat, fiber: row.fiber };
+  return { ...macros, updatedAt: row.updated_at, zones: resolveZones(macros) };
 }
 
-export function setTargets(input: Omit<Macros, "fiber"> & { fiber?: number }): NutritionTargets {
-  const targets: NutritionTargets = { ...input, fiber: input.fiber ?? Math.round((input.kcal / 1000) * 14), updatedAt: Date.now() };
-  db()
-    .query(
-      `INSERT INTO nutrition_targets (id, kcal, protein, carbs, fat, fiber, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET kcal = excluded.kcal, protein = excluded.protein, carbs = excluded.carbs,
-         fat = excluded.fat, fiber = excluded.fiber, updated_at = excluded.updated_at`,
-    )
-    .run(targets.kcal, targets.protein, targets.carbs, targets.fat, targets.fiber, targets.updatedAt);
-  return targets;
+export type TargetsInput = Omit<Macros, "fiber"> & { fiber?: number; zones?: Partial<Record<keyof Macros, ZoneInput>> };
+
+/** Replaces the targets and the custom zones: nutrients without a zone in `input` get theirs derived again. */
+export function setTargets(input: TargetsInput): NutritionTargets {
+  const macros: Macros = { kcal: input.kcal, protein: input.protein, carbs: input.carbs, fat: input.fat, fiber: input.fiber ?? Math.round((input.kcal / 1000) * 14) };
+  const direction = bodyDirection();
+  const custom = Object.fromEntries(
+    Object.entries(input.zones ?? {}).map(([k, z]) => [k, customZone(k as keyof Macros, macros[k as keyof Macros], z, direction)]),
+  );
+  db().transaction(() => {
+    db()
+      .query(
+        `INSERT INTO nutrition_targets (id, kcal, protein, carbs, fat, fiber, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET kcal = excluded.kcal, protein = excluded.protein, carbs = excluded.carbs,
+           fat = excluded.fat, fiber = excluded.fiber, updated_at = excluded.updated_at`,
+      )
+      .run(macros.kcal, macros.protein, macros.carbs, macros.fat, macros.fiber, Date.now());
+    saveCustomZones(custom);
+  })();
+  return getTargets()!;
 }
 
 // --- Summaries ---
@@ -272,8 +286,9 @@ function summarize(date: string, meals: MealEntry[], targets: NutritionTargets |
   }
   for (const s of Object.keys(bySlot) as MealSlot[]) bySlot[s] = round(bySlot[s]!);
   const remaining = targets && round(Object.fromEntries(MACRO_KEYS.map((k) => [k, targets[k] - totals[k]])) as Macros);
+  const zones = targets && zonesOf(round(totals), targets);
   return {
-    date, totals: round(totals), targets, remaining, bySlot, entries: meals.length,
+    date, totals: round(totals), targets, remaining, zones, inZone: dayInZone(meals.length, zones), bySlot, entries: meals.length,
     caffeineMg: Math.round(caffeineMg), alcoholG: Math.round(alcoholG * 10) / 10,
   };
 }

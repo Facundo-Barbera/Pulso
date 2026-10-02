@@ -108,6 +108,22 @@ entries and never several foods crammed into one name.
   big ones spread. `skip_slot` and `replace_slot` take `compensate: none|day|spread`.
 - When a change rewrites slots under an existing overlay, the overlay is recomputed.
 
+## Target zones (`zones.ts`)
+
+Targets stay single numbers; each nutrient also has a **zone**, the band where the
+person is doing well, which the rings draw on their track (green band, tick at the target).
+
+- **Kinds**: `min` (reach at least: protein, fiber; `max` only ends the band drawn, never
+  "above"), `range` (stay between: kcal, carbs, fat), `max` (stay under).
+- **Derived** from the target and the body goal (`bodyDirection`: a weight or fat goal below
+  the latest reading = loss): kcal −10/+5 % losing, ±5 % maintaining, −5/+10 % gaining;
+  protein and fiber ≥ target (band to +25 %); carbs and fat −20/+10 %.
+- **Custom**: `set_targets` (and `PUT targets`) take `zones: { protein: { min: 150 } … }`;
+  every call replaces all custom zones (`nutrition_target_zones`), the rest are derived again.
+- `DailySummary.zones` reads each nutrient as `{ value, target, min, max, kind, status }`
+  (`below` / `inZone` / `above`); `inZone` = something logged, kcal in zone, protein reached.
+  Adherence (Progreso, the week cards) counts days in zone.
+
 ## Changes are revisions (`revisions.ts`, `ops.ts`)
 
 Every op runs inside `revise()`: it snapshots the whole of each touched date (slots,
