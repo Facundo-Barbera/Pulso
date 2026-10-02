@@ -1,5 +1,5 @@
 import type { BodyMetric, BodyScan } from "@pulso/contract";
-import { ArrowDown, ArrowUp, CalendarDays, Equal } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, CircleAlert, CircleCheck, Equal } from "lucide-react";
 import type { BodyOverview, BodyReading } from "@/src/web/cuerpo";
 import { Card } from "../../../_ui/card";
 import { cn } from "../../../_ui/cn";
@@ -37,7 +37,7 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
             {tiles.map((metric) => (
               <li key={metric} className="bg-muted/60 min-w-0 rounded-2xl p-3 sm:p-4">
                 <p className="text-muted-foreground flex items-center gap-1.5 truncate text-[12px] font-medium">
-                  <span className="size-1.5 shrink-0 rounded-full" style={{ background: METRIC[metric].color }} />
+                  <span className="legend-dot size-2 shrink-0 rounded-full" style={{ background: METRIC[metric].color }} />
                   {METRIC[metric].label}
                 </p>
                 <p className="mt-1.5 flex items-baseline gap-1">
@@ -59,7 +59,11 @@ export function BodyHero({ scan, readings, goals, date }: { scan: BodyScan; read
   );
 }
 
-/** "↓ 1,2 kg desde el 3 mar", green when it moved the right way, amber when not, grey when flat. Dated when older than the latest scan. */
+/**
+ * "↓ 1,2 kg desde el 3 mar". The arrow is the direction; whether that is good
+ * is a check (blue) or an alert (orange), never the colour alone; grey when
+ * flat. Dated when older than the latest scan.
+ */
 function Change({ metric, reading, latestAt, goal, compact, className }: { metric: BodyMetric; reading: BodyReading | null; latestAt: number; goal?: number; compact?: boolean; className?: string }) {
   const stale = reading && reading.at !== latestAt ? <span className="text-muted-foreground font-normal">medido el {fmtShortDate(reading.at)}</span> : null;
   if (!reading || reading.delta === null || reading.since === null) {
@@ -67,13 +71,17 @@ function Change({ metric, reading, latestAt, goal, compact, className }: { metri
   }
   const good = isProgress(metric, reading.delta, reading.value, goal);
   const Icon = good === null ? Equal : reading.delta < 0 ? ArrowDown : ArrowUp;
+  const Verdict = good === null ? null : good ? CircleCheck : CircleAlert;
+  const verdict = good === null ? "sin cambio" : good ? "a tu favor" : "en contra de tu objetivo";
   return (
-    <p className={cn("flex flex-wrap items-center gap-x-1.5 text-[12px] font-medium", good === null ? "text-muted-foreground" : good ? "text-success" : "text-warning", className)}>
-      <span className="flex items-center gap-0.5">
-        <Icon className="size-3.5" strokeWidth={2.4} />
+    <p className={cn("flex flex-wrap items-center gap-x-1.5 text-[12px] font-medium", good === null ? "text-muted-foreground" : good ? "text-good" : "text-caution", className)}>
+      <span className="flex items-center gap-0.5" title={verdict}>
+        <Icon className="size-3.5" strokeWidth={2.4} aria-hidden />
         <span className="tabular">
           {kg(Math.abs(reading.delta))} {METRIC[metric].unit === "%" ? "pts" : METRIC[metric].unit}
         </span>
+        {Verdict && <Verdict className="ml-0.5 size-3.5" strokeWidth={2.4} aria-hidden />}
+        <span className="sr-only">, {verdict}</span>
       </span>
       {stale ?? <span className="text-muted-foreground font-normal">desde el {fmtShortDate(reading.since)}</span>}
     </p>

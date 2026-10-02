@@ -41,7 +41,7 @@ export function AddScan({ initial = "csv" }: { initial?: Tab }) {
 
 function Done({ text }: { text: string }) {
   return (
-    <p className="text-success mt-3 flex items-center gap-1.5 text-[13px] font-medium" aria-live="polite">
+    <p className="text-good mt-3 flex items-center gap-1.5 text-[13px] font-medium" aria-live="polite">
       <Check className="size-4" /> {text}
     </p>
   );

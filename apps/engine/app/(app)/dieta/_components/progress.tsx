@@ -40,8 +40,9 @@ export function ProgressView({ progress }: { progress: DietaProgress }) {
           target={targets?.kcal}
           band={targets ? { min: targets.zones.kcal.min ?? 0, max: targets.zones.kcal.max ?? targets.kcal } : undefined}
           unit="kcal"
-          label="kcal por día, últimos 14 días; la franja verde es tu zona"
+          label="kcal por día, últimos 14 días; la franja es tu zona y la línea punteada tu objetivo"
         />
+        {targets && <p className="text-muted-foreground mt-2 text-[12px]">La franja es tu zona; la línea punteada, tu objetivo.</p>}
       </Card>
 
       <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -58,7 +59,7 @@ export function ProgressView({ progress }: { progress: DietaProgress }) {
           />
         </Card>
         <Card delay={110}>
-          <CardTitle icon={Droplet} color="var(--domain-fat)" title="Agua" />
+          <CardTitle icon={Droplet} color="var(--domain-water)" title="Agua" />
           <p className="flex items-baseline gap-1.5">
             <span className="tabular text-[26px] leading-none font-semibold">{averages.waterMl === null ? "—" : litres(averages.waterMl)}</span>
             <span className="text-muted-foreground text-[13px]">L de media · objetivo {litres(progress.waterGoalMl)} L</span>
@@ -67,7 +68,7 @@ export function ProgressView({ progress }: { progress: DietaProgress }) {
             className="mt-3"
             variant="bars"
             points={days.map((d) => ({ label: label(d.date), value: d.waterMl ? d.waterMl / 1000 : null }))}
-            color="var(--domain-fat)"
+            color="var(--domain-water)"
             target={progress.waterGoalMl / 1000}
             unit="L"
             decimals={2}

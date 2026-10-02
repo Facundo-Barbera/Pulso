@@ -10,7 +10,8 @@ export type Point = { label: string; value: number | null };
  * axes, no grid. Hovering (or touching) reads the point out above the chart.
  * Gaps (null) break the line rather than inventing values. Labels come
  * preformatted from the server, so nothing depends on the browser's timezone.
- * `band` tints the range where a value is on track (a target zone) in success green.
+ * `band` tints the range where a value is on track (a target zone) with the
+ * "good" state colour and draws its edges, so the zone reads without hue.
  */
 export function Sparkline({ points, color, variant = "line", height = 56, unit, decimals = 0, target, band, className, label }: { points: Point[]; color: string; variant?: "line" | "bars"; height?: number; unit?: string; decimals?: number; target?: number; band?: { min: number; max: number }; className?: string; label: string }) {
   const id = useId();
@@ -70,7 +71,14 @@ export function Sparkline({ points, color, variant = "line", height = 56, unit, 
             <stop offset="1" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
-        {band && <rect x="0" width={W} y={y(band.max)} height={Math.max(0.5, y(band.min) - y(band.max))} fill="var(--success)" fillOpacity="0.12" />}
+        {band && (
+          <g>
+            <rect className="zone-band" x="0" width={W} y={y(band.max)} height={Math.max(0.5, y(band.min) - y(band.max))} fill="var(--state-good)" fillOpacity="0.12" />
+            {[band.max, band.min].map((v, i) => (
+              <line key={i} className="zone-band-edge" x1="0" x2={W} y1={y(v)} y2={y(v)} stroke="var(--state-good)" strokeOpacity="0.5" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+            ))}
+          </g>
+        )}
         {target !== undefined && <line x1="0" x2={W} y1={y(target)} y2={y(target)} stroke="var(--muted-foreground)" strokeOpacity="0.45" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
         {variant === "bars"
           ? points.map((p, i) =>

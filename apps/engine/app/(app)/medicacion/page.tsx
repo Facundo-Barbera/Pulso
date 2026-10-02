@@ -1,5 +1,5 @@
 import type { AdherenceReport, AdherenceWindow, Medication, MedicationKind } from "@pulso/contract";
-import { CalendarCheck, Check, CircleCheckBig, Dumbbell, Flame, History, List, Pill, Tablets, TrendingUp, TriangleAlert, type LucideIcon } from "lucide-react";
+import { AlarmClock, CalendarCheck, Check, CircleCheckBig, Dumbbell, Flame, History, List, Pill, Tablets, TrendingUp, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { cookies } from "next/headers";
 import { TIME } from "@/src/medication/schedule";
 import { isLeft, medicationPage, scheduleLine, slotLabel, unitFor, type MedicationPage, type TodayItem, type TodayState } from "@/src/web/medication";
@@ -88,9 +88,9 @@ function Hero({ page }: { page: MedicationPage }) {
   const headline = left.length ? `Te falta: ${names(left)}` : free ? "Hoy no te toca nada" : "Todo listo por hoy";
   return (
     <Card className="relative overflow-hidden !p-6 md:!p-8">
-      <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: done ? "var(--success)" : MED }} aria-hidden />
+      <div className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full opacity-[0.12] blur-3xl dark:opacity-20" style={{ background: done ? "var(--state-good)" : MED }} aria-hidden />
       <div className="relative flex flex-col items-center gap-7 md:flex-row md:gap-10">
-        <Ring value={slots.length ? (settled / slots.length) * 100 : taken.length ? 100 : null} color={done ? "var(--success)" : MED} glow={!free} size={176} stroke={14} label={left.length ? `Te faltan ${left.length}` : headline}>
+        <Ring value={slots.length ? (settled / slots.length) * 100 : taken.length ? 100 : null} color={done ? "var(--state-good)" : MED} glow={!free} size={176} stroke={14} label={left.length ? `Te faltan ${left.length}` : headline}>
           {left.length ? (
             <div>
               <p className="tabular text-[56px] leading-none font-semibold tracking-tight">{left.length}</p>
@@ -98,21 +98,22 @@ function Hero({ page }: { page: MedicationPage }) {
             </div>
           ) : (
             <div className="grid place-items-center gap-1.5">
-              <Check className="size-12" strokeWidth={2.4} style={{ color: free ? "var(--muted-foreground)" : "var(--success)" }} />
+              <Check className="size-12" strokeWidth={2.4} style={{ color: free ? "var(--muted-foreground)" : "var(--state-good)" }} />
               <p className="text-muted-foreground text-[12px] font-medium tracking-wide uppercase">{free ? "Libre" : "Listo"}</p>
             </div>
           )}
         </Ring>
         <div className="w-full min-w-0 flex-1 text-center md:text-left">
-          <p className="flex items-center justify-center gap-2 text-[24px] leading-tight font-semibold tracking-tight md:justify-start" style={done ? { color: "var(--success)" } : undefined}>
+          <p className="flex items-center justify-center gap-2 text-[24px] leading-tight font-semibold tracking-tight md:justify-start" style={done ? { color: "var(--state-good)" } : undefined}>
             {done && <CircleCheckBig className="size-6 shrink-0" />}
             {headline}
           </p>
           {left.length > 0 && (
             <ul className="mt-3 flex flex-wrap justify-center gap-2 md:justify-start">
               {left.map((i) => (
-                <li key={i.key} className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium", i.state === "atrasada" ? "bg-warning/12 text-warning" : "bg-muted/80")}>
+                <li key={i.key} className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium", i.state === "atrasada" ? "bg-caution/12 text-caution" : "bg-muted/80")}>
                   {i.state === "entreno" && <Dumbbell className="size-3.5" style={{ color: MED }} />}
+                  {i.state === "atrasada" && <AlarmClock className="size-3.5" aria-hidden />}
                   {i.medication.name}
                   <span className={cn("font-normal", i.state !== "atrasada" && "text-muted-foreground")}>
                     · {i.state === "entreno" ? "al terminar de entrenar" : i.state === "atrasada" ? `era a las ${i.at}` : i.state === "ahora" ? "ahora" : `a las ${i.at}`}
@@ -142,7 +143,7 @@ function Hero({ page }: { page: MedicationPage }) {
 
 const MARKER: Record<Exclude<TodayState, "tomada" | "entreno" | "ahora">, string> = {
   omitida: "border-muted-foreground/40 bg-muted",
-  atrasada: "border-warning bg-warning/25",
+  atrasada: "border-caution bg-caution/25",
   pendiente: "border-muted-foreground/50 bg-card",
   "a-demanda": "border-muted-foreground/40 border-dashed bg-card",
   "no-toca": "border-muted-foreground/25 bg-muted",
@@ -152,7 +153,7 @@ const MARKER: Record<Exclude<TodayState, "tomada" | "entreno" | "ahora">, string
 function Marker({ state }: { state: TodayState }) {
   if (state === "tomada")
     return (
-      <span className="bg-success grid size-5 place-items-center rounded-full text-white">
+      <span className="bg-good grid size-5 place-items-center rounded-full text-white">
         <Check className="size-3" strokeWidth={3.2} />
       </span>
     );
@@ -163,12 +164,19 @@ function Marker({ state }: { state: TodayState }) {
       </span>
     );
   if (state === "ahora") return <span className="size-5 rounded-full" style={{ background: MED, boxShadow: `0 0 0 4px color-mix(in oklab, ${MED} 22%, transparent)` }} />;
+  // Late reads by its clock, not only by its orange.
+  if (state === "atrasada")
+    return (
+      <span className={cn("text-caution grid size-5 place-items-center rounded-full border-2", MARKER.atrasada)}>
+        <AlarmClock className="size-2.5" strokeWidth={3} />
+      </span>
+    );
   return <span className={cn("size-5 rounded-full border-2", MARKER[state])} />;
 }
 
-const LINE_TONE: Partial<Record<TodayState, string>> = { atrasada: "text-warning", ahora: "text-foreground font-medium" };
+const LINE_TONE: Partial<Record<TodayState, string>> = { atrasada: "text-caution", ahora: "text-foreground font-medium" };
 
-const takenChip = "text-success bg-success/12 tabular rounded-full px-2.5 py-1 text-[12px] font-medium";
+const takenChip = "text-good bg-good/12 tabular rounded-full px-2.5 py-1 text-[12px] font-medium";
 
 function TimelineRow({ item, page }: { item: TodayItem; page: MedicationPage }) {
   const m = item.medication;
@@ -176,7 +184,7 @@ function TimelineRow({ item, page }: { item: TodayItem; page: MedicationPage }) 
   const takenAsNeeded = item.state === "a-demanda" && item.intakes.length > 0;
   return (
     <li className="flex min-h-16 items-center gap-3 py-1.5">
-      <span className={cn("tabular w-11 shrink-0 text-right text-[13px]", item.state === "atrasada" ? "text-warning font-medium" : "text-muted-foreground")}>{item.at ?? ""}</span>
+      <span className={cn("tabular w-11 shrink-0 text-right text-[13px]", item.state === "atrasada" ? "text-caution font-medium" : "text-muted-foreground")}>{item.at ?? ""}</span>
       <span className="relative z-[1] grid w-5 shrink-0 place-items-center">
         <Marker state={takenAsNeeded ? "tomada" : item.state} />
       </span>
@@ -382,7 +390,8 @@ function MedicationsCard({ medications, delay }: { medications: Medication[]; de
                         </span>
                       </span>
                       {m.stock !== null && (
-                        <span className={cn("tabular shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium", m.lowStock ? "text-warning bg-warning/12" : "text-muted-foreground bg-muted")} title={`Quedan ${m.stock} dosis`}>
+                        <span className={cn("tabular flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-medium", m.lowStock ? "text-caution bg-caution/12" : "text-muted-foreground bg-muted")} title={m.lowStock ? `Quedan pocas: ${m.stock} dosis` : `Quedan ${m.stock} dosis`}>
+                          {m.lowStock && <TriangleAlert className="size-3" strokeWidth={2.4} aria-label="Quedan pocas" />}
                           {fmtNumber(m.stock)}
                         </span>
                       )}
@@ -399,6 +408,18 @@ function MedicationsCard({ medications, delay }: { medications: Medication[]; de
 }
 
 const STATUS: Record<string, string> = { tomada: "Tomada", omitida: "Omitida", pospuesta: "Pospuesta" };
+
+/** A history entry's outcome as a shape (check, clock, cross) beside its word. */
+const HISTORY_MARK: Record<string, { icon: LucideIcon; tone: string }> = {
+  tomada: { icon: Check, tone: "text-good" },
+  pospuesta: { icon: AlarmClock, tone: "text-caution" },
+  omitida: { icon: X, tone: "text-muted-foreground" },
+};
+
+function HistoryMark({ status }: { status: string }) {
+  const { icon: Icon, tone } = HISTORY_MARK[status] ?? HISTORY_MARK.omitida!;
+  return <Icon className={cn("size-3.5 shrink-0", tone)} strokeWidth={2.6} aria-hidden />;
+}
 
 function HistoryCard({ page, delay }: { page: MedicationPage; delay: number }) {
   const taken = page.history.reduce((n, d) => n + d.entries.filter((e) => e.status === "tomada").length, 0);
@@ -417,7 +438,7 @@ function HistoryCard({ page, delay }: { page: MedicationPage; delay: number }) {
                 {day.entries.map((e) => (
                   <li key={e.id} className="group hover:bg-muted/50 flex min-h-12 items-center gap-3 rounded-xl px-2">
                     <span className="tabular text-muted-foreground w-12 text-[13px]">{e.takenAt ? fmtTime(e.takenAt) : e.scheduledTime && TIME.test(e.scheduledTime) ? e.scheduledTime : "—"}</span>
-                    <span className={cn("size-2 shrink-0 rounded-full", e.status === "tomada" ? "bg-success" : e.status === "pospuesta" ? "bg-warning" : "bg-muted-foreground/40")} />
+                    <HistoryMark status={e.status} />
                     <span className="min-w-0 flex-1 truncate text-[14px]">
                       <span className="font-medium">{e.name}</span>
                       <span className="text-muted-foreground">

@@ -121,7 +121,7 @@ function Address({ address }: { address: string | null }) {
     >
       {address}
       <Copy className="size-3" />
-      {copied && <span className="text-success font-sans">copiada</span>}
+      {copied && <span className="text-good font-sans">copiada</span>}
     </button>
   );
 }
