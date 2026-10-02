@@ -54,7 +54,7 @@ export default async function Sueno({ searchParams }: { searchParams: Promise<{ 
             <ScoreCard night={night} delay={110} />
             <Card delay={160} className="md:col-span-2">
               <CardTitle icon={ChartColumn} color={SLEEP} title="Tendencia" />
-              <SleepTrend targetHours={targetMin / 60} points={page.trend.map((p) => ({ label: fmtDayLabel(p.night), hours: p.asleepMin === null ? null : Math.round((p.asleepMin / 60) * 10) / 10, score: p.score }))} />
+              <SleepTrend targetMin={targetMin} points={page.trend.map((p) => ({ label: fmtDayLabel(p.night), minutes: p.asleepMin, score: p.score }))} />
             </Card>
             <InsightsCard night={night} summary={summary} delay={210} />
             <ScheduleCard summary={summary} delay={260} />

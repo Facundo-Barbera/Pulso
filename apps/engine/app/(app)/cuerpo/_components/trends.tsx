@@ -55,7 +55,7 @@ export function TrendsCard({ trends, delay, className }: { trends: TrendView[]; 
             </p>
             <p className="text-muted-foreground pb-0.5 text-[13px]">{trend.current != null ? `tendencia · ${trend.note}` : trend.note}</p>
           </div>
-          <Sparkline points={trend.points} color={meta.color} height={128} unit={meta.unit} decimals={1} target={trend.goal?.target} label={`${meta.label}, lecturas de los últimos 120 días`} className="mt-4" />
+          <Sparkline points={trend.points} color={meta.color} height={128} unit={meta.unit} decimals={1} target={trend.goal?.target} targetLabel={trend.goal ? `objetivo ${kg(trend.goal.target)} ${meta.unit}` : undefined} range="Últimos 120 días" label={`${meta.label}, lecturas de los últimos 120 días`} className="mt-4" />
           {trend.horizons.length > 0 && (
             <ul className="mt-5 grid grid-cols-3 gap-2.5">
               {trend.horizons.map((h) => (
