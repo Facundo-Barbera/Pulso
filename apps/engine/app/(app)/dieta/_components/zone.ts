@@ -2,8 +2,11 @@ import type { NutrientZone } from "@pulso/contract";
 import { CircleArrowDown, CircleArrowUp, CircleCheck, type LucideIcon } from "lucide-react";
 import { fmtNumber } from "../../../_ui/format";
 
-/** Where `value` sits on the zone bar, 0…1: room past the zone's max (or 125 % of the target) so the zone and some overflow both show. */
-export const zoneFraction = (z: NutrientZone, value: number) => Math.max(0, Math.min(1, value / Math.max(z.target * 1.25, (z.max ?? z.target) * 1.1, 1)));
+/** The top of the zone: its max, or for a minimum (where more is fine) 125 % of the target. */
+export const zoneTop = (z: NutrientZone) => (z.kind === "min" || z.max === null ? Math.max(z.target * 1.25, z.max ?? 0) : z.max);
+
+/** Where `value` sits on the zone bar, 0…1: room past the top of the zone, and past today's value when it is further. */
+export const zoneFraction = (z: NutrientZone, value: number) => Math.max(0, Math.min(1, value / Math.max(zoneTop(z) * 1.15, z.value * 1.04, 1)));
 
 /** One line in plain Spanish: «Faltan 42 g», «En tu zona» («Mínimo cumplido» for a minimum), «Te pasaste 120 kcal». */
 export function zoneLine(z: NutrientZone, unit: "kcal" | "g"): string {

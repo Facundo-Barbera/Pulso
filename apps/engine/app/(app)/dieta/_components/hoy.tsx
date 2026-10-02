@@ -13,8 +13,8 @@ import { PrepChip } from "./prep-chip";
 import { EatButton } from "./slot-row";
 import { SlotList } from "./slot-sheet";
 import { fmtAmount } from "./units";
-import { ActivityRings, type RingSpec, ZoneBar } from "./activity-rings";
-import { ZONE_STATUS, zoneLine, zoneRange } from "./zone";
+import { ActivityRing, BarLegend, ZoneBar } from "./activity-rings";
+import { ZONE_STATUS, zoneLine, zoneRange, zoneTop } from "./zone";
 
 const ENERGY = "var(--domain-energy)";
 const NUTRIENTS = [
@@ -34,18 +34,15 @@ export const SLOT_ICONS: Record<MealSlot, LucideIcon> = {
 };
 
 /**
- * The hero: kcal, protein, carbs and fat as concentric Activity-style rings —
- * progress toward each target, an icon at each ring's start (see ActivityRings) —
- * and beside them a tile per nutrient on a neutral ground, colour only in its icon
- * and bar: the value, its zone as a line (ZoneBar), and the status in words with an
- * icon — so nothing rests on telling hues apart.
+ * The hero: one big Activity-style kcal ring — a lap is the top of your zone, so a
+ * day in the zone reads "almost full" and a day past it shows a short overflow —
+ * with the day's kcal inside; beside it a tile per nutrient on a neutral ground with
+ * a filled bar against its zone (ZoneBar), the numbers in words, and one line of
+ * legend for the bars. Colour only in icons and bars; nothing rests on hue.
  */
 export function MacroHero({ summary, next }: { summary: DailySummary; next: SlotView | null }) {
   const { totals, zones, targets } = summary;
-  const rings: RingSpec[] = NUTRIENTS.map((n) => {
-    const target = zones?.[n.key]?.target ?? targets?.[n.key];
-    return { key: n.key, color: n.color, Icon: n.Icon, progress: target ? totals[n.key] / target : 0 };
-  });
+  const top = zones ? zoneTop(zones.kcal) : targets?.kcal;
   const label = NUTRIENTS.map((n) => {
     const zone = zones?.[n.key];
     return `${n.label}: ${fmtNumber(totals[n.key])} ${n.unit}${zone ? `, ${zoneLine(zone, n.unit)}, zona ${zoneRange(zone, n.unit)}` : ""}`;
@@ -54,7 +51,17 @@ export function MacroHero({ summary, next }: { summary: DailySummary; next: Slot
     <Card className="relative overflow-hidden">
       <div className="pointer-events-none absolute -top-24 -left-16 size-72 rounded-full opacity-[0.08] blur-3xl" style={{ background: ENERGY }} aria-hidden />
       <div className="relative flex flex-col items-center gap-6 lg:flex-row lg:items-center lg:gap-10">
-        <ActivityRings rings={rings} size={240} stroke={25} gap={3} label={label} />
+        <ActivityRing progress={top ? totals.kcal / top : 0} color={ENERGY} Icon={Flame} size={248} stroke={28} label={label}>
+          <div>
+            <p className="tabular text-[44px] leading-none font-semibold tracking-tight">{fmtNumber(totals.kcal)}</p>
+            <p className="text-muted-foreground mt-1 text-[14px] font-medium">kcal</p>
+            {zones && (
+              <StatusLine zone={zones.kcal} className="mt-2 justify-center text-[13px] font-semibold" iconClassName="size-4">
+                {zoneLine(zones.kcal, "kcal")}
+              </StatusLine>
+            )}
+          </div>
+        </ActivityRing>
         <div className="w-full min-w-0 flex-1">
           {!targets && (
             <p className="text-muted-foreground mb-3 text-center text-[13px] lg:text-left">Sin objetivos diarios: pídele al Coach tus objetivos de kcal y macros y aparecen aquí.</p>
@@ -62,34 +69,36 @@ export function MacroHero({ summary, next }: { summary: DailySummary; next: Slot
           <div className="grid grid-cols-2 gap-2.5">
             {NUTRIENTS.map((n) => {
               const zone = zones?.[n.key];
-              const target = targets?.[n.key];
+              const target = zone?.target ?? targets?.[n.key];
               return (
                 <div key={n.key} className="bg-foreground/[0.05] min-w-0 rounded-[14px] p-3">
                   <p className="text-muted-foreground flex items-center gap-1.5 text-[13px] font-medium">
                     <n.Icon className="size-4 shrink-0" style={{ color: n.color }} strokeWidth={2.5} aria-hidden />
                     {n.label}
                   </p>
-                  <p className="tabular mt-1 text-[22px] leading-tight font-semibold">
-                    {fmtNumber(totals[n.key])}
-                    <span className="text-muted-foreground text-[13px] font-normal"> {!zone && target ? `/ ${fmtNumber(target)} ${n.unit}` : n.unit}</span>
+                  <p className="tabular mt-1 flex flex-wrap items-baseline gap-x-1">
+                    <span className="text-[22px] leading-tight font-semibold">{fmtNumber(totals[n.key])}</span>
+                    <span className="text-muted-foreground text-[13px] whitespace-nowrap">{target ? `de ${fmtNumber(target)} ${n.unit}` : n.unit}</span>
                   </p>
                   {zone && (
                     <>
-                      <div className="mt-2">
+                      <div className="mt-1.5">
                         <ZoneBar zone={zone} color={n.color} />
                       </div>
-                      <StatusLine zone={zone} className="mt-1.5 text-[12.5px] font-semibold" iconClassName="size-3.5">
+                      <StatusLine zone={zone} className="mt-1 text-[12.5px] font-semibold" iconClassName="size-3.5">
                         {zoneLine(zone, n.unit)}
                       </StatusLine>
-                      <p className="text-muted-foreground tabular mt-0.5 text-[11.5px] leading-snug">
-                        {zone.kind === "min" ? zoneRange(zone, n.unit) : `${zoneRange(zone, n.unit)} · obj. ${fmtNumber(zone.target)}`}
-                      </p>
                     </>
                   )}
                 </div>
               );
             })}
           </div>
+          {zones && (
+            <div className="mt-3">
+              <BarLegend />
+            </div>
+          )}
           {next && <NextMeal meal={next} />}
         </div>
       </div>
@@ -101,9 +110,9 @@ export function MacroHero({ summary, next }: { summary: DailySummary; next: Slot
 function StatusLine({ zone, className, iconClassName, children }: { zone: NutrientZone; className?: string; iconClassName?: string; children: React.ReactNode }) {
   const { Icon, className: tint } = ZONE_STATUS[zone.status];
   return (
-    <p className={cn("flex items-center gap-1.5", zone.status === "below" && "text-muted-foreground", className)}>
+    <p className={cn("flex items-start gap-1.5 [&>svg]:mt-px", zone.status === "below" && "text-muted-foreground", className)}>
       <Icon className={cn("shrink-0", tint, iconClassName)} strokeWidth={2.5} aria-hidden />
-      <span className="tabular min-w-0 truncate">{children}</span>
+      <span className="tabular min-w-0 leading-tight">{children}</span>
     </p>
   );
 }
