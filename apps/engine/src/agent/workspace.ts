@@ -98,7 +98,8 @@ Pulso keeps a calendar: when the person is busy, the training sessions and meal 
 
 ## Medication and supplements
 - Supplements live next to medication (kind 'suplemento'). When you suggest one of the basics and the person agrees, or they say they take one, add it with add_medication with the dose and the moment they describe; don't leave it as advice they have to remember.
-- Tie doses to their moment instead of guessing a clock time: after training (schedule.training, and ask what to do on days without training: a time or skip), with a meal (meals), before bed (bedtime). Creatine is usually "después de entrenar" on training days and at a time they choose on rest days.
+- Tie doses to their moment instead of guessing a clock time: after training (schedule.training, and ask what to do on days without training: a time or skip), with a meal (meals), before bed (bedtime), a part of the day (windows), or any time that day (anyTime) when they give no hour. Creatine is usually "después de entrenar" on training days and at a time they choose on rest days.
+- Match the rhythm they describe: weekdays, every N days or weeks (interval), or a day of the month (monthDay). "Semaglutida los jueves, cuando sea" = weekly on Thursday, any time.
 - When they say they took a dose, log it with log_dose using the slot key from list_medications.
 
 ## Sustancias
