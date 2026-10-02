@@ -1,10 +1,11 @@
 import type { CoachBrief, DailyMetrics, DoseSlot, MedicationDay, Readiness, SleepNight, SleepSummary } from "@pulso/contract";
-import { Activity, Check, Clock, Dumbbell, Flame, HeartPulse, Moon, Pill, Sparkles, Watch } from "lucide-react";
+import { Activity, AlarmClock, Check, Clock, Dumbbell, Flame, HeartPulse, Moon, Pill, Sparkles, Watch, X, type LucideIcon } from "lucide-react";
 import { localNow } from "@/src/medication/schedule";
 import { groupSlots, unitFor } from "@/src/web/medication";
 import type { RecentActivity, TodayOverview } from "@/src/web/today";
 import { Card, CardTitle } from "../../_ui/card";
 import { MOMENT_ICON } from "../medicacion/_components/moment-icons";
+import { STAGES as SLEEP_STAGES } from "../sueno/_components/night";
 import { cn } from "../../_ui/cn";
 import { EmptyState } from "../../_ui/empty-state";
 import { fmtAgo, fmtDayLabel, fmtMinutes, fmtNumber, fmtShortDate, fmtTime } from "../../_ui/format";
@@ -42,12 +43,8 @@ export function ActivityCard({ today, trend, delay }: { today: DailyMetrics | nu
   );
 }
 
-const STAGES: { key: "deep" | "core" | "rem" | "awake"; label: string; color: string }[] = [
-  { key: "deep", label: "Profundo", color: "oklch(0.5 0.16 285)" },
-  { key: "core", label: "Ligero", color: "var(--domain-sleep)" },
-  { key: "rem", label: "REM", color: "oklch(0.78 0.1 230)" },
-  { key: "awake", label: "Despierto", color: "var(--domain-carbs)" },
-];
+/** Sueño's stages, deepest first: the same lightness ramp and labels as the hypnogram. */
+const STAGES = [...SLEEP_STAGES].reverse();
 
 export function SleepCard({ night, summary, trend, delay }: { night: SleepNight | null; summary: SleepSummary; trend: Trend; delay: number }) {
   const sleepSeries = series(trend, (m) => (m.sleepMinutes === null ? null : Math.round((m.sleepMinutes / 60) * 10) / 10));
@@ -68,13 +65,13 @@ export function SleepCard({ night, summary, trend, delay }: { night: SleepNight 
           </div>
           {staged > 0 && (
             <div className="mt-4">
-              <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+              <div className="flex h-2 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={STAGES.map((s) => `${s.label} ${fmtMinutes(night.minutes[s.key])}`).join(", ")}>
                 {STAGES.map((s) => (night.minutes[s.key] > 0 ? <div key={s.key} style={{ flexGrow: night.minutes[s.key], background: s.color }} title={`${s.label}: ${fmtMinutes(night.minutes[s.key])}`} /> : null))}
               </div>
               <div className="text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
                 {STAGES.map((s) => (
                   <span key={s.key} className="flex items-center gap-1">
-                    <span className="size-1.5 rounded-full" style={{ background: s.color }} />
+                    <span className="legend-dot size-2 rounded-full" style={{ background: s.color }} />
                     {s.label} <span className="tabular text-foreground">{fmtMinutes(night.minutes[s.key])}</span>
                   </span>
                 ))}
@@ -106,8 +103,8 @@ export function HeartCard({ readiness, trend, delay }: { readiness: Readiness; t
           <StatTile label="VFC" value={hrv?.value != null ? fmtNumber(hrv.value) : "—"} unit="ms" caption={hrv?.baseline != null ? `media 28 días: ${fmtNumber(hrv.baseline)} ms` : undefined} color="var(--domain-heart)">
             <Sparkline points={series(trend, (m) => m.hrv)} color="var(--domain-heart)" unit="ms" height={44} label="VFC, últimos 14 días" />
           </StatTile>
-          <StatTile label="Pulso en reposo" value={rhr?.value != null ? fmtNumber(rhr.value) : "—"} unit="lpm" caption={rhr?.baseline != null ? `media 28 días: ${fmtNumber(rhr.baseline)} lpm` : undefined} color="var(--domain-protein)">
-            <Sparkline points={series(trend, (m) => m.restingHeartRate)} color="var(--domain-protein)" unit="lpm" height={44} label="Pulso en reposo, últimos 14 días" />
+          <StatTile label="Pulso en reposo" value={rhr?.value != null ? fmtNumber(rhr.value) : "—"} unit="lpm" caption={rhr?.baseline != null ? `media 28 días: ${fmtNumber(rhr.baseline)} lpm` : undefined} color="var(--domain-heart)">
+            <Sparkline points={series(trend, (m) => m.restingHeartRate)} color="var(--domain-heart)" unit="lpm" height={44} label="Pulso en reposo, últimos 14 días" />
           </StatTile>
         </div>
       )}
@@ -141,12 +138,23 @@ export function BriefCard({ brief, delay }: { brief: CoachBrief | null; delay: n
   );
 }
 
-const DOSE: Record<DoseSlot["status"], { label: string; className: string }> = {
-  tomada: { label: "Tomada", className: "text-success bg-success/12" },
-  omitida: { label: "Omitida", className: "text-muted-foreground bg-muted" },
-  pospuesta: { label: "Pospuesta", className: "text-warning bg-warning/12" },
-  pendiente: { label: "Pendiente", className: "text-foreground bg-muted" },
+/** Each dose state as word and icon; the tint only helps. */
+const DOSE: Record<DoseSlot["status"], { label: string; icon: LucideIcon; className: string }> = {
+  tomada: { label: "Tomada", icon: Check, className: "text-good bg-good/12" },
+  omitida: { label: "Omitida", icon: X, className: "text-muted-foreground bg-muted" },
+  pospuesta: { label: "Pospuesta", icon: AlarmClock, className: "text-caution bg-caution/12" },
+  pendiente: { label: "Pendiente", icon: Clock, className: "text-foreground bg-muted" },
 };
+
+function DoseChip({ status }: { status: DoseSlot["status"] }) {
+  const { label, icon: Icon, className } = DOSE[status];
+  return (
+    <span className={cn("flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", className)}>
+      <Icon className="size-3" strokeWidth={status === "tomada" ? 3 : 2.2} aria-hidden />
+      {label}
+    </span>
+  );
+}
 
 export function MedicationCard({ day, delay }: { day: MedicationDay; delay: number }) {
   const taken = day.slots.filter((s) => s.status === "tomada").length;
@@ -186,10 +194,7 @@ export function MedicationCard({ day, delay }: { day: MedicationDay; delay: numb
                             </span>
                             {slot.line && <span className="text-foreground/80 block text-[12px] leading-snug">{slot.line}</span>}
                           </span>
-                          <span className={cn("flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", DOSE[slot.status].className)}>
-                            {slot.status === "tomada" ? <Check className="size-3" strokeWidth={3} /> : slot.status === "pendiente" ? <Clock className="size-3" /> : null}
-                            {DOSE[slot.status].label}
-                          </span>
+                          <DoseChip status={slot.status} />
                         </li>
                       );
                     })}

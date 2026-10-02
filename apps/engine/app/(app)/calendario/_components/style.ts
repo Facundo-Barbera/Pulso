@@ -25,6 +25,18 @@ export const ICON: Record<CalendarItem["kind"], LucideIcon> = {
   body_scan: PersonStanding,
 };
 
+/** The same keys as a symbol, so day summaries and the legend never rely on colour alone. */
+export const KEY_ICON: Record<CalendarItem["color"], LucideIcon> = {
+  training: Dumbbell,
+  workout: Activity,
+  nutrition: Utensils,
+  medication: Pill,
+  sleep: Bed,
+  busy: Briefcase,
+  health: HeartPulse,
+  body: PersonStanding,
+};
+
 export const LEGEND: { color: CalendarItem["color"]; label: string }[] = [
   { color: "training", label: "Entreno" },
   { color: "workout", label: "Actividad" },

@@ -35,7 +35,7 @@ function EventRow({ event, today }: { event: HealthEvent; today: string }) {
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <span className="truncate text-[15px] font-medium">{event.title}</span>
-          <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", event.status === "activa" ? "text-destructive bg-destructive/10" : event.status === "recuperandose" ? "text-warning bg-warning/12" : "text-muted-foreground bg-muted")}>{HEALTH_STATUS[event.status]}</span>
+          <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", event.status === "activa" ? "text-caution bg-caution/12" : event.status === "recuperandose" ? "text-warning bg-warning/12" : "text-muted-foreground bg-muted")}>{HEALTH_STATUS[event.status]}</span>
         </span>
         <span className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 text-[12px]">
           {[KIND[event.kind], where].filter(Boolean).join(" · ")}

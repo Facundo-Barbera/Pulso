@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { CalendarDay } from "@/src/web/calendar";
 import { cn } from "../../../_ui/cn";
 import { AddBusyOn, EditItem } from "./editors";
-import { COLOR, condense, hasConflict, HEALTH_STATUS, hrefOf, ICON, PLAN_STATUS, timeOf } from "./style";
+import { COLOR, condense, hasConflict, HEALTH_STATUS, hrefOf, ICON, KEY_ICON, PLAN_STATUS, timeOf } from "./style";
 
 const weekday = new Intl.DateTimeFormat("es", { weekday: "short" });
 const longDay = new Intl.DateTimeFormat("es", { weekday: "long", day: "numeric", month: "long" });
@@ -31,7 +31,7 @@ export function ItemRow({ item, compact = false }: { item: CalendarItem; compact
           {!compact && <Icon className="size-3.5 shrink-0" style={{ color }} />}
           {time && !compact && <span className="tabular text-muted-foreground shrink-0">{time}</span>}
           <span className={cn("truncate font-medium", faded && "text-muted-foreground line-through decoration-1")}>{item.title}</span>
-          {item.kind === "training" && item.status === "done" && <Check className="text-success size-3.5 shrink-0" strokeWidth={3} />}
+          {item.kind === "training" && item.status === "done" && <Check className="text-good size-3.5 shrink-0" strokeWidth={3} aria-label="Hecho" />}
           {conflict && <TriangleAlert className="text-warning size-3.5 shrink-0" />}
         </span>
         {/* Narrow columns: the time moves under the title, so the title gets the width. */}
@@ -105,7 +105,7 @@ export function MonthGrid({ days, month, day, today }: { days: CalendarDay[]; mo
               href={`/calendario?vista=mes&dia=${d.date}`}
               scroll={false}
               aria-current={selected ? "date" : undefined}
-              aria-label={`${longDay.format(noon(d.date))}: ${d.items.length} ${d.items.length === 1 ? "cosa" : "cosas"}`}
+              aria-label={`${longDay.format(noon(d.date))}: ${d.items.length} ${d.items.length === 1 ? "cosa" : "cosas"}${warn ? ", con un conflicto" : ""}`}
               className={cn(
                 "focus-visible:ring-ring flex aspect-square min-h-12 flex-col items-center justify-center gap-1 rounded-xl outline-none focus-visible:ring-2 md:aspect-[4/3]",
                 selected ? "bg-accent shadow-1" : "hover:bg-muted/60",
@@ -113,11 +113,14 @@ export function MonthGrid({ days, month, day, today }: { days: CalendarDay[]; mo
               )}
             >
               <span className={cn("tabular grid size-7 place-items-center rounded-full text-[14px] font-medium", isToday && "bg-primary text-primary-foreground font-semibold")}>{Number(d.date.slice(8))}</span>
-              <span className="flex h-1.5 items-center gap-0.5">
-                {colors.slice(0, 5).map((c) => (
-                  <span key={c} className="size-1.5 rounded-full" style={{ background: COLOR[c] }} />
-                ))}
-                {warn && <span className="bg-warning size-1.5 rounded-full" />}
+              {/* Symbols, not dots: each kind reads by its shape as well as its colour. */}
+              <span className="flex h-2.5 items-center gap-0.5" aria-hidden>
+                {warn && <TriangleAlert className="text-warning size-2.5" strokeWidth={2.6} />}
+                {colors.slice(0, warn ? 2 : 3).map((c) => {
+                  const Icon = KEY_ICON[c];
+                  return <Icon key={c} className="size-2.5" style={{ color: COLOR[c] }} strokeWidth={2.6} />;
+                })}
+                {colors.length > (warn ? 2 : 3) && <span className="text-muted-foreground text-[9px] leading-none font-semibold">+</span>}
               </span>
             </Link>
           );
