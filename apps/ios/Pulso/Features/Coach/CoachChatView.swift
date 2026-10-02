@@ -22,11 +22,18 @@ struct CoachChatView: View {
     @State private var position = ScrollPosition(edge: .bottom)
     /// The person is reading the latest lines: streaming text keeps them in view.
     @State private var atBottom = true
+    /// Scrolled past the end of the content, so what's on screen is empty.
+    @State private var pastEnd = false
+    @State private var scrolling = false
     @FocusState private var composing: Bool
     @Environment(\.scenePhase) private var scenePhase
 
     /// Comfortable reading width; only matters on wide screens.
     private static let readableWidth: CGFloat = 680
+    /// A marker after the last row. Scrolling to it lays it out first, so the offset comes
+    /// from real geometry; scrolling to `.bottom` uses the lazy stack's estimated height,
+    /// which can land past the content and leave the screen blank until the next drag.
+    private static let end = "end"
 
     /// `starter` is sent at once; `draft` waits in the composer. Either, or `focus`, opens the keyboard;
     /// `camera` opens the camera instead (the photo library where there is none).
@@ -48,7 +55,7 @@ struct CoachChatView: View {
                 }
                 ForEach(store.messages) { message in
                     MessageRow(message: message)
-                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
+                        .transition(.opacity)
                 }
                 if let error = store.error {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -56,6 +63,9 @@ struct CoachChatView: View {
                         .foregroundStyle(.orange)
                         .frame(maxWidth: .infinity)
                 }
+                Color.clear
+                    .frame(height: 1)
+                    .id(Self.end)
             }
             .frame(maxWidth: Self.readableWidth)
             .frame(maxWidth: .infinity)
@@ -71,6 +81,19 @@ struct CoachChatView: View {
             geometry.contentOffset.y + geometry.containerSize.height - geometry.contentInsets.bottom >= geometry.contentSize.height - 60
         } action: { _, bottom in
             atBottom = bottom
+        }
+        // Content that shrank or re-measured under a pinned offset: put the end back
+        // in view once the person isn't scrolling (their own overscroll is left alone).
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            let last = max(geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height, -geometry.contentInsets.top)
+            return geometry.contentOffset.y > last + 2
+        } action: { _, past in
+            pastEnd = past
+            if past && !scrolling { pin() }
+        }
+        .onScrollPhaseChange { _, phase in
+            scrolling = phase != .idle
+            if phase == .idle && pastEnd { pin() }
         }
         .overlay {
             if store.loading { ProgressView().controlSize(.large) }
@@ -121,8 +144,9 @@ struct CoachChatView: View {
         // A new message, or the keyboard opening, brings the end into view.
         .onChange(of: store.messages.count) { scrollToBottom() }
         .onChange(of: composing) { _, focused in if focused { scrollToBottom() } }
-        .onChange(of: store.messages.last?.text) {
-            if atBottom { position.scrollTo(edge: .bottom) }
+        // Streaming text, tool chips and result cards grow the reply; keep its end in view.
+        .onChange(of: store.messages.last) {
+            if atBottom { pin() }
         }
         .onChange(of: scenePhase) { _, phase in if phase == .active { store.resume() } }
         .task {
@@ -182,12 +206,28 @@ struct CoachChatView: View {
     private func scrollToBottom(animated: Bool = true) {
         atBottom = true
         if animated {
-            withAnimation(.snappy) { position.scrollTo(edge: .bottom) }
+            withAnimation(.snappy) { position.scrollTo(id: Self.end, anchor: .bottom) }
         } else {
-            position.scrollTo(edge: .bottom)
+            pin()
         }
     }
+
+    /// Jumps to the end with no animation, so a frame-by-frame update can't leave
+    /// an animation heading for an offset the content no longer reaches.
+    private func pin() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { position.scrollTo(id: Self.end, anchor: .bottom) }
+    }
 }
+
+#if DEBUG
+#Preview("Respuesta en curso") {
+    NavigationStack {
+        CoachChatView(threadId: ChatStore.streamingPreview(), title: nil)
+    }
+}
+#endif
 
 private struct MessageRow: View {
     let message: AgentMessage

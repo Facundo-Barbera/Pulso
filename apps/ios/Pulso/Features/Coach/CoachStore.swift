@@ -245,6 +245,53 @@ final class ChatStore {
     }
 }
 
+#if DEBUG
+extension ChatStore {
+    /// A thread that keeps sending and streaming replies with no Mac behind it,
+    /// for previewing that the scroll stays pinned to the end. Returns its id.
+    static func streamingPreview() -> String {
+        let id = "preview"
+        let store = store(for: id)
+        guard store.messages.isEmpty else { return id }
+        store.title = "Plan de la semana"
+        store.messages = (0..<4).flatMap { i in
+            [AgentMessage(id: "m\(i)-user", threadId: id, role: .user, text: "¿Qué toca hoy?", tools: [], status: .done, error: nil, createdAt: 0),
+             AgentMessage(id: "m\(i)", threadId: id, role: .assistant, text: previewReply, tools: [], status: .done, error: nil, createdAt: 0)]
+        }
+        Task { await store.previewTurns() }
+        return id
+    }
+
+    private static let previewReply = """
+        Hoy toca **torso**: press banca 4×8, remo con barra 4×10 y dominadas al fallo.
+
+        - Calienta 10 minutos.
+        - Descansa 2 minutos entre series pesadas.
+
+        Mañana, pierna.
+        """
+
+    private func previewTurns() async {
+        for turn in 1...20 {
+            try? await Task.sleep(for: .seconds(2))
+            let local = "local-preview-\(turn)"
+            messages.append(AgentMessage(id: "\(local)-user", threadId: threadId ?? "", role: .user, text: "¿Y después?", tools: [], status: .done, error: nil, createdAt: 0))
+            messages.append(AgentMessage(id: local, threadId: threadId ?? "", role: .assistant, text: "", tools: [], status: .streaming, error: nil, createdAt: 0))
+            streaming = true
+            apply(.tool(name: "list_workouts", status: .running))
+            try? await Task.sleep(for: .milliseconds(800))
+            apply(.tool(name: "list_workouts", status: .done))
+            for word in Self.previewReply.split(separator: " ", omittingEmptySubsequences: false) {
+                try? await Task.sleep(for: .milliseconds(40))
+                apply(.text(word + " "))
+            }
+            apply(.done(messageId: local))
+            streaming = false
+        }
+    }
+}
+#endif
+
 extension AgentMessage {
     /// The saved conversation, keeping the ids of rows already on screen. A local
     /// placeholder and the message the Mac saved for it are the same row, matched by
