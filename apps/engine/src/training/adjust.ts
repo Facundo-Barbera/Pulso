@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AdjustmentSignal, ExerciseChange, LoadSuggestion, NextAdjustment, ProgramDay, ProgramExercise, SessionAdjustment } from "@pulso/contract";
-import { addMessage, createThread, getThread } from "../agent/threads";
+import { quoteMessage } from "../agent/conversation";
 import { db } from "../db";
 import { CARDIO } from "./library";
 import type { Detected } from "./signals";
@@ -300,13 +300,12 @@ export const runningReviews = (): SessionAdjustment[] =>
   db().query<Row, []>("SELECT * FROM session_adjustments WHERE status = 'reviewing'").all().map(toAdjustment);
 
 /**
- * "Ver por qué": a Coach thread that opens with the review (what was noticed,
- * what changed and why), so the person can discuss it. Made once per adjustment.
+ * "Ver por qué": the review (what was noticed, what changed and why) goes into
+ * the Coach's conversation, so the person can discuss it there. Asking twice
+ * doesn't add it twice. Returns the conversation's thread id.
  */
 export function adjustmentThread(adjustment: NextAdjustment): string {
-  if (adjustment.threadId && getThread(adjustment.threadId)) return adjustment.threadId;
   const day = new Date(adjustment.createdAt).toLocaleDateString("es-ES", { day: "numeric", month: "short" }).replace(".", "");
-  const thread = createThread(`Ajuste · ${adjustment.day.name} · ${day}`);
   const lines = [
     adjustment.rationale ?? "Revisé tu próxima sesión.",
     "",
@@ -315,9 +314,9 @@ export function adjustmentThread(adjustment: NextAdjustment): string {
     ...(adjustment.noChange || adjustment.changes.length === 0 ? ["- Sin cambios: el plan tal cual."] : describeChanges(adjustment)),
     ...(adjustment.decidedBy === "fallback" ? ["", "_Este ajuste es automático: no pude revisarlo a tiempo. Dime si lo cambiamos._"] : []),
   ];
-  addMessage(thread.id, "assistant", lines.join("\n"), "done");
-  db().query("UPDATE session_adjustments SET thread_id = ? WHERE id = ?").run(thread.id, adjustment.id);
-  return thread.id;
+  const message = quoteMessage({ kind: "adjustment", title: `Ajuste · ${adjustment.day.name} · ${day}` }, lines.join("\n"));
+  db().query("UPDATE session_adjustments SET thread_id = ? WHERE id = ?").run(message.threadId, adjustment.id);
+  return message.threadId;
 }
 
 function describeChanges(adjustment: NextAdjustment): string[] {

@@ -5,7 +5,7 @@ import { listMessages } from "../agent/threads";
 import { generateBrief } from "./generate";
 import { dueBriefs, lastSunday, periodFor } from "./periods";
 import { briefPrompt } from "./prompts";
-import { threadFromBrief } from "./reply";
+import { replyToBrief } from "./reply";
 import { regenerateBrief, runDueBriefs, startCoachScheduler, stopCoachScheduler } from "./scheduler";
 import { briefFor, claimBrief, completeBrief, failBrief, failRunningBriefs, getBrief, latestBrief, listBriefs, RETRY_MS, STALE_MS } from "./store";
 import { coachTools } from "./tools";
@@ -159,13 +159,15 @@ test("prompts ask for the right sources, in Spanish, without changing data", () 
   }
 });
 
-test("replying opens a thread whose first message is the brief", () => {
+test("replying puts the brief into the conversation as the Coach's message, once", () => {
   // A date no other test or the scheduler claims: a brief is claimed once per day.
   const brief = claimBrief("daily", "2026-08-15")!;
   completeBrief(brief.id, "**Hoy:** Pierna.");
-  const thread = threadFromBrief(getBrief(brief.id)!);
-  expect(thread.title).toBe("Resumen del 15 ago");
-  expect(listMessages(thread.id)).toMatchObject([{ role: "assistant", text: "**Hoy:** Pierna.", status: "done" }]);
+  const message = replyToBrief(getBrief(brief.id)!);
+  expect(message).toMatchObject({ role: "assistant", text: "**Hoy:** Pierna.", status: "done", source: { kind: "brief", title: "Resumen del 15 ago" } });
+  // Replying again doesn't quote it twice.
+  expect(replyToBrief(getBrief(brief.id)!).id).toBe(message.id);
+  expect(listMessages(message.threadId).filter((m) => m.text === "**Hoy:** Pierna.")).toHaveLength(1);
 });
 
 test("get_latest_brief returns the newest brief of a kind", async () => {

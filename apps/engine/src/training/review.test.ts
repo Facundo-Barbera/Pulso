@@ -255,7 +255,10 @@ test("Ver por qué opens a Coach thread with the review, once", () => {
   const adjusted = setSessionAdjustment({ dayId: p.days[0]!.id, noChange: false, rationale: "Hoy más suave.", changes: [{ action: "adjust", programExerciseId: p.days[0]!.exercises[0]!.id, loadPercent: -10, sets: 3 }] }, NOW);
   const thread = adjustmentThreadId(adjusted.id, NOW);
   expect(adjustmentThreadId(adjusted.id, NOW)).toBe(thread);
-  const [message] = listMessages(thread);
+  // It goes into the Coach's conversation, once.
+  const quoted = listMessages(thread).filter((m) => m.source?.kind === "adjustment");
+  expect(quoted).toHaveLength(1);
+  const [message] = quoted;
   expect(message?.text).toContain("Hoy más suave.");
   expect(message?.text).toContain("**Press de banca** — -10 % de peso · 3 series");
 });
