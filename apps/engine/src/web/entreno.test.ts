@@ -73,7 +73,7 @@ test("the overview carries the active program's days with media, muscles and sug
   const run = view.history.find((h) => h.kind === "workout" && h.title === "Carrera")!;
   expect(run).toMatchObject({ summary: "320 kcal · 5,2 km", source: "Apple Watch", distanceKm: 5.2 });
   const lifted = view.history.find((h) => h.id === "web-entreno-1")!;
-  expect(lifted.exercises).toEqual([{ exerciseId: "press-banca", name: "Press de banca", record: false, unit: "kg", sets: [{ weightKg: 80, reps: 8, rpe: 8 }] }]);
+  expect(lifted.exercises).toEqual([{ exerciseId: "press-banca", name: "Press de banca", record: false, unit: "kg", sets: [{ weightKg: 80, reps: 8, rpe: 8, segments: [{ weightKg: 80, reps: 8 }] }] }]);
   expect(view.history.indexOf(run)).toBeLessThan(view.history.indexOf(lifted));
   expect(trainingHistory(1)).toHaveLength(1);
 });

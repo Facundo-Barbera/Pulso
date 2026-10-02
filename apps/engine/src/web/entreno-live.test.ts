@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { PlanDay } from "./entreno";
 import { fromUnit } from "../training/units";
-import { addSet, current, editSet, extendRest, parseLive, removeSet, sessionId, setsDone, setsTotal, setUnit, skipRest, startSession, stepWeight, toggleSet, toSessionInput, volumeKg } from "./entreno-live";
+import { addDrop, addSet, current, editDrop, editSet, extendRest, parseLive, removeDrop, removeSet, sessionId, setsDone, setsTotal, setUnit, skipRest, startSession, stepDropWeight, stepWeight, toggleSet, toSessionInput, volumeKg } from "./entreno-live";
 
 const exercise = (id: string, exerciseId: string, sets: number, weightKg: number | null, unit = "kg") =>
   ({ id, exerciseId, exerciseName: exerciseId, sets, repMin: 6, repMax: 8, restSeconds: 90, unit, notes: null, target: `${sets} × 6–8`, suggestion: weightKg === null ? null : { exerciseId, weightKg, reps: 8, reason: "Sube", lastSessionAt: null } }) as never;
@@ -93,4 +93,34 @@ test("ids look like UUIDs and a stored session survives a reload, anything else 
   expect(parseLive("{")).toBeNull();
   expect(parseLive('{"id":1}')).toBeNull();
   expect(parseLive(null)).toBeNull();
+});
+
+test("a set where the load dropped: the editor adds a lighter segment, volume counts it, the engine gets segments", () => {
+  let s = startSession(day, null, 0, "drop");
+  s = editSet(s, 0, 0, { weightKg: 80, reps: 4 });
+  s = toggleSet(s, 0, 0, 10_000);
+  // ~15 % lighter on the plate steps, for the reps missing to 6; the rest restarts after it.
+  s = addDrop(s, 0, 0, 40_000);
+  expect(s.exercises[0]!.sets[0]!.drops).toEqual([{ weightKg: 67.5, reps: 2 }]);
+  expect([s.restStartedAt, s.restEndsAt]).toEqual([40_000, 130_000]);
+  s = editDrop(s, 0, 0, 0, { weightKg: 60, reps: 3 });
+  expect(volumeKg(s)).toBe(80 * 4 + 60 * 3);
+  expect(toSessionInput(s, 200_000).sets[0]).toMatchObject({ weightKg: 80, reps: 4, segments: [{ weightKg: 80, reps: 4 }, { weightKg: 60, reps: 3 }] });
+  // The next set doesn't inherit the drop; a set added after it neither.
+  expect(s.exercises[0]!.sets[1]!.drops).toBeUndefined();
+  expect(addSet(s, 0).exercises[0]!.sets.at(-1)!.drops).toBeUndefined();
+  expect(stepDropWeight(s, 0, 0, 0, -1).exercises[0]!.sets[0]!.drops![0]!.weightKg).toBe(57.5);
+  expect(editDrop(s, 0, 0, 0, { reps: 0 }).exercises[0]!.sets[0]!.drops![0]!.reps).toBe(1);
+  expect(removeDrop(s, 0, 0, 0).exercises[0]!.sets[0]!.drops).toEqual([]);
+  // A plain set goes as one segment.
+  const plain = toggleSet(startSession(day, null, 0, "p"), 0, 0, 1);
+  expect(toSessionInput(plain, 2).sets[0]!.segments).toEqual([{ weightKg: 60, reps: 8 }]);
+});
+
+test("a drop on a pound machine lands on 5 lb steps; one planned on an open set leaves the rest alone", () => {
+  const lb = { id: "d2", name: "Máquina", exercises: [exercise("m", "remo-maquina", 2, fromUnit(100, "lb"), "lb")] } as unknown as PlanDay;
+  let s = toggleSet(startSession(lb, null, 0, "lb"), 0, 0, 1_000);
+  s = addDrop(s, 0, 1, 2_000);
+  expect(s.exercises[0]!.sets[1]!.drops![0]!.weightKg).toBeCloseTo(fromUnit(85, "lb"), 9);
+  expect(s.restStartedAt).toBe(1_000);
 });

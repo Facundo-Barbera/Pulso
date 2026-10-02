@@ -1,22 +1,28 @@
 "use client";
 
 import type { PersonalRecord, SessionSaved, WeightUnit } from "@pulso/contract";
-import { Check, ChevronLeft, Minus, Plus, Timer, Trash2, Trophy } from "lucide-react";
+import { Check, ChevronLeft, CornerDownRight, Minus, Plus, Timer, Trash2, Trophy, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatBoth, formatWeight, fromUnit, shown, toUnit } from "@/src/training/units";
 import type { PlanDay } from "@/src/web/entreno";
+import { volumeOf } from "@/src/training/segments";
 import {
+  addDrop,
   addSet,
   current,
+  editDrop,
   editSet,
+  MAX_DROPS,
+  removeDrop,
   extendRest,
   removeSet,
   setsDone,
   setsTotal,
   skipRest,
   startSession,
+  stepDropWeight,
   stepWeight,
   toggleSet,
   toSessionInput,
@@ -238,8 +244,11 @@ function LiveView({ live, update, finish, discard, busy, error, defaultUnit }: {
                   if (el) fields.current.set(key(f), el);
                   else fields.current.delete(key(f));
                 };
+                const drops = set.drops ?? [];
                 return (
-                  <div key={i} role="row" className={cn("grid grid-cols-[28px_1fr_1fr_1fr_44px] items-center gap-2 rounded-xl px-1 py-1", isCurrent && "bg-training/8", isDone && "text-muted-foreground")}>
+                  // The set's editor is its row: while one of its fields has focus, "+ otro peso" shows under it.
+                  <div key={i} role="rowgroup" className="group">
+                  <div role="row" className={cn("grid grid-cols-[28px_1fr_1fr_1fr_44px] items-center gap-2 rounded-xl px-1 py-1", isCurrent && "bg-training/8", isDone && "text-muted-foreground")}>
                     <span role="cell" className="tabular text-center text-[13px] font-semibold">
                       {i + 1}
                     </span>
@@ -284,6 +293,59 @@ function LiveView({ live, update, finish, discard, busy, error, defaultUnit }: {
                         <Check className="size-4" strokeWidth={2.6} />
                       </button>
                     </span>
+                  </div>
+                  {drops.map((drop, d) => (
+                    <div key={d} role="row" className={cn("grid grid-cols-[28px_1fr_1fr_1fr_44px] items-center gap-2 px-1 py-0.5", isDone && "text-muted-foreground")}>
+                      <span role="cell" className="text-training grid place-items-center">
+                        <CornerDownRight className="size-3.5" aria-hidden />
+                      </span>
+                      <NumberField
+                        inputRef={ref(`drop-${d}-kg`)}
+                        label={`Serie ${i + 1}, bajó a, ${unit}`}
+                        value={shown(drop.weightKg, unit)}
+                        decimals={2}
+                        onCommit={(v) => update(editDrop(live, e, i, d, { weightKg: fromUnit(v ?? 0, unit) }))}
+                        onStep={(dir) => update(stepDropWeight(live, e, i, d, dir))}
+                        onEnter={() => !isDone && check(e, i)}
+                      />
+                      <NumberField
+                        inputRef={ref(`drop-${d}-reps`)}
+                        label={`Serie ${i + 1}, repeticiones después de bajar`}
+                        value={drop.reps}
+                        decimals={0}
+                        onCommit={(v) => update(editDrop(live, e, i, d, { reps: v ?? 1 }))}
+                        onStep={(dir) => update(editDrop(live, e, i, d, { reps: drop.reps + dir }))}
+                        onEnter={() => !isDone && check(e, i)}
+                      />
+                      <span role="cell" />
+                      <span role="cell" className="flex justify-end">
+                        <button
+                          onClick={() => update(removeDrop(live, e, i, d))}
+                          aria-label={`Quitar este peso de la serie ${i + 1}`}
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                  {drops.length < MAX_DROPS && (
+                    <div role="row" className="hidden grid-cols-[28px_1fr] gap-2 px-1 group-focus-within:grid">
+                      <span role="cell" className="col-start-2">
+                        <button
+                          // Keeps focus in the row (Safari doesn't focus a clicked button), so the row stays open.
+                          onMouseDown={(ev) => ev.preventDefault()}
+                          onClick={() => {
+                            update(addDrop(live, e, i));
+                            requestAnimationFrame(() => fields.current.get(key(`drop-${drops.length}-kg`))?.focus());
+                          }}
+                          className="text-training hover:bg-training/10 focus-visible:ring-ring flex min-h-8 items-center gap-1 rounded-full px-2 text-[12px] font-medium outline-none focus-visible:ring-2"
+                        >
+                          <Plus className="size-3.5" /> otro peso
+                        </button>
+                      </span>
+                    </div>
+                  )}
                   </div>
                 );
               })}
@@ -384,7 +446,7 @@ const RECORD_ES: Record<PersonalRecord["kind"], string> = { e1rm: "1RM estimado"
 
 function Summary({ saved, state, defaultUnit }: Saved & { defaultUnit: WeightUnit }) {
   const { session, prs } = saved;
-  const volume = session.sets.reduce((n, s) => n + s.weightKg * s.reps, 0);
+  const volume = session.sets.reduce((n, s) => n + volumeOf(s), 0);
   const unitOf = (exerciseId: string) => {
     const ex = state.exercises.find((e) => e.exerciseId === exerciseId);
     return ex ? unitOfExercise(ex) : defaultUnit;

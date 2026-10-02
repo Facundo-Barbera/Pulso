@@ -4,11 +4,13 @@
  * so a reload resumes; finishing posts `toSessionInput` to the same store the
  * phone writes to. No server imports: the logger is a client component.
  */
-import type { SessionInput, WeightUnit } from "@pulso/contract";
+import type { SessionInput, SetSegment, WeightUnit } from "@pulso/contract";
+import { nextDrop, segmentsOf, volumeOf } from "../training/segments";
 import { fromUnit, snap, snapKg, stepDown, stepUp } from "../training/units";
 import type { PlanDay } from "./entreno";
 
-export type LiveSet = { weightKg: number; reps: number; rpe: number | null; doneAt: number | null };
+/** `weightKg`/`reps` are the top segment; `drops` the lighter ones the load went down to mid-set (none on sessions stored before them). */
+export type LiveSet = { weightKg: number; reps: number; rpe: number | null; doneAt: number | null; drops?: SetSegment[] };
 
 export type LiveExercise = {
   /** `ProgramExercise.id` */
@@ -22,6 +24,8 @@ export type LiveExercise = {
   notes: string | null;
   /** the engine's double-progression reason */
   hint: string | null;
+  /** Bottom of the rep range: what a drop's reps make up to. Sessions stored before drops have none. */
+  repMin?: number;
   sets: LiveSet[];
 };
 
@@ -62,6 +66,7 @@ export function startSession(day: PlanDay, programId: string | null, now = Date.
       target: ex.target,
       restSeconds: ex.restSeconds,
       unit: ex.unit,
+      repMin: ex.repMin,
       notes: ex.notes,
       hint: ex.suggestion?.reason ?? null,
       sets: Array.from({ length: ex.sets }, () => ({ weightKg: ex.suggestion?.weightKg ?? 0, reps: ex.suggestion?.reps ?? ex.repMin, rpe: null, doneAt: null })),
@@ -71,7 +76,9 @@ export function startSession(day: PlanDay, programId: string | null, now = Date.
 
 export const setsTotal = (s: LiveState) => s.exercises.reduce((n, e) => n + e.sets.length, 0);
 export const setsDone = (s: LiveState) => s.exercises.reduce((n, e) => n + e.sets.filter((x) => x.doneAt !== null).length, 0);
-export const volumeKg = (s: LiveState) => s.exercises.flatMap((e) => e.sets).reduce((n, x) => n + (x.doneAt !== null ? x.weightKg * x.reps : 0), 0);
+/** Every segment of a set, top first, as the contract's `segments`. */
+export const segmentsOfSet = (set: LiveSet) => segmentsOf({ ...set, segments: [set, ...(set.drops ?? [])] });
+export const volumeKg = (s: LiveState) => s.exercises.flatMap((e) => e.sets).reduce((n, x) => n + (x.doneAt !== null ? volumeOf({ ...x, segments: segmentsOfSet(x) }) : 0), 0);
 
 /** The first set not yet done, in program order. */
 export function current(s: LiveState): { exercise: number; set: number } | null {
@@ -140,12 +147,63 @@ export function toggleSet(s: LiveState, e: number, i: number, now = Date.now()):
   return { ...next, restStartedAt: more ? now : null, restEndsAt: more ? now + ex.restSeconds * 1000 : null };
 }
 
-/** One more set, copying the last one's load and reps. */
+/** One more set, copying the last one's load and reps (not its drops). */
 export function addSet(s: LiveState, e: number): LiveState {
   const last = s.exercises[e]?.sets.at(-1);
   if (!last) return s;
-  return { ...s, exercises: s.exercises.map((ex, ei) => (ei === e ? { ...ex, sets: [...ex.sets, { ...last, doneAt: null }] } : ex)) };
+  const next: LiveSet = { weightKg: last.weightKg, reps: last.reps, rpe: last.rpe, doneAt: null };
+  return { ...s, exercises: s.exercises.map((ex, ei) => (ei === e ? { ...ex, sets: [...ex.sets, next] } : ex)) };
 }
+
+// ── Drops: the load lowered mid-set ───────────────────────────────────────────
+
+const mapDrops = (s: LiveState, e: number, i: number, change: (drops: SetSegment[]) => SetSegment[]) => mapSet(s, e, i, (set) => ({ ...set, drops: change(set.drops ?? []) }));
+
+/**
+ * "Otro peso": one more segment, about 15 % under the last one on the unit's
+ * steps, for the reps still missing to the bottom of the range. The rest
+ * starts after the last segment: one added to the set just done, while
+ * resting, restarts it.
+ */
+export function addDrop(s: LiveState, e: number, i: number, now = Date.now()): LiveState {
+  const ex = s.exercises[e];
+  const set = ex?.sets[i];
+  if (!ex || !set || (set.drops?.length ?? 0) >= MAX_DROPS) return s;
+  const drop = nextDrop({ ...set, segments: segmentsOfSet(set) }, ex.repMin ?? set.reps, unitOfExercise(ex));
+  const next = mapDrops(s, e, i, (drops) => [...drops, drop]);
+  const latest = Math.max(...s.exercises.flatMap((x) => x.sets.map((y) => y.doneAt ?? -Infinity)));
+  const resting = s.restEndsAt !== null && s.restEndsAt > now;
+  return set.doneAt !== null && set.doneAt === latest && resting ? { ...next, restStartedAt: now, restEndsAt: now + ex.restSeconds * 1000 } : next;
+}
+
+/** Segments after the top one a set can have. */
+export const MAX_DROPS = 3;
+
+/** Edits a drop; a drop keeps at least one rep (remove it to get rid of it). */
+export function editDrop(s: LiveState, e: number, i: number, d: number, patch: Partial<SetSegment>): LiveState {
+  return mapDrops(s, e, i, (drops) =>
+    drops.map((drop, di) =>
+      di !== d
+        ? drop
+        : {
+            weightKg: patch.weightKg !== undefined ? Math.min(Math.max(patch.weightKg, 0), 1000) : drop.weightKg,
+            reps: patch.reps !== undefined ? Math.min(Math.max(Math.round(patch.reps), 1), 200) : drop.reps,
+          },
+    ),
+  );
+}
+
+/** Moves a drop's load by whole steps of the exercise's unit. */
+export function stepDropWeight(s: LiveState, e: number, i: number, d: number, steps: number): LiveState {
+  const unit = unitOfExercise(s.exercises[e]!);
+  const drop = s.exercises[e]?.sets[i]?.drops?.[d];
+  if (!drop) return s;
+  let value = snap(drop.weightKg, unit);
+  for (let n = 0; n < Math.abs(steps); n++) value = steps > 0 ? stepUp(value, unit) : stepDown(value, unit);
+  return editDrop(s, e, i, d, { weightKg: fromUnit(value, unit) });
+}
+
+export const removeDrop = (s: LiveState, e: number, i: number, d: number): LiveState => mapDrops(s, e, i, (drops) => drops.filter((_, di) => di !== d));
 
 /** Drops a set not yet done (one too many prescribed). */
 export function removeSet(s: LiveState, e: number, i: number): LiveState {
@@ -176,7 +234,7 @@ export function toSessionInput(s: LiveState, endedAt = Date.now()): SessionInput
     sets: done.map(({ exerciseId, set, doneAt }) => {
       const setIndex = counts.get(exerciseId) ?? 0;
       counts.set(exerciseId, setIndex + 1);
-      return { exerciseId, setIndex, weightKg: set.weightKg, reps: set.reps, rpe: set.rpe, doneAt };
+      return { exerciseId, setIndex, weightKg: set.weightKg, reps: set.reps, rpe: set.rpe, doneAt, segments: segmentsOfSet(set) };
     }),
   };
 }

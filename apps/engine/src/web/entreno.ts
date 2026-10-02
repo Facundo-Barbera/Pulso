@@ -3,11 +3,12 @@
  * body stores. The page, `GET /api/web/entreno` and the session logger share
  * these shapes. The numbers match the iPhone's plan screen (TrainingPlan.swift).
  */
-import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
+import type { ExerciseDetail, ExercisePerformance, LoadSuggestion, Muscle, NextAdjustment, Program, ProgramDay, ProgramExercise, SetSegment, TrainingBlock, TrainingSession, WeightUnit } from "@pulso/contract";
 import { listScans } from "../body/store";
 import { ANATOMY } from "../training/anatomy";
 import { e1rm } from "../training/math";
 import { idsWithMedia, MEDIA_ROUTE, type MediaKind } from "../training/media";
+import { segmentsOf, volumeOf } from "../training/segments";
 import { activeProgramView, exerciseDetail, exercisePerformance, getExercise, getSession, listSessions, trainingSettings, unitOf } from "../training/store";
 import { formatWeight, toUnit } from "../training/units";
 import { listWorkouts } from "../workouts";
@@ -113,7 +114,7 @@ export type PlanDay = Omit<ProgramDay, "exercises"> & {
 
 export type ProgramHeader = Pick<Program, "id" | "name" | "goal" | "weeks" | "notes"> & { week: number; deload: boolean };
 
-export type HistoryExercise = { exerciseId: string; name: string; record: boolean; unit: WeightUnit; sets: { weightKg: number; reps: number; rpe: number | null }[] };
+export type HistoryExercise = { exerciseId: string; name: string; record: boolean; unit: WeightUnit; sets: { weightKg: number; reps: number; rpe: number | null; segments?: SetSegment[] }[] };
 
 export type HistoryEntry = {
   id: string;
@@ -177,9 +178,9 @@ function sessionEntry(session: TrainingSession, records: Set<string>, units: Uni
       ex = { exerciseId: set.exerciseId, name: getExercise(set.exerciseId)?.name ?? set.exerciseId, record: records.has(set.exerciseId), unit: unitIn(units, set.exerciseId), sets: [] };
       exercises.push(ex);
     }
-    ex.sets.push({ weightKg: set.weightKg, reps: set.reps, rpe: set.rpe });
+    ex.sets.push({ weightKg: set.weightKg, reps: set.reps, rpe: set.rpe, segments: segmentsOf(set) });
   }
-  const volume = session.sets.reduce((sum, s) => sum + s.weightKg * s.reps, 0);
+  const volume = session.sets.reduce((sum, s) => sum + volumeOf(s), 0);
   const total = toUnit(volume, units.defaultUnit);
   const parts = [`${session.sets.length} ${session.sets.length === 1 ? "serie" : "series"}`, volume > 0 ? `${number.format(Math.round(total))} ${units.defaultUnit}` : null];
   return { id: session.id, kind: "session", title: session.name, startedAt: session.startedAt, endedAt: session.endedAt, summary: parts.filter(Boolean).join(" · "), exercises, source: "Pulso", energy: null, distanceKm: null };

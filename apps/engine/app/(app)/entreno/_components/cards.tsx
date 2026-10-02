@@ -1,5 +1,5 @@
 import { CalendarDays, ChevronDown, ClipboardList, Dumbbell, History, Repeat, Trophy, Watch } from "lucide-react";
-import { shown } from "@/src/training/units";
+import { formatSetShort } from "@/src/training/segments";
 import type { HistoryEntry, ProgramHeader } from "@/src/web/entreno";
 import { Card, CardTitle } from "../../../_ui/card";
 import { EmptyState } from "../../../_ui/empty-state";
@@ -72,7 +72,8 @@ export function SessionDetail({ entry: h }: { entry: HistoryEntry }) {
             {e.sets.some((s) => s.weightKg > 0) && <span className="text-muted-foreground text-[11px] font-normal">{e.unit}</span>}
           </span>
           <span className="text-muted-foreground tabular">
-            {e.sets.map((s) => (s.weightKg > 0 ? `${fmtNumber(shown(s.weightKg, e.unit), 2)} × ${s.reps}` : `${s.reps} reps`) + (s.rpe ? ` @${fmtNumber(s.rpe, 1)}` : "")).join(" · ")}
+            {/* A set where the load dropped mid-set reads "80 × 5 → 60 × 3". */}
+            {e.sets.map((s) => formatSetShort(s, e.unit) + (s.rpe ? ` @${fmtNumber(s.rpe, 1)}` : "")).join(" · ")}
           </span>
         </li>
       ))}
