@@ -1,7 +1,8 @@
 import SwiftUI
 import UserNotifications
 
-/// Ajustes: the connection to the Mac, this iPhone, permissions, and forgetting the Mac.
+/// Ajustes: the connection to the Mac, this iPhone, permissions, the Face ID lock,
+/// the way into Sustancias, and forgetting the Mac.
 /// Presented as a sheet from the toolbar button every tab gets in RootView.
 struct SettingsView: View {
     let model: PulsoModel
@@ -11,6 +12,9 @@ struct SettingsView: View {
     @State private var notifications: UNAuthorizationStatus?
     @State private var askingHealth = false
     @State private var confirmForget = false
+    @AppStorage(AppLock.enabledKey) private var lockEnabled = true
+    @AppStorage(AppLock.intervalKey) private var lockInterval = LockPolicy.Interval.default.rawValue
+    @State private var showSubstances = false
 
     var body: some View {
         NavigationStack {
@@ -19,6 +23,8 @@ struct SettingsView: View {
                 connection
                 device
                 permissions
+                privacy
+                substances
                 Section {
                     Button("Olvidar esta Mac", systemImage: "laptopcomputer.slash", role: .destructive) { confirmForget = true }
                 } footer: {
@@ -40,6 +46,7 @@ struct SettingsView: View {
             } message: {
                 Text("Este iPhone dejará de sincronizar hasta que lo emparejes otra vez.")
             }
+            .navigationDestination(isPresented: $showSubstances) { SubstancesView() }
             .task { await reload() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await loadNotifications() } }
@@ -128,6 +135,52 @@ struct SettingsView: View {
             Text("Permisos")
         } footer: {
             Text("Qué lee Pulso de Salud se cambia en Salud → tu perfil → Apps → Pulso.")
+        }
+    }
+
+    private var privacy: some View {
+        Section {
+            Toggle(isOn: lockBinding) {
+                Label { Text("Bloquear con \(AppLock.methodName)") } icon: { Image(systemName: AppLock.methodSymbol).foregroundStyle(.tint) }
+            }
+            .disabled(!AppLock.available)
+            if lockEnabled && AppLock.available {
+                Picker("Pedirlo", selection: $lockInterval) {
+                    ForEach(LockPolicy.Interval.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+            }
+        } header: {
+            Text("Privacidad")
+        } footer: {
+            Text(AppLock.available
+                 ? "Al abrir Pulso y al volver después de ese tiempo. Siri, los widgets, los recordatorios y el entreno en curso siguen funcionando."
+                 : "Configura un código en el iPhone para poder bloquear Pulso.")
+        }
+        .animation(.snappy, value: lockEnabled)
+    }
+
+    /// Turning the lock off asks for Face ID first, so whoever holds the unlocked phone can't.
+    private var lockBinding: Binding<Bool> {
+        Binding {
+            lockEnabled && AppLock.available
+        } set: { on in
+            guard !on else { lockEnabled = true; return }
+            Task {
+                if await AppLock.shared.authenticate(reason: "Confirma que eres tú para quitar el bloqueo.") { lockEnabled = false }
+            }
+        }
+    }
+
+    /// A quiet row; the screen asks for Face ID every time it opens.
+    private var substances: some View {
+        Section {
+            Button {
+                Task { if await SubstancesAccess.confirm() { showSubstances = true } }
+            } label: {
+                Label { Text("Sustancias").foregroundStyle(.primary) } icon: { Image(systemName: SubstancesAccess.symbol) }
+            }
+        } footer: {
+            Text("Privado: pide \(AppLock.methodName) cada vez.")
         }
     }
 
