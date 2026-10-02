@@ -44,6 +44,7 @@ targets:
         INFOPLIST_KEY_NSHealthUpdateUsageDescription: Pulso guarda en Salud tus sesiones de fuerza y de cardio como entrenamientos (con distancia y calorías cuando las anotas) y el agua que registras.
         INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: Pulso lee de tu Calendario sólo cuándo estás ocupado y el título de cada evento, para planificar tus entrenamientos alrededor. Nunca escribe en él.
         INFOPLIST_KEY_NSCameraUsageDescription: Pulso usa la cámara para escanear códigos de barras y el QR de InBody, y para mandarle fotos de tu comida al Coach.
+        INFOPLIST_KEY_NSFaceIDUsageDescription: Pulso usa Face ID para proteger tus datos de salud.
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         CODE_SIGN_ENTITLEMENTS: Config/Pulso.entitlements

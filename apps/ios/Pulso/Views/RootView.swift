@@ -2,13 +2,16 @@ import SwiftUI
 
 /// Paired: five tabs, one per feature folder under `Features/`, each with the
 /// Ajustes button, and an offline accessory above the tab bar when the Mac is
-/// unreachable. Not paired: onboarding and nothing else.
+/// unreachable; while `AppLock` is locked, only the lock screen. Not paired:
+/// onboarding and nothing else. A privacy cover hides the app whenever the
+/// scene isn't active (app switcher, Control Center).
 struct RootView: View {
     let model: PulsoModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab = "hoy"
     private var launcher = CoachLauncher.shared
     private var training = TrainingStore.shared
+    private var lock = AppLock.shared
 
     init(model: PulsoModel) { self.model = model }
 
@@ -17,50 +20,75 @@ struct RootView: View {
             if model.credentials == nil {
                 OnboardingView(model: model)
                     .transition(.opacity)
+            } else if lock.locked {
+                // Swapped out, not covered: nothing of the app is drawn, sheets
+                // included. Stores and their tasks don't live in views, so they go on.
+                LockScreen(lock: lock)
+                    .transition(.opacity)
             } else {
-                TabView(selection: $tab) {
-                    Tab("Hoy", systemImage: "sun.max", value: "hoy") {
-                        NavigationStack { TodayView(model: model).settingsToolbar(model) }
-                    }
-                    Tab("Coach", systemImage: "sparkles", value: "coach") {
-                        NavigationStack { CoachView(model: model).settingsToolbar(model) }
-                    }
-                    Tab("Entreno", systemImage: "dumbbell", value: "entreno") {
-                        NavigationStack { TrainingView(model: model).settingsToolbar(model) }
-                    }
-                    Tab("Dieta", systemImage: "fork.knife", value: "dieta") {
-                        NavigationStack { NutritionView(model: model).settingsToolbar(model) }
-                    }
-                    Tab("Cuerpo", systemImage: "figure", value: "cuerpo") {
-                        NavigationStack { BodyView(model: model).settingsToolbar(model) }
-                    }
-                }
-                .modifier(OfflineAccessory(model: model))
-                .onChange(of: launcher.pending?.id) { _, id in if id != nil { tab = "coach" } }
-                // The Coach's result cards ("Abrir en Entreno") ask for another tab.
-                .onChange(of: launcher.tabRequest?.id) { _, id in if id != nil, let next = launcher.takeTab() { tab = next } }
-                // A session started from Siri, a widget or another tab shows where it lives.
-                .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
-                .transition(.opacity)
+                tabs
+                    .transition(.opacity)
             }
         }
         .animation(.snappy, value: model.credentials == nil)
+        .animation(.snappy, value: lock.locked)
         .sensoryFeedback(.success, trigger: model.credentials != nil) { _, paired in paired }
+        .sensoryFeedback(.impact(weight: .light), trigger: lock.locked) { was, now in was && !now }
+        // Kept outside the tabs so a request that arrives while locked (Siri, a
+        // widget, a Coach card) lands on its tab once the app is unlocked.
+        .onChange(of: launcher.pending?.id) { _, id in if id != nil { tab = "coach" } }
+        // The Coach's result cards ("Abrir en Entreno") ask for another tab.
+        .onChange(of: launcher.tabRequest?.id) { _, id in if id != nil, let next = launcher.takeTab() { tab = next } }
+        // A session started from Siri, a widget or another tab shows where it lives.
+        .onChange(of: training.live != nil) { _, live in if live { tab = "entreno" } }
         .task {
             await model.refresh()
             // A finished workout the Mac didn't get goes now, whatever tab opens first.
             await training.uploadPending()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
+            switch phase {
+            case .active:
+                // Lock before the cover lifts, then give closing sheets a moment behind it.
+                let relocked = lock.becameActive()
+                PrivacyShield.shared.hide(after: relocked ? .milliseconds(450) : .zero)
                 Task {
                     await model.refresh()
                     await training.uploadPending()
                 }
                 // Replies the Mac kept writing while Pulso was away pick up where they were.
                 ChatStore.resumeAll()
+            case .inactive:
+                // The Face ID sheet itself makes the scene inactive; no cover for that.
+                if !lock.authenticating { PrivacyShield.shared.show() }
+            case .background:
+                lock.enteredBackground()
+                PrivacyShield.shared.show()
+            @unknown default:
+                break
             }
         }
+    }
+
+    private var tabs: some View {
+        TabView(selection: $tab) {
+            Tab("Hoy", systemImage: "sun.max", value: "hoy") {
+                NavigationStack { TodayView(model: model).settingsToolbar(model) }
+            }
+            Tab("Coach", systemImage: "sparkles", value: "coach") {
+                NavigationStack { CoachView(model: model).settingsToolbar(model) }
+            }
+            Tab("Entreno", systemImage: "dumbbell", value: "entreno") {
+                NavigationStack { TrainingView(model: model).settingsToolbar(model) }
+            }
+            Tab("Dieta", systemImage: "fork.knife", value: "dieta") {
+                NavigationStack { NutritionView(model: model).settingsToolbar(model) }
+            }
+            Tab("Cuerpo", systemImage: "figure", value: "cuerpo") {
+                NavigationStack { BodyView(model: model).settingsToolbar(model) }
+            }
+        }
+        .modifier(OfflineAccessory(model: model))
     }
 }
 
