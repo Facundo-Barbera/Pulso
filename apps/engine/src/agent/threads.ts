@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type { AgentAttachment, AgentMessage, AgentMessageStatus, AgentProduct, AgentThread, FoodProduct } from "@pulso/contract";
+import type { AgentAttachment, AgentMessage, AgentMessageSource, AgentMessageStatus, AgentProduct, AgentThread, FoodProduct } from "@pulso/contract";
 import { db } from "../db";
 import type { StoredTool } from "./events";
 
 export const DEFAULT_TITLE = "Nueva conversación";
 
 type ThreadRow = { id: string; title: string; sdk_session_id: string | null; created_at: number; updated_at: number; preview: string | null };
-type MessageRow = {
+export type MessageRow = {
   id: string;
   thread_id: string;
+  context_id: string | null;
+  source: string | null;
   role: AgentMessage["role"];
   text: string;
   tools: string;
@@ -30,6 +32,8 @@ type AttachmentRow = { id: string; message_id: string; width: number; height: nu
 const toMessage = (row: MessageRow, attachments: AgentAttachment[] = [], products: AgentProduct[] = []): AgentMessage => ({
   id: row.id,
   threadId: row.thread_id,
+  contextId: row.context_id,
+  source: row.source ? (JSON.parse(row.source) as AgentMessageSource) : null,
   role: row.role,
   text: row.text,
   attachments,
@@ -91,23 +95,28 @@ export function listMessages(threadId: string, limit?: number): AgentMessage[] {
       "SELECT * FROM (SELECT *, rowid AS r FROM agent_messages WHERE thread_id = ? ORDER BY created_at DESC, r DESC LIMIT ?) ORDER BY created_at, r",
     )
     .all(threadId, limit ?? -1);
-  const photos = attachmentsOf({ threadId });
-  const products = productsOf({ threadId });
+  return withExtras(rows);
+}
+
+/** Rows as clients see them, with their photos and products (read for these messages only). */
+export function withExtras(rows: MessageRow[]): AgentMessage[] {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const photos = attachmentsOf({ messageIds: ids });
+  const products = productsOf({ messageIds: ids });
   return rows.map((row) => toMessage(row, photos.get(row.id), products.get(row.id)));
 }
 
 type ProductRow = { message_id: string; barcode: string; product_json: string | null };
 
+const marks = (n: number) => Array.from({ length: n }, () => "?").join(", ");
+
 /** Scanned products by message id, in the order they were added. */
-function productsOf(where: { threadId: string } | { messageId: string }): Map<string, AgentProduct[]> {
-  const rows =
-    "threadId" in where
-      ? db()
-          .query<ProductRow, [string]>(
-            "SELECT p.* FROM agent_message_products p JOIN agent_messages m ON m.id = p.message_id WHERE m.thread_id = ? ORDER BY p.position",
-          )
-          .all(where.threadId)
-      : db().query<ProductRow, [string]>("SELECT * FROM agent_message_products WHERE message_id = ? ORDER BY position").all(where.messageId);
+function productsOf(where: { messageIds: string[] } | { messageId: string }): Map<string, AgentProduct[]> {
+  const ids = "messageIds" in where ? where.messageIds : [where.messageId];
+  const rows = db()
+    .query<ProductRow, string[]>(`SELECT * FROM agent_message_products WHERE message_id IN (${marks(ids.length)}) ORDER BY position`)
+    .all(...ids);
   const byMessage = new Map<string, AgentProduct[]>();
   for (const row of rows) {
     const product = row.product_json ? (JSON.parse(row.product_json) as FoodProduct) : null;
@@ -116,14 +125,12 @@ function productsOf(where: { threadId: string } | { messageId: string }): Map<st
   return byMessage;
 }
 
-/** Photos by message id, in the order they were sent: those of one thread, or of one message. */
-function attachmentsOf(where: { threadId: string } | { messageId: string }): Map<string, AgentAttachment[]> {
-  const rows =
-    "threadId" in where
-      ? db()
-          .query<AttachmentRow, [string]>("SELECT a.* FROM agent_attachments a JOIN agent_messages m ON m.id = a.message_id WHERE m.thread_id = ? ORDER BY a.position")
-          .all(where.threadId)
-      : db().query<AttachmentRow, [string]>("SELECT * FROM agent_attachments WHERE message_id = ? ORDER BY position").all(where.messageId);
+/** Photos by message id, in the order they were sent. */
+function attachmentsOf(where: { messageIds: string[] } | { messageId: string }): Map<string, AgentAttachment[]> {
+  const ids = "messageIds" in where ? where.messageIds : [where.messageId];
+  const rows = db()
+    .query<AttachmentRow, string[]>(`SELECT * FROM agent_attachments WHERE message_id IN (${marks(ids.length)}) ORDER BY position`)
+    .all(...ids);
   const byMessage = new Map<string, AgentAttachment[]>();
   for (const row of rows) {
     const list = byMessage.get(row.message_id) ?? [];
@@ -152,11 +159,18 @@ export function addMessage(
   status: AgentMessageStatus,
   attachments: AgentAttachment[] = [],
   products: AgentProduct[] = [],
+  source: AgentMessageSource | null = null,
 ): AgentMessage {
   const now = Date.now();
   const id = randomUUID();
   db().transaction(() => {
-    db().query("INSERT INTO agent_messages (id, thread_id, role, text, status, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, threadId, role, text, status, now);
+    // In the perpetual conversation a message belongs to the active context; elsewhere context_id stays NULL.
+    db()
+      .query(
+        `INSERT INTO agent_messages (id, thread_id, context_id, source, role, text, status, created_at)
+         VALUES (?, ?, (SELECT active_context_id FROM agent_conversation WHERE thread_id = ?), ?, ?, ?, ?, ?)`,
+      )
+      .run(id, threadId, threadId, source && JSON.stringify(source), role, text, status, now);
     attachments.forEach((a, position) => {
       db().query("INSERT INTO agent_attachments (id, message_id, position, width, height) VALUES (?, ?, ?, ?, ?)").run(a.id, id, position, a.width, a.height);
     });

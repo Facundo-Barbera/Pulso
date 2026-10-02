@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { migrateAgent } from "./agent/schema";
 import { migrateDaily } from "./daily/schema";
 import { migrateDevices } from "./devices-schema";
 import { migrateMcp } from "./mcp/schema";
@@ -44,6 +45,7 @@ export function db(): Database {
   const applied = g[APPLIED] as { database: Database; schemas: string[] } | undefined;
   if (applied?.database !== database || applied.schemas !== SCHEMAS) {
     for (const schema of SCHEMAS) database.exec(schema);
+    migrateAgent(database);
     migrateDevices(database);
     migrateWorkouts(database);
     migrateDaily(database);
