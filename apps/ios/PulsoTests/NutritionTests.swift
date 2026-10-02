@@ -92,7 +92,7 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(day.zones?["fat"]?.line("g"), "Te pasaste 5 g")
         XCTAssertEqual(day.zones?["kcal"]?.line("kcal"), "En tu zona")
         XCTAssertEqual(day.zones?["protein"]?.range("g"), "mín. 150 g")
-        XCTAssertEqual(day.zones?["protein"].map { $0.fraction($0.max!) } ?? 0, 188 / 206.8, accuracy: 0.001)
+        XCTAssertEqual(day.zones?["protein"].map { $0.laps($0.max!) } ?? 0, 188 / 206.8, accuracy: 0.001)
     }
 
     func testOnTargetFallsBackToTenPercentOnOlderEngines() {
