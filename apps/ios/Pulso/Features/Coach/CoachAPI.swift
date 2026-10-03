@@ -29,6 +29,8 @@ struct AgentToolResult: Codable, Equatable {
     var lines: [AgentActionLine]? = nil
     /// "available" while Deshacer works, "done" once undone; nil when it can't be undone.
     var undo: String? = nil
+    /// The change it belongs to, e.g. "program:<id>": consecutive cards of one group show as one.
+    var group: String? = nil
 
     var undoable: Bool { undo == "available" }
     var undone: Bool { undo == "done" }
