@@ -339,10 +339,11 @@ test("a live-workout thread keeps its own session and workspace", async () => {
 
 test("switching back and forth with nothing said in between leaves one line", () => {
   const [a, b] = listContexts();
-  const switches = () => feedPage().items.filter((i) => i.type === "marker" && i.marker.kind === "switch").length;
-  const before = switches();
-  switchContext(b!.id);
-  switchContext(a!.id);
-  switchContext(b!.id);
-  expect(switches()).toBe(before + 1);
+  // Clear of the earlier tests' messages and markers, which may share a millisecond with them.
+  const start = Date.now() + 1_000;
+  const switches = () => feedPage().items.filter((i) => i.type === "marker" && i.marker.kind === "switch" && i.marker.createdAt >= start).length;
+  switchContext(b!.id, start);
+  switchContext(a!.id, start + 1);
+  switchContext(b!.id, start + 2);
+  expect(switches()).toBe(1);
 });
