@@ -16,9 +16,7 @@ import {
 
 /** Said once in every tool so the model sees the boundary wherever it starts. */
 const BOUNDARY =
-  "You may help organize schedules, set reminders and track doses exactly as the person describes them. " +
-  "Never recommend starting, stopping, or changing a medication or its dose; for interactions, side effects or dosing questions, " +
-  "point the person to their doctor or pharmacist.";
+  "Track it exactly as the person describes; never recommend starting, stopping or changing a medication or dose: interactions, side effects and dosing go to their doctor or pharmacist.";
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
@@ -32,32 +30,20 @@ async function safely(run: () => unknown) {
 }
 
 const SCHEDULE_HELP =
-  "schedule = which days (frequency) + when on those days (timing). " +
-  "Frequency, pick one: every day (days: []); some weekdays (days: ISO weekdays 1=Monday..7=Sunday); " +
-  "every N days or every N weeks (interval: { every: N, unit: 'day' | 'week', start?: 'YYYY-MM-DD' (default the start date) }, with weeks on `days`, default the start's weekday); " +
-  "once a month (monthDay: 1..31, the month's last day when shorter). " +
-  "Timing, combine freely: times: fixed local 24h 'HH:MM' list; " +
-  "windows: [{ part: 'manana' | 'tarde' | 'noche', start?, end? }] for 'en la mañana/tarde/noche' (defaults 07:00-12:00, 12:00-19:00, 19:00-23:00); " +
-  "anyTime: true for 'en algún momento del día / a cualquier hora' — one dose due all day, missed only after the day ends, with a gentle reminder at `reminder` " +
-  "('HH:MM', default 19:00 if left out; null = no reminder); " +
-  "training: null or { withinMinutes (default 60), restDayTime: 'HH:MM' or null } for 'after training' (due when a workout ends, to take within withinMinutes; " +
-  "on days without training it is due at restDayTime, or not at all when null = 'no tomar'), " +
-  "meals: any of 'desayuno' | 'comida' | 'cena' (due at that meal's planned time), bedtime: true for 'antes de dormir' (30 min before sleep time) }. " +
-  "Examples: creatine after training and at 09:00 on rest days = { times: [], training: { withinMinutes: 60, restDayTime: '09:00' } }; " +
-  "'semaglutida los jueves, a cualquier hora' = { times: [], days: [4], anyTime: true }; 'vitamina D cada 2 semanas el domingo en la mañana' = " +
-  "{ days: [7], interval: { every: 2, unit: 'week' }, windows: [{ part: 'manana' }] }. Don't invent a clock time the person didn't give: use anyTime or a window. " +
-  "Each slot has a key: its 'HH:MM' for fixed times, else 'entreno', 'desayuno', 'comida', 'cena', 'dormir', 'manana', 'tarde', 'noche' or 'dia' (any time); a training slot keeps 'entreno' even on rest days. " +
-  "Dates are local 'YYYY-MM-DD'. stock counts doses left (each 'tomada' uses one); lowStockThreshold warns at or below it.";
+  "schedule = which days + when. Days, one of: every day (days []); weekdays (days, ISO 1 = Monday … 7 = Sunday); interval { every, unit day|week, start (default startDate) }, weeks on `days` (default start's weekday); monthDay (the last day in shorter months). " +
+  "When, combinable: times (local 'HH:MM'); windows for 'en la mañana/tarde/noche' (default 07–12, 12–19, 19–23); anyTime = one dose due all day, missed only after it, reminded at `reminder` (default 19:00, null none); " +
+  "training = due when a workout ends, within withinMinutes, and at restDayTime on days without training (null = not then); meals (at that meal's planned time); bedtime (30 min before sleep). " +
+  "Never invent a clock time: use anyTime or a window. E.g. creatine after training, 09:00 on rest days = { training: { restDayTime: '09:00' } }; 'semaglutida los jueves, cuando sea' = { days: [4], anyTime: true }; 'vitamina D cada 2 semanas el domingo en la mañana' = { days: [7], interval: { every: 2, unit: 'week' }, windows: [{ part: 'manana' }] }. " +
+  "Slot keys: 'HH:MM', or entreno (even on rest days), desayuno, comida, cena, dormir, manana, tarde, noche, dia (any time). Dates local 'YYYY-MM-DD'. stock = doses left (each 'tomada' uses one); lowStockThreshold warns at or below it.";
 
 export const medicationTools = [
   tool(
     "list_medications",
-    `The person's medications and supplements with dose (amount + unit), form, instructions, schedule, start/end dates, stock and lowStock flag. ` +
-      `Optionally includes today's dose slots with their status (pendiente/tomada/omitida/pospuesta): each has slot (its key), moment, time ('HH:MM' when due, ` +
-      `a window's start; null for any-time slots and while waiting for a planned or in-progress workout), window (start/end of a day-part slot) and, for training-linked ones, training.state trained/training/planned/rest. ${BOUNDARY}`,
+    `Medications and supplements: dose (amount + unit), form, instructions, schedule, dates, stock, lowStock. ` +
+      `With today's dose slots and status (pendiente/tomada/omitida/pospuesta): slot (its key), moment, time ('HH:MM' due, a window's start; null for any-time and while a workout is pending), window, training.state (trained/training/planned/rest). ${BOUNDARY}`,
     {
-      includeInactive: z.boolean().default(false).describe("Also list paused medications."),
-      includeToday: z.boolean().default(true).describe("Add today's slots and the next pending dose."),
+      includeInactive: z.boolean().default(false).describe("Also paused ones."),
+      includeToday: z.boolean().default(true).describe("Today's slots and the next pending dose."),
     },
     async ({ includeInactive, includeToday }) =>
       safely(() => {
@@ -67,39 +53,36 @@ export const medicationTools = [
   ),
   tool(
     "add_medication",
-    `Adds a medication or supplement the person says they take, exactly as they describe it (do not suggest doses). ` +
-      `kind is 'medicamento' or 'suplemento' (creatine, protein, vitamins, omega 3, magnesium… are 'suplemento'; units like g, scoop, cápsula, gomita, ml). ` +
-      `${SCHEDULE_HELP} Ask when to take it if the person didn't say. ${BOUNDARY}`,
+    `Add a medication or supplement the person takes, as they describe it. kind 'suplemento' for creatine, protein, vitamins, omega 3, magnesium… (units like g, scoop, cápsula, gomita). ` +
+      `Omitting schedule = as needed; ask when they take it if they didn't say. ${SCHEDULE_HELP} ${BOUNDARY}`,
     medicationInputSchema.shape,
     async (input) => safely(() => addMedication(input)),
   ),
   tool(
     "update_medication",
-    `Changes fields of a medication by id (only the ones given), when the person tells you something changed — new times, stock refill, ` +
-      `instructions, end date. Set active=false to pause it, or endDate to finish it while keeping its history. ${SCHEDULE_HELP} ${BOUNDARY}`,
-    { id: z.string().describe("Medication id from list_medications."), ...medicationPatchSchema.shape },
+    `Change a medication by id, only the fields given: new times, a stock refill, instructions… active false pauses it; endDate finishes it, keeping its history. ` +
+      `A schedule replaces the whole schedule, in add_medication's format. ${BOUNDARY}`,
+    { id: z.string().describe("From list_medications."), ...medicationPatchSchema.shape },
     async ({ id, ...patch }) => safely(() => updateMedication(id, patch)),
   ),
   tool(
     "log_dose",
-    `Records a dose the person reports: status 'tomada' (taken), 'omitida' (skipped) or 'pospuesta' (postponed). ` +
-      `For a scheduled dose pass the slot's date and scheduledTime = the slot key from list_medications' today.slots[].slot ('HH:MM', or 'entreno', 'desayuno', 'comida', 'cena', 'dormir', 'manana', 'tarde', 'noche', 'dia'); re-logging a slot overwrites it. ` +
-      `For an as-needed or extra intake omit scheduledTime. 'tomada' takes one from stock. takenAt is epoch ms, default now. ${BOUNDARY}`,
+    `Record a dose the person reports: tomada (taken, uses one from stock), omitida (skipped) or pospuesta (postponed). ` +
+      `A scheduled dose: its slot's date and scheduledTime = list_medications' today.slots[].slot; re-logging a slot overwrites it. As-needed or extra: omit scheduledTime. ${BOUNDARY}`,
     {
       medicationId: z.string(),
       date: dateSchema.optional().describe("Local date of the slot; default today."),
       scheduledTime: z.string().optional().describe("Slot key: 'HH:MM' or entreno/desayuno/comida/cena/dormir/manana/tarde/noche/dia."),
       status: z.enum(["tomada", "omitida", "pospuesta"]),
-      takenAt: z.number().positive().optional(),
+      takenAt: z.number().positive().optional().describe("Epoch ms; default now."),
     },
     async ({ date, ...rest }) => safely(() => logDose({ ...rest, date: date ?? localNow().date })),
   ),
   tool(
     "get_adherence",
-    `Adherence as of now: per medication and overall, due vs taken doses and rate (0..1) for the last 7 and 30 days, current and best streak ` +
-      `of days with every dose taken (any-time and window doses count as missed only once their day is over; weekly ones only on their day), a 30-day per-day series, and optionally the raw dose log. Use it to encourage and spot missed doses; ` +
-      `as-needed meds never count against adherence. ${BOUNDARY}`,
-    { includeLog: z.boolean().default(false).describe("Also return logged dose events for the last 30 days.") },
+    `Adherence as of now, per medication and overall: due vs taken and rate (0..1) over 7 and 30 days, current and best streak of full days, a 30-day daily series. ` +
+      `Any-time and window doses count as missed only after their day; as-needed ones never count. ${BOUNDARY}`,
+    { includeLog: z.boolean().default(false).describe("Also the dose log of the last 30 days.") },
     async ({ includeLog }) =>
       safely(() => {
         const now = localNow();
