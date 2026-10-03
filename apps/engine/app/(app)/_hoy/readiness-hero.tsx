@@ -12,6 +12,17 @@ const LEVEL: Record<Readiness["level"], { color: string; icon: LucideIcon; word:
   unknown: { color: "var(--muted-foreground)", icon: CircleDashed, word: "Sin datos", headline: "Todavía sin lectura" },
 };
 
+/** From 20:00 to 5:00 the day's training window is over: the hero talks about winding down, whatever the score. */
+const NIGHT_FROM = 20;
+const NIGHT_UNTIL = 5;
+export const isNight = (at: Date) => at.getHours() >= NIGHT_FROM || at.getHours() < NIGHT_UNTIL;
+
+const NIGHT: Record<Exclude<Readiness["level"], "unknown">, string> = {
+  high: "Hoy te recuperaste bien. Ahora toca descansar: dormir bien es lo que lo mantiene mañana.",
+  medium: "Recuperación normal hoy. Lo que más suma ahora es dormir tus horas.",
+  low: "Hoy venías bajo de recuperación. Acuéstate temprano: es lo que más ayuda para mañana.",
+};
+
 const FACTOR_ICON: Record<ReadinessFactor["key"], { icon: LucideIcon; color: string }> = {
   hrv: { icon: Activity, color: "var(--domain-heart)" },
   resting_hr: { icon: HeartPulse, color: "var(--domain-heart)" },
@@ -22,8 +33,11 @@ const FACTOR_ICON: Record<ReadinessFactor["key"], { icon: LucideIcon; color: str
  * The page's one hero: the readiness ring, what it means today, and the three factors behind it.
  * `sleepMin` is last night as the Sueño card shows it, so both say the same duration.
  */
-export function ReadinessHero({ readiness, sleepMin }: { readiness: Readiness; sleepMin: number | null }) {
+export function ReadinessHero({ readiness, sleepMin, at = new Date() }: { readiness: Readiness; sleepMin: number | null; at?: Date }) {
   const level = LEVEL[readiness.level];
+  const night = isNight(at) && readiness.level !== "unknown";
+  const headline = night ? "Hora de bajar el ritmo" : level.headline;
+  const explanation = night ? NIGHT[readiness.level as keyof typeof NIGHT] : readiness.explanation;
   const LevelIcon = level.icon;
   return (
     <Card className="relative overflow-hidden !p-6 md:!p-8">
@@ -47,9 +61,9 @@ export function ReadinessHero({ readiness, sleepMin }: { readiness: Readiness; s
             </span>
           </p>
           <p className="mt-2 text-center text-[22px] font-semibold tracking-tight md:text-left" style={{ color: readiness.level === "unknown" ? undefined : level.color }}>
-            {level.headline}
+            {headline}
           </p>
-          <p className="text-muted-foreground mt-1.5 text-center text-[15px] leading-relaxed md:text-left">{readiness.explanation}</p>
+          <p className="text-muted-foreground mt-1.5 text-center text-[15px] leading-relaxed md:text-left">{explanation}</p>
           <ul className="mt-6 grid gap-3 sm:grid-cols-3">
             {readiness.factors.map((factor) => (
               <FactorTile key={factor.key} factor={factor} value={factor.key === "sleep" ? (sleepMin ?? factor.value) : factor.value} />
