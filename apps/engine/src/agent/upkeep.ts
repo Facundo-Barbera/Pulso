@@ -1,7 +1,7 @@
 /**
  * The conversation's housekeeping, outside any turn: the one-time distillation
- * of the old threads, an hourly summary (/compact) of the active context when it
- * got new messages, and deleting the transcripts of contexts left alone for a
+ * of the old threads, an hourly summary (/compact) of the active context once it
+ * has gone quiet and grown big, and deleting the transcripts of contexts left alone for a
  * month. Sends wait for whatever of it is running (settled()).
  */
 import fs from "node:fs";
@@ -13,11 +13,14 @@ import {
   conversationThreadId,
   finishDistillation,
   hasNewSinceCompaction,
+  lastMessageAt,
   markPruned,
   pendingLegacy,
   prunableContexts,
   recordCompaction,
   setContextSession,
+  setContextTokens,
+  type ContextRow,
 } from "./conversation";
 import { dataDir } from "../db";
 import { distillPrompt, type LegacyThread } from "./distill";
@@ -28,6 +31,10 @@ import { deleteTranscript, stripImages } from "./transcripts";
 import { claudeMd, prepareWorkspace } from "./workspace";
 
 export const HOUR_MS = 60 * 60_000;
+/** The hourly summary waits this long after the latest message, so it never lands between a reply and the person's answer. */
+export const IDLE_BEFORE_COMPACT_MS = 30 * 60_000;
+/** Below this many tokens a context is cheap to carry: the hourly summary leaves it alone. */
+export const COMPACT_ABOVE_TOKENS = 60_000;
 const COMPACT_LIMIT_MS = 5 * 60_000;
 const DISTILL_LIMIT_MS = 5 * 60_000;
 /** What /compact keeps; the CLI takes the rest of the line as instructions for the summary. */
@@ -44,16 +51,32 @@ const running = (): Running => (g.__pulso_upkeep_running__ ??= { compaction: nul
 export const compacting = () => running().compaction !== null;
 
 /**
- * Summarizes the active context with /compact when it got messages since the
- * last summary, it has a session, and no turn is in flight. Resolves true when
- * it summarized. Never throws.
+ * Worth an hourly summary: messages since the last one, none for
+ * IDLE_BEFORE_COMPACT_MS, and more than COMPACT_ABOVE_TOKENS in the context as
+ * its last turn measured it (unknown size: no).
+ */
+export function worthCompacting(context: ContextRow, now = Date.now()): boolean {
+  const last = lastMessageAt(context.id);
+  return (
+    hasNewSinceCompaction(context) &&
+    last !== null &&
+    now - last >= IDLE_BEFORE_COMPACT_MS &&
+    context.context_tokens !== null &&
+    context.context_tokens > COMPACT_ABOVE_TOKENS
+  );
+}
+
+/**
+ * Summarizes the active context with /compact when it is worth it
+ * (worthCompacting), it has a session, and no turn is in flight. Resolves true
+ * when it summarized. Never throws.
  */
 export function compactActive(run: QueryFn = query, now = new Date()): Promise<boolean> {
   const state = running();
   if (state.compaction) return state.compaction;
   const context = activeContext();
   const session = context.sdk_session_id;
-  if (!session || !hasNewSinceCompaction(context) || activeTurn(context.thread_id)) return Promise.resolve(false);
+  if (!session || !worthCompacting(context, now.getTime()) || activeTurn(context.thread_id)) return Promise.resolve(false);
   state.compaction = (async () => {
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), COMPACT_LIMIT_MS);
@@ -74,6 +97,7 @@ export function compactActive(run: QueryFn = query, now = new Date()): Promise<b
       return false;
     }
     recordCompaction(context.id, Date.now());
+    setContextTokens(context.id, turn.contextTokens ?? null);
     return true;
   })().finally(() => {
     state.compaction = null;

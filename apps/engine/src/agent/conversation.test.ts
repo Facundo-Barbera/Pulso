@@ -10,13 +10,25 @@ import { GET as webFeedGET } from "@/app/api/web/coach/conversation/route";
 import { db, dataDir } from "../db";
 import { createPairingCode, redeemPairing } from "../devices";
 import { ownDatabase } from "../web/test-db";
-import { activeContext, contextMessages, ensureConversation, feedPage, getContext, listContexts, newContext, PRUNE_AFTER_MS, quoteMessage, switchContext } from "./conversation";
+import {
+  activeContext,
+  contextMessages,
+  ensureConversation,
+  feedPage,
+  getContext,
+  listContexts,
+  newContext,
+  PRUNE_AFTER_MS,
+  quoteMessage,
+  setContextTokens,
+  switchContext,
+} from "./conversation";
 import { conversationView, sendToConversation } from "./feed";
 import { eventStream } from "./ndjson";
 import { agentOptions, AUTO_COMPACT_WINDOW, startTurn, subscribe, type QueryFn } from "./runner";
 import { addMessage, createThread, listMessages, setSdkSession } from "./threads";
 import { PHOTO_PLACEHOLDER, sdkConfigDir, stripImages, transcriptExists } from "./transcripts";
-import { COMPACT_PROMPT, compactActive, distillOnce, pruneTranscripts } from "./upkeep";
+import { COMPACT_ABOVE_TOKENS, COMPACT_PROMPT, compactActive, distillOnce, IDLE_BEFORE_COMPACT_MS, pruneTranscripts } from "./upkeep";
 
 ownDatabase("conversation");
 
@@ -30,6 +42,9 @@ const reply = (session: string, text: string, extra: SDKMessage[] = []): SDKMess
   m(session, { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } }),
   m(session, { type: "result", subtype: "success", is_error: false, result: text }),
 ];
+/** A main-agent model call whose context held `tokens` (fresh, cache-read and cache-written input). */
+const usage = (session: string, tokens: number) =>
+  m(session, { type: "assistant", message: { content: [], usage: { input_tokens: 1_000, cache_read_input_tokens: tokens - 1_500, cache_creation_input_tokens: 500, output_tokens: 300 } } });
 
 type Call = { prompt: unknown; options: Options };
 
@@ -151,31 +166,57 @@ test("the SDK's own compaction leaves a quiet marker before the message that tri
   expect(marker).toBe(asked - 1);
 });
 
-test("the hourly summary runs /compact on the active session only when there is something new", async () => {
+test("a turn keeps how big its context got; the SDK's summary resets it until the next call measures it", async () => {
+  // The auto compaction above said nothing of what it left: unknown.
+  expect(activeContext().context_tokens).toBeNull();
+  await turn("¿Y la cena?", fakeQuery([reply(S1, "Pollo.", [usage(S1, 30_000), usage(S1, 42_000)])]));
+  expect(activeContext().context_tokens).toBe(42_000);
+  const resized = [usage(S1, 190_000), m(S1, { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 190_000, post_tokens: 12_000 } })];
+  await turn("Sigue", fakeQuery([reply(S1, "Vale.", resized)]));
+  expect(activeContext().context_tokens).toBe(12_000);
+});
+
+test("the hourly summary waits until the conversation is quiet and big, then runs /compact on the active session", async () => {
   const calls: Call[] = [];
-  const boundary = m(S1, { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 50_000 } });
+  const boundary = m(S1, { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 80_000, post_tokens: 9_000 } });
   const run = fakeQuery([[boundary, m(S1, { type: "result", subtype: "success", is_error: false, result: "" })]], calls);
-  // Nothing new since the auto compaction above.
-  expect(await compactActive(run)).toBe(false);
   await Bun.sleep(2);
-  addMessage(ensureConversation().thread_id, "user", "nota", "done");
-  expect(await compactActive(run)).toBe(true);
+  await turn("Cuéntame más", fakeQuery([reply(S1, "Claro.", [usage(S1, 80_000)])]));
+  expect(activeContext().context_tokens).toBe(80_000);
+  const quiet = new Date(Date.now() + IDLE_BEFORE_COMPACT_MS);
+
+  // Right after the turn: the person may answer any moment.
+  expect(await compactActive(run)).toBe(false);
+  expect(calls).toHaveLength(0);
+
+  expect(await compactActive(run, quiet)).toBe(true);
   expect(calls).toHaveLength(1);
   expect(calls[0]!.prompt).toBe(COMPACT_PROMPT);
   expect(calls[0]!.options.resume).toBe(S1);
-  expect(await compactActive(run)).toBe(false);
-  // One marker for back-to-back summaries with nothing between them.
-  const kinds = feedPage().items.map((i) => (i.type === "marker" ? i.marker.kind : "message"));
-  expect(kinds.at(-1)).toBe("compacted");
-  expect(kinds.filter((k) => k === "compacted")).toHaveLength(2);
+  expect(activeContext().context_tokens).toBe(9_000);
+  // Nothing new since.
+  expect(await compactActive(run, quiet)).toBe(false);
+  expect(feedPage().items.at(-1)).toMatchObject({ type: "marker", marker: { kind: "compacted" } });
+});
+
+test("the hourly summary leaves a small context, or one of unknown size, alone however quiet", async () => {
+  const calls: Call[] = [];
+  await Bun.sleep(2);
+  await turn("Gracias", fakeQuery([reply(S1, "De nada.", [usage(S1, COMPACT_ABOVE_TOKENS - 1)])]));
+  const later = new Date(Date.now() + 24 * 60 * 60_000);
+  expect(await compactActive(fakeQuery([], calls), later)).toBe(false);
+  setContextTokens(activeContext().id, null);
+  expect(await compactActive(fakeQuery([], calls), later)).toBe(false);
+  expect(calls).toHaveLength(0);
 });
 
 test("the hourly summary waits for a turn in flight", async () => {
   await Bun.sleep(2);
+  setContextTokens(activeContext().id, 100_000);
   const calls: Call[] = [];
   const slow = (async function* () {})();
   const { done } = startTurn(ensureConversation().thread_id, "espera", (() => slow) as unknown as QueryFn);
-  expect(await compactActive(fakeQuery([], calls))).toBe(false);
+  expect(await compactActive(fakeQuery([], calls), new Date(Date.now() + IDLE_BEFORE_COMPACT_MS))).toBe(false);
   expect(calls).toHaveLength(0);
   await done;
 });
@@ -270,7 +311,8 @@ test("sends wait for the hourly summary, then go into the active context", async
       await gate;
       yield boundary;
     })()) as unknown as QueryFn;
-  const compaction = compactActive(slowCompact);
+  setContextTokens(activeContext().id, 100_000);
+  const compaction = compactActive(slowCompact, new Date(Date.now() + IDLE_BEFORE_COMPACT_MS));
   expect(conversationView().compacting).toBe(true);
   const calls: Call[] = [];
   const sending = sendToConversation(new Request("http://pulso.test/x", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "¿Sigues?" }) }), fakeQuery([reply(S1, "Sí.")], calls));
