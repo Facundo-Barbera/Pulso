@@ -15,6 +15,7 @@ import type {
   DietPlan,
   DoseEvent,
   MealEntry,
+  ManualSleepNight,
   Medication,
   MedicationSchedule,
   NutritionTargets,
@@ -27,6 +28,8 @@ import type {
 } from "@pulso/contract";
 import { localNow } from "../medication/schedule";
 import { dosesBetween, getMedication } from "../medication/store";
+import { getManualNight, manualNightOn } from "../sleep/manual";
+import { formatDuration } from "../sleep/metrics";
 import { accessOf, classified } from "../mcp/access";
 import { getTargets } from "../nutrition/store";
 import { getProfile } from "./profile";
@@ -39,7 +42,10 @@ export type Revert =
   | { kind: "dose"; id: string }
   | { kind: "water"; id: string }
   | { kind: "medication_added"; id: string }
-  | { kind: "medication"; id: string; patch: Record<string, unknown> };
+  | { kind: "medication"; id: string; patch: Record<string, unknown> }
+  | { kind: "sleep_added"; id: string }
+  | { kind: "sleep"; id: string; patch: { start: number; end: number; tzOffsetMin: number; note: string | null } }
+  | { kind: "sleep_deleted"; night: ManualSleepNight };
 
 export type Action = { card: AgentToolResult; revert?: Revert };
 
@@ -76,6 +82,12 @@ const SLOTS: Record<string, string> = {
   merienda: "Merienda",
   cena: "Cena",
   snack: "Snack",
+};
+
+/** "Noche del 3 oct · 23:30 → 07:10 · 7 h 40 min". */
+const sleepSpan = (n: ManualSleepNight) => {
+  const day = new Date(`${n.night}T12:00:00Z`).toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" });
+  return `Noche del ${day} · ${time(n.start)} → ${time(n.end)} · ${formatDuration((n.end - n.start) / 60_000)}`;
 };
 
 // --- Profile ---
@@ -366,6 +378,31 @@ const ACTIONS: Record<string, Entry> = {
   },
   add_body_scan: { format: (s: { weight?: number | null }) => ({ title: "Medición guardada", tab: "cuerpo", lines: [s.weight ? `${s.weight} kg` : null] }) },
   set_sleep_target: { format: (t: { targetMin: number }) => ({ title: "Objetivo de sueño actualizado", tab: "hoy", lines: [`${t.targetMin / 60} h por noche`] }) },
+  log_sleep: {
+    format: (n: ManualSleepNight) =>
+      n?.id ? { title: "Noche registrada", tab: "hoy", lines: [sleepSpan(n), n.note], revert: { kind: "sleep_added", id: n.id } } : null,
+  },
+  update_sleep_night: {
+    before: (input: { id?: string; night?: string }) => {
+      try {
+        return input?.id ? getManualNight(input.id) : input?.night ? manualNightOn(input.night) : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    format: (n: ManualSleepNight, _input, before: ManualSleepNight | undefined) => {
+      if (!n?.id) return null;
+      return {
+        title: "Noche corregida",
+        tab: "hoy",
+        lines: [change(null, before && sleepSpan(before), sleepSpan(n)), before?.note !== n.note && change("Nota", before?.note, n.note ?? "Borrada")],
+        revert: before ? { kind: "sleep", id: n.id, patch: { start: before.start, end: before.end, tzOffsetMin: before.tzOffsetMin, note: before.note } } : undefined,
+      };
+    },
+  },
+  delete_sleep_night: {
+    format: (n: ManualSleepNight) => (n?.id ? { title: "Noche borrada", tab: "hoy", lines: [sleepSpan(n)], revert: { kind: "sleep_deleted", night: n } } : null),
+  },
 };
 
 /** Titles for write tools without a formatter; their card shows the result's own summary or name. */

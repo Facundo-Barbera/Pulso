@@ -4,6 +4,7 @@ import { PlanError } from "../nutrition/horizon";
 import { undo as undoPlanChange } from "../nutrition/ops";
 import { RevisionError } from "../nutrition/revisions";
 import { deleteMeal } from "../nutrition/store";
+import { deleteManualNight, restoreManualNight, SleepError, updateManualNight } from "../sleep/manual";
 import { deleteWater } from "../nutrition/water";
 import type { Revert } from "./actions";
 import { updateProfile } from "./profile";
@@ -42,6 +43,15 @@ function revert(r: Revert): void {
     case "medication":
       updateMedication(r.id, r.patch);
       return;
+    case "sleep_added":
+      deleteManualNight(r.id);
+      return;
+    case "sleep":
+      updateManualNight(r.id, r.patch);
+      return;
+    case "sleep_deleted":
+      restoreManualNight(r.night);
+      return;
   }
 }
 
@@ -64,6 +74,7 @@ export function undoToolAction(threadId: string, messageId: string, index: numbe
     if (error instanceof RevisionError) throw new UndoError(409, "Un cambio posterior toca los mismos días del plan: deshaz ese primero.");
     if (error instanceof PlanError) throw new UndoError(409, "Ese plan ya no está activo.");
     if (error instanceof MedicationError && error.code === "not_found") throw new UndoError(409, "Eso ya no existe.");
+    if (error instanceof SleepError) throw new UndoError(409, error.code === "not_found" ? "Eso ya no existe." : error.message);
     console.error("[agent] undo failed", error);
     throw new UndoError(409, "No pude deshacerlo.");
   }
