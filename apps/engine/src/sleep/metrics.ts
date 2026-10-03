@@ -2,7 +2,7 @@
  * Pure sleep math: grouping HealthKit samples into nights, picking a source,
  * and the derived metrics (score, debt, regularity, insights). No database.
  */
-import type { SleepNight, SleepScore, SleepScoreFactor, SleepSegment, SleepSegmentInput, SleepStage, SleepSummary } from "@pulso/contract";
+import type { SleepNight, SleepScore, SleepScoreFactor, SleepSegment, SleepSegmentInput, SleepSourceKind, SleepStage, SleepSummary } from "@pulso/contract";
 
 export const DEFAULT_TARGET_MIN = 480;
 /** Nights a night is compared against (consistency, insights) and the summary window. */
@@ -12,7 +12,10 @@ const MIN = 60_000;
 const DAY = 86_400_000;
 const ASLEEP: ReadonlySet<SleepStage> = new Set(["core", "deep", "rem", "asleep"]);
 
-export type StoredSegment = SleepSegmentInput & { night: string };
+export type StoredSegment = Omit<SleepSegmentInput, "sourceKind"> & { sourceKind: SleepSourceKind; night: string };
+
+/** `source` of a night logged by hand, shown as is. */
+export const MANUAL_SOURCE = "Registrada a mano";
 /** A night before its score and insights, which depend on the nights around it. */
 export type BaseNight = Omit<SleepNight, "score" | "insights">;
 
@@ -158,14 +161,18 @@ export function scoreNight(night: BaseNight, history: BaseNight[], targetMin: nu
     `${formatDuration(m.asleep)} de ${formatDuration(targetMin)}`,
     `Dormiste ${formatDuration(m.asleep)}, ${formatDuration(targetMin - m.asleep)} menos que tu objetivo.`,
   );
-  add(
-    "efficiency",
-    "Eficiencia",
-    20,
-    clamp01((night.efficiency - 0.75) / 0.2),
-    `${Math.round(night.efficiency * 100)} % del tiempo en cama dormido`,
-    `Pasaste ${formatDuration(m.inBed - m.asleep)} despierto en la cama.`,
-  );
+  // A night logged by hand has no time awake in bed to measure.
+  const manual = night.sourceKind === "manual";
+  if (!manual) {
+    add(
+      "efficiency",
+      "Eficiencia",
+      20,
+      clamp01((night.efficiency - 0.75) / 0.2),
+      `${Math.round(night.efficiency * 100)} % del tiempo en cama dormido`,
+      `Pasaste ${formatDuration(m.inBed - m.asleep)} despierto en la cama.`,
+    );
+  }
   if (night.stagePct) {
     const restorative = night.stagePct.deep + night.stagePct.rem;
     add(
@@ -195,7 +202,9 @@ export function scoreNight(night: BaseNight, history: BaseNight[], targetMin: nu
   const weakest = [...factors].sort((a, b) => a.ratio - b.ratio)[0]!;
   const explanation =
     value >= 85 || weakest.ratio >= 0.9
-      ? `Buena noche: ${formatDuration(m.asleep)} con ${Math.round(night.efficiency * 100)} % de eficiencia.`
+      ? manual
+        ? `Buena noche: ${formatDuration(m.asleep)}.`
+        : `Buena noche: ${formatDuration(m.asleep)} con ${Math.round(night.efficiency * 100)} % de eficiencia.`
       : weakest.issue;
   return { value, factors: factors.map(({ ratio: _r, issue: _i, ...f }) => f), explanation };
 }
@@ -268,7 +277,7 @@ export function summarize(all: SleepNight[], targetMin: number, days = HISTORY_N
   const debtMin = Math.max(0, nights.reduce((a, n) => a + targetMin - n.minutes.asleep, 0));
   const bedSd = sd(nights.map((n) => n.bedtimeMin));
   const reg = regularity(nights);
-  const efficiency = mean(nights.map((n) => n.efficiency));
+  const efficiency = mean(nights.filter((n) => n.sourceKind !== "manual").map((n) => n.efficiency));
 
   const insights: string[] = [];
   if (nights.length) {

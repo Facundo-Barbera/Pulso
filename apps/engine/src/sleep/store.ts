@@ -1,6 +1,7 @@
 import type { SleepNight, SleepOverview, SleepSegmentInput, SleepSourceKind, SleepStage, SleepSummary } from "@pulso/contract";
 import { db } from "../db";
-import { buildNights, DEFAULT_TARGET_MIN, describeNights, HISTORY_NIGHTS, nightOf, type StoredSegment, summarize } from "./metrics";
+import { latestManualNight, listManualNights } from "./manual";
+import { buildNight, buildNights, DEFAULT_TARGET_MIN, describeNights, HISTORY_NIGHTS, MANUAL_SOURCE, nightOf, type StoredSegment, summarize } from "./metrics";
 
 type Row = { night: string; source: string; source_kind: SleepSourceKind; start: number; end: number; stage: SleepStage; tz_offset_min: number };
 
@@ -44,7 +45,10 @@ export function upsertSleepSegments(inputs: SleepSegmentInput[]): string[] {
   return [...new Set([...groups.keys()].map((k) => (JSON.parse(k) as [string])[0]))].sort();
 }
 
-/** Nights in [from, to] (YYYY-MM-DD, inclusive), newest first, each scored against the 14 nights before it. */
+/**
+ * Nights in [from, to] (YYYY-MM-DD, inclusive), newest first, each scored against the 14 nights before it.
+ * A night logged by hand fills in only where Health has no night: measured wins.
+ */
 export function listSleepNights(from: string, to: string): SleepNight[] {
   const historyFrom = new Date(Date.parse(`${from}T00:00:00Z`) - HISTORY_NIGHTS * 86_400_000).toISOString().slice(0, 10);
   const rows = db()
@@ -59,11 +63,30 @@ export function listSleepNights(from: string, to: string): SleepNight[] {
     stage: r.stage,
     tzOffsetMin: r.tz_offset_min,
   }));
-  return describeNights(buildNights(segments), sleepTargetMin()).filter((n) => n.night >= from);
+  const measured = buildNights(segments);
+  const taken = new Set(measured.map((n) => n.night));
+  const manual = listManualNights(historyFrom, to).flatMap((m) => {
+    if (taken.has(m.night)) return [];
+    const night = buildNight(m.night, [{ night: m.night, source: MANUAL_SOURCE, sourceKind: "manual", start: m.start, end: m.end, stage: "asleep", tzOffsetMin: m.tzOffsetMin }]);
+    return night ? [{ ...night, manual: { id: m.id, note: m.note } }] : [];
+  });
+  return describeNights([...measured, ...manual], sleepTargetMin()).filter((n) => n.night >= from);
 }
 
+/** The newest night, measured or logged by hand. */
 export function latestNight(): string | null {
-  return db().query<{ night: string | null }, []>("SELECT MAX(night) AS night FROM sleep_segments").get()?.night ?? null;
+  const measured = db().query<{ night: string | null }, []>("SELECT MAX(night) AS night FROM sleep_segments").get()?.night ?? null;
+  const manual = latestManualNight();
+  return !manual || (measured && measured > manual) ? measured : manual;
+}
+
+/** Minutes asleep per date for the nights logged by hand that show (no measured night that date). */
+export function manualSleepMinutes(from: string, to: string): Map<string, { minutes: number; updatedAt: number }> {
+  return new Map(
+    listManualNights(from, to)
+      .filter((m) => !m.hidden)
+      .map((m) => [m.night, { minutes: Math.round((m.end - m.start) / 60_000), updatedAt: m.updatedAt }]),
+  );
 }
 
 const daysBefore = (night: string, days: number) => new Date(Date.parse(`${night}T00:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);

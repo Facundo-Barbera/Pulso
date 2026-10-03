@@ -1,4 +1,8 @@
-/** Raw HealthKit sleep samples, per night and source, and sleep settings (target). */
+/**
+ * Raw HealthKit sleep samples, per night and source; nights logged by hand
+ * (at most one per night, shown only while Health has none for it); and sleep
+ * settings (target).
+ */
 export const SLEEP_SCHEMA = `
   CREATE TABLE IF NOT EXISTS sleep_segments (
     night TEXT NOT NULL,
@@ -10,6 +14,16 @@ export const SLEEP_SCHEMA = `
     tz_offset_min INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS sleep_segments_night ON sleep_segments (night, source);
+  CREATE TABLE IF NOT EXISTS sleep_manual (
+    id TEXT PRIMARY KEY,
+    night TEXT NOT NULL UNIQUE,
+    start INTEGER NOT NULL,
+    end INTEGER NOT NULL,
+    tz_offset_min INTEGER NOT NULL,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS sleep_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

@@ -1,5 +1,6 @@
 import type { DailyMetrics, DailyMetricsInput, DateString, Readiness } from "@pulso/contract";
 import { db } from "../db";
+import { manualSleepMinutes } from "../sleep/store";
 import { addDays, isDate } from "./dates";
 import { BASELINE_DAYS, computeReadiness } from "./readiness";
 
@@ -55,12 +56,30 @@ const toMetrics = (row: Row): DailyMetrics => {
   return metrics;
 };
 
-/** Days in [from, to], oldest first. */
+const EMPTY: Omit<DailyMetrics, "date" | "updatedAt"> = {
+  steps: null, activeEnergy: null, exerciseMinutes: null, exerciseMinutesEstimated: false, restingHeartRate: null, restingHeartRateEstimated: false,
+  hrv: null, sleepMinutes: null, sleepDeep: null, sleepCore: null, sleepRem: null, sleepAwake: null, vo2max: null, respiratoryRate: null,
+};
+
+/**
+ * Days in [from, to], oldest first. A night logged by hand fills `sleepMinutes`
+ * (flagged `sleepManual`) where Health had no sleep, adding the day if the phone
+ * never synced it, so readiness, Hoy and the Coach count it like any night.
+ */
 export function listDailyMetrics(from: DateString, to: DateString): DailyMetrics[] {
-  return db()
+  const days = db()
     .query<Row, [string, string]>("SELECT * FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date")
     .all(from, to)
     .map(toMetrics);
+  const manual = manualSleepMinutes(from, to);
+  if (!manual.size) return days;
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  for (const [date, { minutes, updatedAt }] of manual) {
+    const day = byDate.get(date);
+    if (day?.sleepMinutes != null) continue;
+    byDate.set(date, { ...EMPTY, date, updatedAt, ...day, sleepMinutes: minutes, sleepManual: true });
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /**

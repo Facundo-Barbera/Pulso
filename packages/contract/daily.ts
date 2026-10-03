@@ -28,6 +28,11 @@ export type DailyMetrics = {
   sleepCore: number | null;
   sleepRem: number | null;
   sleepAwake: number | null;
+  /**
+   * Engine → clients only: true when `sleepMinutes` is a night the person logged
+   * by hand because Health had no sleep for it (no stages then).
+   */
+  sleepManual?: boolean;
   /** mL/kg/min */
   vo2max: number | null;
   /** breaths/min */
@@ -40,7 +45,7 @@ export type DailyMetrics = {
  * What the phone sends. Missing or null fields keep what the engine already had.
  * An `...Estimated` flag only applies together with its value; a missing one means false.
  */
-export type DailyMetricsInput = Omit<DailyMetrics, "updatedAt">;
+export type DailyMetricsInput = Omit<DailyMetrics, "updatedAt" | "sleepManual">;
 
 export type ReadinessFactorKey = "hrv" | "resting_hr" | "sleep";
 
