@@ -184,7 +184,7 @@ test("every Coach tool's result fits the budget", async () => {
       const recipes = await value("list_recipes");
       return { recipeId: (recipes.recipes ?? recipes)[0].id, cookDate: tomorrow, portions: 4, assign: [{ date: daysAgo(-2), slot: "comida" }] };
     },
-    ate_out: { slot: "cena", date: TODAY, name: "Hamburguesa con patatas", kcal: 1100, protein: 45 },
+    ate_out: { slot: "cena", date: daysAgo(-2), name: "Hamburguesa con patatas", kcal: 1100, protein: 45 },
     replace_slot: { slot: "merienda", date: tomorrow, what: "Un bocadillo" },
     fill_slot: { slot: "comida", date: daysAgo(-4), fill: lunch },
     no_time_to_cook: { date: daysAgo(-5), slot: "cena", strategy: "quick", quick: lunch },
