@@ -9,7 +9,8 @@ import { EmptyState } from "../../_ui/empty-state";
 import { fmtDayLabel, fmtLongDate, fmtMinutes } from "../../_ui/format";
 import { Page, PageHeader } from "../../_ui/page-header";
 import { Ring } from "../../_ui/ring";
-import { clockOf, Hypnogram, NightHero } from "./_components/night";
+import { AddNightButton } from "./_components/manual";
+import { clockOf, Hypnogram, NightHero, NoStages } from "./_components/night";
 import { TargetControl } from "./_components/target";
 import { SleepTrend } from "./_components/trend";
 
@@ -19,8 +20,10 @@ export const metadata = { title: "Sueño" };
 const SLEEP = "var(--domain-sleep)";
 
 /** Sueño: one night in full as the hero (‹ › to walk back), then its stages, score, the trend, schedule and target. */
-export default async function Sueno({ searchParams }: { searchParams: Promise<{ noche?: string }> }) {
-  const { noche } = await searchParams;
+export default async function Sueno({ searchParams }: { searchParams: Promise<{ noche?: string; anadir?: string }> }) {
+  const { noche, anadir } = await searchParams;
+  // Hoy's «Añadir noche» lands here with ?anadir=1 to open the form.
+  const add = anadir === "1";
   const page = sleepPage(noche);
   const { night, summary, targetMin } = page;
   const today = localDate();
@@ -31,12 +34,23 @@ export default async function Sueno({ searchParams }: { searchParams: Promise<{ 
         eyebrow={night ? (night.night === today ? `Anoche · ${fmtLongDate(new Date(`${night.night}T12:00:00`))}` : `Noche al ${fmtLongDate(new Date(`${night.night}T12:00:00`))}`) : undefined}
         title="Sueño"
         subtitle={summary.nights ? `Media de ${fmtMinutes(summary.avgAsleepMin ?? 0)} en las últimas ${summary.nights} noches.` : undefined}
-        actions={night && <NightNav older={page.older} newer={page.newer} />}
+        actions={
+          night && (
+            <>
+              <AddNightButton autoOpen={add} />
+              <NightNav older={page.older} newer={page.newer} />
+            </>
+          )
+        }
       />
       {!night ? (
         <div className="grid gap-5 md:grid-cols-2">
           <Card className="md:col-span-2">
-            <EmptyState icon={Moon} color={SLEEP} title="Aún no hay noches" line="Duerme con tu Apple Watch y sincroniza Salud desde el iPhone: tus noches aparecerán aquí." />
+            <EmptyState icon={Moon} color={SLEEP} title="Aún no hay noches" line="Duerme con tu Apple Watch y sincroniza Salud desde el iPhone, o añade a mano una noche que el reloj no midió." />
+            {/* EmptyState's action is a link; this one opens the form in place. */}
+            <div className="-mt-8 flex justify-center pb-12">
+              <AddNightButton prominent autoOpen={add} />
+            </div>
           </Card>
           <Card delay={60}>
             <CardTitle icon={Hourglass} color={SLEEP} title="Tu objetivo" />
@@ -49,7 +63,7 @@ export default async function Sueno({ searchParams }: { searchParams: Promise<{ 
           <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <Card delay={60} className="md:col-span-2">
               <CardTitle icon={Waves} color={SLEEP} title="Fases" />
-              <Hypnogram night={night} />
+              {night.manual ? <NoStages /> : <Hypnogram night={night} />}
             </Card>
             <ScoreCard night={night} delay={110} />
             <Card delay={160} className="md:col-span-2">

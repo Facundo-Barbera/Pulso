@@ -1,9 +1,11 @@
 import type { SleepNight, SleepStage } from "@pulso/contract";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, PenLine, StickyNote } from "lucide-react";
 import { Card } from "../../../_ui/card";
 import { cn } from "../../../_ui/cn";
+import { EmptyState } from "../../../_ui/empty-state";
 import { fmtMinutes, fmtTime } from "../../../_ui/format";
 import { Ring } from "../../../_ui/ring";
+import { ManualNightActions } from "./manual";
 
 /**
  * The four stages as drawn, deepest last; Hoy's sleep card uses these too.
@@ -56,9 +58,13 @@ export function NightHero({ night, targetMin }: { night: SleepNight; targetMin: 
             {met && <CircleCheck className="size-4 shrink-0" strokeWidth={2.4} aria-hidden />}
             {vsTarget(m.asleep, targetMin)}
           </p>
-          <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">
-            {fmtTime(night.asleepStart)} – {fmtTime(night.asleepEnd)} · {Math.round(night.efficiency * 100)} % de eficiencia · {night.source}
-          </p>
+          {night.manual ? (
+            <ManualDetails night={night} manual={night.manual} />
+          ) : (
+            <p className="text-muted-foreground mt-1 text-center text-[13px] md:text-left">
+              {fmtTime(night.asleepStart)} – {fmtTime(night.asleepEnd)} · {Math.round(night.efficiency * 100)} % de eficiencia · {night.source}
+            </p>
+          )}
           {staged > 0 && night.stagePct && (
             <div className="mt-5">
               <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={[...STAGES].reverse().map((s) => `${s.label} ${fmtMinutes(m[s.key])}`).join(", ")}>
@@ -79,6 +85,37 @@ export function NightHero({ night, targetMin }: { night: SleepNight; targetMin: 
       </div>
     </Card>
   );
+}
+
+/** A night logged by hand: its times, a label that says so (icon and words), the note, and Editar / Borrar. Efficiency isn't shown: it wasn't measured. */
+function ManualDetails({ night, manual }: { night: SleepNight; manual: NonNullable<SleepNight["manual"]> }) {
+  return (
+    <>
+      <p className="text-muted-foreground mt-1 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1.5 text-[13px] md:justify-start">
+        <span className="tabular">
+          {fmtTime(night.asleepStart)} – {fmtTime(night.asleepEnd)}
+        </span>
+        <span className="bg-muted text-foreground/80 inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[12px] font-medium">
+          <PenLine className="size-3.5" aria-hidden />
+          Registrada a mano
+        </span>
+      </p>
+      {manual.note && (
+        <p className="bg-muted/60 mx-auto mt-3 flex w-fit max-w-full items-start md:mx-0 gap-2 rounded-xl px-3.5 py-2.5 text-[14px] leading-relaxed">
+          <StickyNote className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-label="Nota" />
+          <span className="min-w-0 break-words">{manual.note}</span>
+        </p>
+      )}
+      <div className="mt-4">
+        <ManualNightActions night={{ id: manual.id, start: night.asleepStart, end: night.asleepEnd, note: manual.note }} />
+      </div>
+    </>
+  );
+}
+
+/** What the Fases card shows for a night logged by hand: there are no stages to draw. */
+export function NoStages() {
+  return <EmptyState compact icon={PenLine} color="var(--domain-sleep)" title="Sin fases" line="Una noche registrada a mano solo tiene la hora de dormir y la de despertar." />;
 }
 
 /** The night as a hypnogram: one row per stage, time across. Server-drawn SVG; labels are HTML so they stay crisp. */

@@ -67,11 +67,11 @@ export function SleepCard({ night, summary, trend, delay }: { night: SleepNight 
     <Card delay={delay} className={ROW_CARD}>
       <CardTitle icon={Moon} color="var(--domain-sleep)" title="Sueño" href="/sueno" />
       {!night ? (
-        <EmptyState compact icon={Moon} color="var(--domain-sleep)" title="Sin datos de anoche" line={summary.nights ? "La última noche registrada es de antes de ayer." : SYNC_HINT} />
+        <EmptyState compact icon={Moon} color="var(--domain-sleep)" title="Sin datos de anoche" line={summary.nights ? "La última noche registrada es de antes de ayer." : SYNC_HINT} action={{ href: "/sueno?anadir=1", label: "Añadir noche" }} />
       ) : (
         <>
           <div className="flex items-end justify-between gap-4">
-            <StatTile label="Anoche" value={fmtMinutes(night.minutes.asleep)} caption={`${fmtTime(night.asleepStart)} – ${fmtTime(night.asleepEnd)} · eficiencia ${Math.round(night.efficiency * 100)}\u00a0%`} />
+            <StatTile label="Anoche" value={fmtMinutes(night.minutes.asleep)} caption={`${fmtTime(night.asleepStart)} – ${fmtTime(night.asleepEnd)} · ${night.manual ? "registrada a mano" : `eficiencia ${Math.round(night.efficiency * 100)}\u00a0%`}`} />
             <div className="shrink-0 text-right">
               <p className="tabular text-[26px] leading-none font-semibold">{night.score.value}</p>
               <p className="text-muted-foreground mt-1 text-[12px]">puntuación</p>
