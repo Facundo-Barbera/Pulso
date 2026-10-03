@@ -44,6 +44,57 @@ final class CoachTests: XCTestCase {
         XCTAssertEqual(CoachResultPlace(result: AgentToolResult(title: "", detail: nil, tab: "hoy", place: "medicacion")).name, "Medicación")
     }
 
+    func testCardsOfOneGroupFoldIntoOneChange() throws {
+        let decoded = try JSONDecoder().decode(AgentToolResult.self, from: Data(#"{"title":"Programa actualizado","detail":null,"tab":"entreno","group":"program:p1"}"#.utf8))
+        XCTAssertEqual(decoded.group, "program:p1")
+
+        func tool(_ value: String, group: String? = nil, undo: String? = nil, status: AgentToolUse.Status = .done) -> AgentToolUse {
+            AgentToolUse(name: "update_program", status: status, access: "write",
+                         result: AgentToolResult(title: "Programa actualizado", detail: value, tab: "entreno", lines: [AgentActionLine(value: value)], undo: undo, group: group))
+        }
+        let meal = AgentToolResult(title: "Comida registrada", detail: "Avena", tab: "dieta", undo: "available")
+        let views = CoachActionView.views(of: [
+            AgentToolUse(name: "list_meals", status: .done, access: "read"),
+            tool("Torso/Pierna", group: "program:p1", undo: "available"),
+            tool("Día 2", group: "program:p1", undo: "done"),
+            tool("Torso/Pierna", group: "program:p1", undo: "available"),
+            AgentToolUse(name: "log_meal", status: .done, access: "write", result: meal),
+            tool("Día 4", group: "program:p1"),
+            tool("Día 5", group: ""),
+            tool("Día 6", group: ""),
+        ])
+        XCTAssertEqual(views.map(\.indices), [[1, 2, 3], [4], [5], [6], [7]])
+        let program = views[0]
+        XCTAssertEqual(program.count, 3)
+        XCTAssertEqual(program.result.title, "Programa actualizado")
+        XCTAssertEqual(program.result.shownLines.map(\.value), ["Torso/Pierna", "Día 2"])
+        XCTAssertEqual(program.result.detail, "Torso/Pierna · Día 2")
+        XCTAssertTrue(program.result.undoable)
+        XCTAssertEqual(program.undoOrder, [3, 1])
+        // A card alone is shown as it came.
+        XCTAssertEqual(views[1], CoachActionView(result: meal, indices: [4], undoOrder: [4]))
+    }
+
+    func testAFoldedCardCapsItsLinesAndSumsItsUndo() {
+        func run(_ undos: [String?], values: [String]? = nil) -> CoachActionView? {
+            let tools = undos.enumerated().map { i, undo in
+                AgentToolUse(name: "update_program", status: .done, access: "write",
+                             result: AgentToolResult(title: "Programa actualizado", detail: nil, tab: "entreno",
+                                                     lines: [AgentActionLine(label: "Cambio", value: values?[i] ?? "Día \(i + 1)")], undo: undo, group: "g"))
+            }
+            return CoachActionView.views(of: tools).first
+        }
+        let long = run(Array(repeating: nil, count: 7))
+        XCTAssertEqual(long?.result.lines?.count, 5)
+        XCTAssertEqual(long?.result.lines?.last, AgentActionLine(value: "y 3 cambios más"))
+        XCTAssertNil(long?.result.undo)
+        XCTAssertEqual(run(["done", "done"])?.result.undo, "done")
+        XCTAssertEqual(run(["done", nil])?.result.undo, "done")
+        XCTAssertEqual(run(["done", "done"])?.undoOrder, [])
+        XCTAssertEqual(run(["available", "done", "available"])?.undoOrder, [2, 0])
+        XCTAssertEqual(AgentActionLine(label: "Día 2", before: "Sentadilla", value: "Prensa").text, "Día 2: Sentadilla → Prensa")
+    }
+
     func testResultCardsNameTheirTab() {
         XCTAssertEqual(CoachResultPlace(tab: "entreno").name, "Entreno")
         XCTAssertEqual(CoachResultPlace(tab: "dieta").name, "Dieta")

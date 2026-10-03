@@ -16,18 +16,81 @@ struct CoachActionCards: View {
     var compact = false
     @Environment(\.coachUndo) private var undo
 
-    private var actions: [(index: Int, result: AgentToolResult)] {
-        message.tools.enumerated().compactMap { index, tool in
-            tool.status == .done ? tool.result.map { (index, $0) } : nil
+    var body: some View {
+        ForEach(CoachActionView.views(of: message.tools), id: \.id) { view in
+            CoachActionCard(result: view.result, count: view.count, compact: compact, onUndo: undo.map { undo in
+                { [message] in
+                    // A folded card undoes each member, last first; the first failure stops it and shows.
+                    for index in view.undoOrder {
+                        if let error = await undo.run(message, index) { return error }
+                    }
+                    return nil
+                }
+            })
+            .transition(.scale(scale: 0.95).combined(with: .opacity))
         }
+    }
+}
+
+/// One action card on screen: a tool's card, or a run of consecutive cards of one
+/// `group` folded into one change («N cambios»).
+struct CoachActionView: Equatable {
+    var result: AgentToolResult
+    /// The message's `tools` indexes behind it, in order.
+    var indices: [Int]
+    /// What Deshacer undoes, in order: the members whose undo is available, last first.
+    var undoOrder: [Int]
+
+    var id: Int { indices.first ?? 0 }
+    var count: Int { indices.count }
+
+    private struct Member {
+        let index: Int
+        let result: AgentToolResult
     }
 
-    var body: some View {
-        ForEach(actions, id: \.index) { action in
-            CoachActionCard(result: action.result, compact: compact, onUndo: undo.map { undo in { await undo.run(message, action.index) } })
-                .transition(.scale(scale: 0.95).combined(with: .opacity))
+    /// Same cap as the engine's cards: four lines and «y N cambios más».
+    private static let maxLines = 5
+
+    /// The cards a message shows; a card without a group stands alone, unchanged.
+    static func views(of tools: [AgentToolUse]) -> [CoachActionView] {
+        var runs: [[Member]] = []
+        for (index, tool) in tools.enumerated() {
+            guard tool.status == .done, let result = tool.result else { continue }
+            let member = Member(index: index, result: result)
+            if let group = result.group, !group.isEmpty, runs.last?.first?.result.group == group {
+                runs[runs.count - 1].append(member)
+            } else {
+                runs.append([member])
+            }
         }
+        return runs.map(fold)
     }
+
+    private static func fold(_ run: [Member]) -> CoachActionView {
+        var result = run[0].result
+        if run.count > 1 {
+            var seen = Set<String>()
+            let lines = run.flatMap(\.result.shownLines).filter { seen.insert($0.text).inserted }
+            let shown = lines.count > maxLines
+                ? Array(lines.prefix(maxLines - 1)) + [AgentActionLine(value: "y \(lines.count - maxLines + 1) cambios más")]
+                : lines
+            result.lines = shown
+            result.detail = shown.isEmpty ? nil : shown.map(\.text).joined(separator: " · ")
+            let undos = run.compactMap(\.result.undo)
+            result.undo = undos.contains("available") ? "available" : undos.isEmpty ? nil : "done"
+        }
+        return CoachActionView(
+            result: result,
+            indices: run.map(\.index),
+            undoOrder: run.filter(\.result.undoable).map(\.index).reversed()
+        )
+    }
+}
+
+extension AgentActionLine {
+    /// "Objetivo: Bajar de peso → Bajar 10 kg", as the engine writes `detail`.
+    var text: String { [label.map { "\($0): " }, before.map { "\($0) → " }, value].compactMap { $0 }.joined() }
 }
 
 /// "Perfil actualizado · Objetivo: ~~Bajar de peso~~ → Bajar 10 kg de grasa — Abrir · Deshacer":
@@ -35,6 +98,8 @@ struct CoachActionCards: View {
 /// drops the link so the person stays on the gym floor.
 struct CoachActionCard: View {
     let result: AgentToolResult
+    /// More than one: cards of one change folded together, shown as «N cambios».
+    var count = 1
     var compact = false
     var onUndo: (() async -> String?)?
 
@@ -89,8 +154,20 @@ struct CoachActionCard: View {
                 .background(place.color.opacity(0.16), in: .circle)
                 .contentTransition(.symbolEffect(.replace))
                 .symbolEffect(.bounce, value: opened)
-            Text(result.title)
-                .font(compact ? .subheadline.weight(.semibold) : .headline)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(result.title)
+                    .font(compact ? .subheadline.weight(.semibold) : .headline)
+                if count > 1 {
+                    Text("\(count) cambios")
+                        .font(.caption.weight(.medium))
+                        .fontDesign(.rounded)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText(value: Double(count)))
+                        .transition(.opacity)
+                }
+            }
+            .animation(.snappy, value: count)
             Spacer(minLength: 0)
             if result.undone {
                 Text("Deshecho")
@@ -260,11 +337,16 @@ struct CoachCheckedGroup: View {
         title: "Comida registrada", detail: nil, tab: "dieta",
         lines: [AgentActionLine(value: "Batido de proteína"), AgentActionLine(value: "347 kcal · 32 g proteína"), AgentActionLine(value: "Merienda · 17:30")], undo: "done"
     )
+    let program = AgentToolResult(
+        title: "Programa actualizado", detail: nil, tab: "entreno",
+        lines: [AgentActionLine(value: "Torso/Pierna"), AgentActionLine(label: "Día 2", before: "Sentadilla", value: "Prensa")], undo: "available", group: "program:p1"
+    )
     ScrollView {
         VStack(spacing: 12) {
             CoachCheckedGroup(tools: [AgentToolUse(name: "get_profile", status: .done), AgentToolUse(name: "list_meals", status: .done)])
                 .frame(maxWidth: .infinity, alignment: .leading)
             CoachActionCard(result: profile, onUndo: { nil })
+            CoachActionCard(result: program, count: 4, onUndo: { nil })
             CoachActionCard(result: meal, onUndo: { nil })
             CoachActionCard(result: profile, compact: true, onUndo: { nil })
         }
