@@ -20,6 +20,12 @@ export type TurnState = {
   error?: string;
   /** The SDK summarized the context during this run. */
   compacted?: boolean;
+  /**
+   * Tokens in the context at the latest model call (all input, cached or not),
+   * from the main agent's assistant messages; after a summary, what it left
+   * (null when the SDK didn't say). Undefined until the run measured anything.
+   */
+  contextTokens?: number | null;
 };
 
 export const newTurnState = (): TurnState => ({ text: "", tools: [], toolIndex: new Map(), inputs: new Map(), pendingBreak: false });
@@ -74,12 +80,17 @@ export function translate(message: SDKMessage, state: TurnState): AgentStreamEve
       }
       return [];
     }
-    case "assistant":
+    case "assistant": {
+      // The result's usage adds up every call of the turn; the last call's input is the context's size.
+      const usage = message.message.usage;
+      const size = usage ? usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) : 0;
+      if (size > 0) state.contextTokens = size;
       return message.message.content.flatMap((block) => {
         if (block.type !== "tool_use" && block.type !== "mcp_tool_use") return [];
         state.inputs.set(block.id, block.input);
         return startTool(state, block.id, block.name);
       });
+    }
     case "user": {
       const content = message.message.content;
       if (typeof content === "string") return [];
@@ -108,6 +119,8 @@ export function translate(message: SDKMessage, state: TurnState): AgentStreamEve
       if (message.subtype === "status") return [{ type: "status", status: message.status === "compacting" ? "compacting" : null }];
       if (message.subtype === "compact_boundary") {
         state.compacted = true;
+        // The next model call measures it again.
+        state.contextTokens = message.compact_metadata.post_tokens ?? null;
         return [{ type: "compacted" }];
       }
       return [];

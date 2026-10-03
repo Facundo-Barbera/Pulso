@@ -23,6 +23,8 @@ export type ContextRow = {
   started_at: number;
   compacted_at: number | null;
   pruned_at: number | null;
+  /** Tokens in the context at its last model call; null when unknown. */
+  context_tokens: number | null;
 };
 type MarkerRow = { id: string; thread_id: string; context_id: string; kind: AgentFeedMarker["kind"]; created_at: number };
 
@@ -77,6 +79,11 @@ export function setContextSession(contextId: string, sessionId: string | null): 
   db().query("UPDATE agent_contexts SET sdk_session_id = ? WHERE id = ?").run(sessionId, contextId);
 }
 
+/** How big the context is now, as the last turn or summary measured it (null: unknown). */
+export function setContextTokens(contextId: string, tokens: number | null): void {
+  db().query("UPDATE agent_contexts SET context_tokens = ? WHERE id = ?").run(tokens, contextId);
+}
+
 /** A context's messages, oldest first: what a recap rebuilds a lost session from. */
 export function contextMessages(contextId: string): AgentMessage[] {
   return withExtras(db().query<MessageRow, [string]>("SELECT * FROM agent_messages WHERE context_id = ? ORDER BY created_at, rowid").all(contextId));
@@ -88,7 +95,8 @@ const lastMarker = (threadId: string) =>
 const latestMessageAt = (threadId: string) =>
   db().query<{ at: number | null }, [string]>("SELECT MAX(created_at) AS at FROM agent_messages WHERE thread_id = ?").get(threadId)?.at ?? 0;
 
-const lastMessageAt = (contextId: string) =>
+/** When the context's latest message was written; null when it has none. */
+export const lastMessageAt = (contextId: string) =>
   db().query<{ at: number | null }, [string]>("SELECT MAX(created_at) AS at FROM agent_messages WHERE context_id = ?").get(contextId)?.at ?? null;
 
 /** Newest first, with how much each holds. */

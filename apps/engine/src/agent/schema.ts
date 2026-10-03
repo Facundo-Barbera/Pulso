@@ -78,13 +78,22 @@ export const AGENT_SCHEMA = `
   );
 `;
 
-/** Columns added to agent_messages after it shipped: the context a conversation message belongs to, and where a quoted one came from. */
-const ADDED_COLUMNS = ["context_id TEXT", "source TEXT"];
+/**
+ * Columns added after their table shipped: the context a conversation message
+ * belongs to, where a quoted one came from, and how big a context was at its
+ * last model call (NULL when unknown, e.g. right after a summary).
+ */
+const ADDED_COLUMNS: Record<string, string[]> = {
+  agent_messages: ["context_id TEXT", "source TEXT"],
+  agent_contexts: ["context_tokens INTEGER"],
+};
 
 export function migrateAgent(database: Database): void {
-  const existing = new Set(database.query<{ name: string }, []>("PRAGMA table_info(agent_messages)").all().map((c) => c.name));
-  for (const column of ADDED_COLUMNS) {
-    if (!existing.has(column.split(" ")[0]!)) database.exec(`ALTER TABLE agent_messages ADD COLUMN ${column}`);
+  for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {
+    const existing = new Set(database.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    for (const column of columns) {
+      if (!existing.has(column.split(" ")[0]!)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
+    }
   }
   database.exec("CREATE INDEX IF NOT EXISTS agent_messages_context ON agent_messages (context_id, created_at)");
 }

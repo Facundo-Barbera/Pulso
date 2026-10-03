@@ -42,3 +42,20 @@ test("the card is built from the tool's input in the complete assistant message"
   expect(state.tools[0]!.result!.undo).toBeUndefined();
   expect(state.tools[0]!.revert).toBeUndefined();
 });
+
+test("the context's size is the latest main-agent call's whole input; a summary leaves what it says", () => {
+  const state = newTurnState();
+  const call = (input: number, read: number | null, written: number | null, parent: string | null = null) =>
+    m({ type: "assistant", parent_tool_use_id: parent, message: { content: [], usage: { input_tokens: input, cache_read_input_tokens: read, cache_creation_input_tokens: written, output_tokens: 50 } } });
+  translate(call(10, null, null), state);
+  expect(state.contextTokens).toBe(10);
+  translate(call(200, 61_000, 800), state);
+  expect(state.contextTokens).toBe(62_000);
+  // A subagent's calls are its own context.
+  translate(call(5, 0, 0, "task-1"), state);
+  expect(state.contextTokens).toBe(62_000);
+  translate(m({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 62_000, post_tokens: 7_000 } }), state);
+  expect(state.contextTokens).toBe(7_000);
+  translate(m({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 7_000 } }), state);
+  expect(state.contextTokens).toBeNull();
+});

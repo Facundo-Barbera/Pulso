@@ -2,7 +2,7 @@ import { createSdkMcpServer, query, type HookCallback, type Options, type SDKUse
 import type { AgentAttachment, AgentMessage, AgentProduct, AgentStreamEvent } from "@pulso/contract";
 import { describeProduct } from "../nutrition/portion";
 import { readImageBase64 } from "./attachments";
-import { contextMessages, contextOfThread, recordCompaction, setContextSession } from "./conversation";
+import { contextMessages, contextOfThread, recordCompaction, setContextSession, setContextTokens } from "./conversation";
 import { hasOutput, newTurnState, rememberBefore, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
 import { childEnv, claudeExecutable, providerEnv } from "./provider";
@@ -256,14 +256,20 @@ export function startTurn(
   turns().set(threadId, turn);
   emit(turn, { type: "start", messageId: assistant.id, userMessageId: user.id });
   const slot: SessionSlot = context
-    ? { get: () => context.sdk_session_id, set: (id) => setContextSession(context.id, id), seed: context.seed, compacted: () => recordCompaction(context.id, Date.now(), user.createdAt) }
-    : { get: () => sdkSessionOf(threadId), set: (id) => setSdkSession(threadId, id), seed: null, compacted: () => {} };
+    ? {
+        get: () => context.sdk_session_id,
+        set: (id) => setContextSession(context.id, id),
+        seed: context.seed,
+        compacted: () => recordCompaction(context.id, Date.now(), user.createdAt),
+        tokens: (n) => setContextTokens(context.id, n),
+      }
+    : { get: () => sdkSessionOf(threadId), set: (id) => setSdkSession(threadId, id), seed: null, compacted: () => {}, tokens: () => {} };
   const done = runTurn(turn, history, withProducts(text, products), attachments, run, slot, !!context).finally(() => turns().delete(threadId));
   return { turn, done };
 }
 
 /** Where a turn's SDK session lives: the conversation's active context, or the thread itself. */
-type SessionSlot = { get: () => string | null; set: (id: string | null) => void; seed: string | null; compacted: () => void };
+type SessionSlot = { get: () => string | null; set: (id: string | null) => void; seed: string | null; compacted: () => void; tokens: (n: number | null) => void };
 
 async function runTurn(turn: Turn, history: AgentMessage[], text: string, attachments: AgentAttachment[], run: QueryFn, slot: SessionSlot, shared: boolean): Promise<void> {
   let state = newTurnState();
@@ -311,6 +317,8 @@ async function runTurn(turn: Turn, history: AgentMessage[], text: string, attach
   } finally {
     clearTimeout(timer);
   }
+  // How big the context got, for the hourly summary's size check (upkeep.ts).
+  if (state.contextTokens !== undefined) slot.tokens(state.contextTokens);
 
   // A stop keeps what was written as the answer; with nothing written it reads as stopped, not failed.
   if (turn.stopped) state.error = state.text ? undefined : STOPPED;
