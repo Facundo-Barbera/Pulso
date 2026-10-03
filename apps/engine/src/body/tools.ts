@@ -14,15 +14,15 @@ const metric = z
 export const bodyTools = [
   tool(
     "list_body_scans",
-    "Body-composition scans (InBody and manual entries), newest first. measuredAt is epoch ms. Units: weight, skeletalMuscleMass, bodyFatMass, softLeanMass, protein, mineral kg; percentBodyFat %; bmi kg/m²; bmr kcal/day; totalBodyWater and ICW/ECW litres; ecwRatio and waistHipRatio unitless; visceralFatLevel InBody level; inbodyScore points; segmental values kg (ECW per segment is a ratio). Null means not measured. Weight-only readings from Apple Health are not listed here; body_projection includes them.",
+    "Body-composition scans (InBody and manual), newest first. measuredAt epoch ms. Units: weight, skeletalMuscleMass, bodyFatMass, softLeanMass, protein, mineral kg; percentBodyFat %; bmi kg/m²; bmr kcal/day; totalBodyWater, ICW, ECW litres; ecwRatio, waistHipRatio unitless; visceralFatLevel InBody level; inbodyScore points; segmental kg (segment ECW is a ratio). null = not measured. Apple Health weigh-ins are not here (body_projection uses them).",
     { limit: z.number().int().min(1).max(200).default(20) },
     async ({ limit }) => text(listScans(limit).map(({ raw, ...scan }) => scan)),
   ),
   tool(
     "add_body_scan",
-    "Save a body measurement the person tells you (e.g. read off an InBody sheet or a scale). Give at least weight, or two of skeletalMuscleMass / bodyFatMass / percentBodyFat. Units: kg for masses, % for percentBodyFat, kcal/day for bmr, litres for totalBodyWater. Missing body-fat kg or % is derived from the other plus weight. Confirm the numbers with the person before saving.",
+    "Save a body measurement they tell you (an InBody sheet, a scale): at least weight, or two of skeletalMuscleMass / bodyFatMass / percentBodyFat. Units: masses kg, percentBodyFat %, bmr kcal/day, totalBodyWater litres. Missing body-fat kg or % is derived. Confirm the numbers with the person first.",
     {
-      date: z.string().optional().describe("When it was measured: YYYY-MM-DD or ISO date-time, local time. Defaults to now."),
+      date: z.string().optional().describe("Local YYYY-MM-DD or ISO date-time; default now."),
       weight: z.number().optional(),
       skeletalMuscleMass: z.number().optional(),
       bodyFatMass: z.number().optional(),
@@ -46,8 +46,8 @@ export const bodyTools = [
   ),
   tool(
     "body_projection",
-    "Trend and projection for one metric from all scans plus Apple Health readings: current trend value, slopePerWeek, the value with an 80% band at 4, 8 and 12 weeks, and the goal ETA with a ready-to-say Spanish sentence. Pass target to ask 'when would I reach X' without saving a goal; otherwise the saved goal is used. current is null when there is too little data (needs 3+ days over 7+ days).",
-    { metric, target: z.number().positive().optional().describe("Same unit as the metric.") },
+    "Trend and projection for one metric from scans plus Apple Health: current trend value, slopePerWeek, values with an 80 % band at 4, 8 and 12 weeks, and the goal ETA with a Spanish sentence. target asks 'when would I reach X' without saving it (default the saved goal). current null with too little data (3+ days over 7+).",
+    { metric, target: z.number().positive().optional().describe("The metric's unit.") },
     async ({ metric, target }) => {
       const { observed, band, ...summary } = projection(metric, target);
       return text({ ...summary, readings: observed.length, lastReading: observed.at(-1) ?? null });
@@ -55,7 +55,7 @@ export const bodyTools = [
   ),
   tool(
     "set_body_goal",
-    "Save (or clear, with target null) the person's goal for one metric. One goal per metric; the Cuerpo tab and body_projection show the ETA. Units: kg, or % for percentBodyFat.",
+    "Save the goal for one metric (null clears it); one per metric, its ETA shows in Cuerpo and body_projection.",
     { metric, target: z.number().positive().nullable() },
     async ({ metric, target }) => {
       const goal = setGoal(metric, target);
