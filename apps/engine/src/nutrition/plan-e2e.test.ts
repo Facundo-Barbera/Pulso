@@ -5,19 +5,26 @@
  */
 import { expect, test } from "bun:test";
 import { z } from "zod";
+import { CARD_META } from "../agent/card";
 import { TOOLS } from "../agent/registry";
+import { getShoppingList } from "../shopping/store";
 import { ownDatabase } from "../web/test-db";
+import { dietHorizon } from "./horizon";
 
 ownDatabase("plan-e2e");
 
+/** A tool's whole value: what its card gets when it hands the model a compact one. */
 async function call(name: string, args: unknown = {}) {
   const t = TOOLS.find((x) => x.name === name);
   if (!t) throw new Error(`no tool ${name}`);
   const result = await t.handler(z.object(t.inputSchema).parse(args) as never, undefined);
   const text = (result.content[0] as { text: string }).text;
   if (result.isError) throw new Error(text);
-  return JSON.parse(text);
+  return result._meta?.[CARD_META] ?? JSON.parse(text);
 }
+
+// The Coach reads the horizon and the list as lines; the test checks the values behind them.
+const horizonOf = (from: string, days: number) => dietHorizon(from, days)!;
 
 const item = (name: string, quantity: number, kcal: number, protein: number, unit = "g") => ({ name, quantity, unit, kcal, protein, carbs: 0, fat: 0 });
 const MON = "2034-05-01";
@@ -66,18 +73,19 @@ test("a real week: plan → list → ticks → Vualá → no salmon → no time 
   expect(prep.summary).toContain("2 raciones para comida lun y comida mar; 2 de sobra");
 
   // The two-week list, from Sunday.
-  let list = await call("generate_shopping_list", { from: SUN, days: 14 });
+  await call("generate_shopping_list", { from: SUN, days: 14 });
+  let list = getShoppingList();
   const byName = (name: string) => list.items.find((i: { name: string }) => i.name === name);
   expect(byName("Pasta")).toMatchObject({ quantity: 320 });
   expect(byName("Salmón")).toBeDefined();
   // Ticks stay on the list; there are no pantry tools any more.
-  list = await call("check_shopping_items", { ids: [byName("Pasta").id, byName("Avena").id] });
-  expect([byName("Pasta").checked, byName("Avena").checked]).toEqual([true, true]);
+  list = await call("check_shopping_items", { ids: [byName("Pasta")!.id, byName("Avena")!.id] });
+  expect([byName("Pasta")!.checked, byName("Avena")!.checked]).toEqual([true, true]);
   expect(TOOLS.some((t) => t.name.includes("pantry"))).toBe(false);
 
   // Tuesday: breakfast skipped, a Vualá instead (minor: absorbed the same day).
-  const horizon = await call("get_diet_horizon", { from: TUE, days: 1 });
-  const breakfast = horizon.days[0].slots.find((s: { slot: string }) => s.slot === "desayuno");
+  const horizon = horizonOf(TUE, 1);
+  const breakfast = horizon.days[0]!.slots.find((s) => s.slot === "desayuno")!;
   const [vuala] = await call("log_meal", {
     date: TUE, at: "10:30", offPlan: true, slotId: breakfast.id, description: "Un Vualá de la máquina",
     items: [{ name: "Vualá", slot: "snack", measure: "1 unidad", kcal: 250, protein: 3, carbs: 30, fat: 13 }],
@@ -86,22 +94,30 @@ test("a real week: plan → list → ticks → Vualá → no salmon → no time 
   const absorbed = await call("rebalance_day", { date: TUE });
   expect(absorbed.adjustment.factor).toBeGreaterThan(1);
   expect(absorbed.adjustment.factor).toBeLessThanOrEqual(1.15);
-  const tuesday = (await call("get_diet_horizon", { from: TUE, days: 1 })).days[0];
-  expect(tuesday.slots.find((s: { slot: string }) => s.slot === "desayuno")).toMatchObject({ status: "replaced", replacedBy: "Vualá" });
+  const tuesday = horizonOf(TUE, 1).days[0]!;
+  expect(tuesday.slots.find((s) => s.slot === "desayuno")).toMatchObject({ status: "replaced", replacedBy: "Vualá" });
+  // What the Coach reads: one line per meal, its id first.
+  const coachTuesday = (await call("get_diet_horizon", { from: TUE, days: 1 })).days[0];
+  expect(coachTuesday.slots.find((l: string) => l.startsWith(breakfast.id))).toContain("desayuno · Avena 80 g, Leche semidesnatada 250 ml · 400 kcal · 18 P · replaced · en su lugar: Vualá");
   // Wednesday is untouched.
-  expect((await call("get_diet_horizon", { from: WED, days: 1 })).days[0].adjustment).toBeNull();
+  expect(horizonOf(WED, 1).days[0]!.adjustment).toBeNull();
 
   // At the supermarket: "no encontré salmón". Preview, then tuna.
   const preview = await call("ingredient_unavailable", { ingredient: "salmón", from: MON });
   expect(preview.preview).toBe(true);
   expect(preview.affected.length).toBeGreaterThan(0);
   const salmonDays = preview.affected.map((s: { date: string }) => s.date);
-  const swapped = await call("ingredient_unavailable", {
-    ingredient: "salmón", from: MON, substitute: { name: "Atún", per100: { kcal: 110, protein: 25, carbs: 0, fat: 1 } },
-  });
+  const swapTool = TOOLS.find((t) => t.name === "ingredient_unavailable")!;
+  const tuna = { ingredient: "salmón", from: MON, substitute: { name: "Atún", per100: { kcal: 110, protein: 25, carbs: 0, fat: 1 } } };
+  const swapResult = await swapTool.handler(z.object(swapTool.inputSchema).parse(tuna) as never, undefined);
+  const swapped = swapResult._meta![CARD_META] as { summary: string; shoppingRefreshed: boolean };
+  // The Coach reads only the meals that now have tuna, one line each; the card gets the whole change.
+  const told = JSON.parse((swapResult.content[0] as { text: string }).text);
+  expect(told.slots).toHaveLength(salmonDays.length);
+  expect(told.slots.every((l: string) => l.includes("Atún"))).toBe(true);
   expect(swapped.summary).toStartWith(`Cambié salmón por atún en ${salmonDays.length} comidas`);
   expect(swapped.shoppingRefreshed).toBe(true);
-  list = await call("get_shopping_list");
+  list = getShoppingList();
   expect(byName("Salmón")).toBeUndefined();
   expect(byName("Atún")).toBeDefined();
   // The ticks survived the rebuild.
@@ -117,14 +133,14 @@ test("a real week: plan → list → ticks → Vualá → no salmon → no time 
   // "Mejor no": undo the last change only.
   const undone = await call("undo_plan_change");
   expect(undone.summary).toStartWith("Deshecho: comida del mié 3");
-  const wednesday = (await call("get_diet_horizon", { from: WED, days: 1 })).days[0];
-  expect(wednesday.slots.find((s: { slot: string }) => s.slot === "comida")).toMatchObject({ kind: "items", name: "Salteado" });
+  const wednesday = horizonOf(WED, 1).days[0]!;
+  expect(wednesday.slots.find((s) => s.slot === "comida")).toMatchObject({ kind: "items", name: "Salteado" });
   // Everything else stays as it was: the tuna, the Vualá, the batch.
   // (Within the horizon: salmon may be back in the shops by the next one.)
-  const after = await call("get_diet_horizon", { from: MON, days: 14 });
-  const dinners = after.days.flatMap((d: { slots: { slot: string; items: { name: string }[] }[] }) => d.slots.filter((s) => s.slot === "cena").map((s) => s.items[0]!.name));
+  const after = horizonOf(MON, 14);
+  const dinners = after.days.flatMap((d) => d.slots.filter((s) => s.slot === "cena").map((s) => s.items[0]!.name));
   expect(dinners).not.toContain("Salmón");
-  expect(after.days[1].slots[0]).toMatchObject({ status: "replaced" });
+  expect(after.days[1]!.slots[0]).toMatchObject({ status: "replaced" });
   expect(after.preps[0]).toMatchObject({ leftover: 2 });
   // The plan was never regenerated.
   expect((await call("get_active_plan", { date: TUE })).plan.id).toBe(plan.id);

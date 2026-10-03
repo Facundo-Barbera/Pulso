@@ -1,6 +1,9 @@
 /** The Coach's tools for the dated plan: reading it, small local changes (each undoable), recipes and prep batches. */
 import { tool } from "@anthropic-ai/claude-agent-sdk";
+import type { PlanSlot } from "@pulso/contract";
 import { z } from "zod";
+import { withCard } from "../agent/card";
+import { horizonForCoach, planResultForCoach } from "./coach-view";
 import { localDate } from "./dates";
 import { dietHorizon, requirePlan } from "./horizon";
 import { dateString } from "./inputs";
@@ -28,9 +31,12 @@ import { listRevisions } from "./revisions";
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 
-async function safely(run: () => unknown) {
+/** Runs a tool, turning mistakes into an error the model can fix. A plan change reaches the model as lines; its card gets it whole. */
+async function safely(run: () => unknown, relevant?: (s: PlanSlot) => boolean) {
   try {
-    return json(await run());
+    const value = await run();
+    const forCoach = planResultForCoach(value, relevant);
+    return forCoach === value ? json(value) : withCard(forCoach, value);
   } catch (error) {
     const message = error instanceof z.ZodError ? error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (error as Error).message;
     return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
@@ -39,7 +45,7 @@ async function safely(run: () => unknown) {
 
 const CHANGE =
   "Changes only the slots it names; never regenerates the plan. Returns the change: summary (one Spanish line to tell the person, e.g. 'Cambié salmón por atún en 2 comidas (mar, jue)'), " +
-  "revision (its id undoes it with undo_plan_change), the touched slots as they are now, compensation when asked, and whether the shopping list was rebuilt to follow.";
+  "revisionId (undoes it with undo_plan_change), the touched slots as they are now (one line each, as in get_diet_horizon), compensation when asked, and whether the shopping list was rebuilt to follow.";
 
 const rebalanceDescription =
   "Rewrite what is LEFT of a day's plan so the day still lands near its goal (targets plus any kcal spread onto it): scales the remaining planned meals by one factor, " +
@@ -51,12 +57,11 @@ const rebalanceDescription =
 export const planTools = [
   tool(
     "get_diet_horizon",
-    "The active plan laid out as dated slots, from `from` (default today) for `days` (default the plan's horizon, usually 14): per day its slots (id, slot, kind items|recipe|prep|eat_out, name, items as planned, " +
-      "adjusted portions when the day was rebalanced, macros now in kcal and grams, status planned|eaten|replaced|skipped, real = what was actually eaten for it (label, entryIds, macros, asPlanned), " +
-      "missed = still pending well after its time with nothing logged («sin registrar»: ask, don't assume a skip), cookMinutes), the day's planned total, asPlanned (all the plan had) vs real (all logged) totals, extraIds (entries that are no meal), goalKcal and shiftKcal; " +
-      "prep batches (portions, leftover = free portions, status); and lastRevision (the change undo_plan_change would undo). null without an active plan. Read it before changing anything.",
-    { from: dateString.optional(), days: z.number().int().min(1).max(31).optional() },
-    async ({ from, days }) => safely(() => dietHorizon(from, days)),
+    "The active plan laid out as dated slots, from `from` (default today) for `days` (default 7; up to the plan's horizon, usually 14, or 31): per day its goalKcal and shiftKcal (kcal spread onto it), planned (what its planned slots add up to now) and real (all logged) totals, extraIds (entries that are no meal), the adjustment's summary when the day was rebalanced, and one line per slot: " +
+      "«<slot id> · meal · «dish name» · items as they should be eaten now (\"(ajustado)\" when rebalanced) or receta/tanda <id> × portions or comer fuera · kcal · protein · status planned|eaten|replaced|skipped» and what happened: «(sin registrar)» = still pending well after its time with nothing logged (ask, don't assume a skip), «en su lugar», «real: what was eaten [entry ids]», cooking minutes, note. " +
+      "Then prep batches (one line each: id, recipe, cook date, portions assigned / eaten / free, status) and lastRevision (the change undo_plan_change would undo). null without an active plan. Read it before changing anything.",
+    { from: dateString.optional(), days: z.number().int().min(1).max(31).optional().describe("Default 7.") },
+    async ({ from, days }) => safely(() => horizonForCoach(dietHorizon(from, days ?? 7))),
   ),
   tool(
     "skip_slot",
@@ -117,7 +122,8 @@ export const planTools = [
       "With `substitute` (name, ratio of amount, macros per 100 g/ml) it swaps the ingredient only in the affected meals still planned (and in batches not yet cooked, as a recipe variant), keeps everything else, and rebuilds the shopping list. " +
       CHANGE,
     opShapes.ingredient_unavailable,
-    async (input) => safely(() => ingredientUnavailable(input)),
+    // Only the meals that now have the substitute: the rest of those days didn't change.
+    async (input) => safely(() => ingredientUnavailable(input), (s) => !input.substitute || (s.adjusted ?? s.items).some((i) => i.name === input.substitute!.name)),
   ),
   tool(
     "no_time_to_cook",
