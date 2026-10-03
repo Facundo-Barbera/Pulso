@@ -24,43 +24,36 @@ function find({ id, night }: { id?: string; night?: string }): ManualSleepNight 
 export const sleepTools = [
   tool(
     "get_sleep_nights",
-    "Nights of sleep between two dates (inclusive, YYYY-MM-DD; a night is named after the local date the person woke up), newest first. " +
-      "Per night: in-bed and asleep start/end (epoch ms), minutes per stage (core, deep, rem, awake, unspecified), efficiency (asleep/in bed, 0–1), " +
-      "stage shares (0–1), bedtimeMin/wakeMin (minutes from local midnight of that date, negative = the evening before), a 0–100 sleep score with its factors and a Spanish explanation, " +
-      "and Spanish insights vs. the previous 14 nights. " +
-      "Nights come from Apple Health; one the person logged by hand has sourceKind \"manual\", a `manual` {id, note}, a single asleep span, no stages and no efficiency factor. Use it to relate a specific night's sleep to training, diet or how the person feels. Set includeSegments for the raw stage timeline.",
-    { from: date, to: date, includeSegments: z.boolean().default(false) },
+    "Nights of sleep from–to (inclusive; a night is named after the local date they woke), newest first: in-bed and asleep start/end (epoch ms), minutes per stage, efficiency and stage shares (0–1), " +
+      "bedtimeMin/wakeMin (minutes from that date's local midnight, negative = the evening before), a 0–100 score with factors and a Spanish explanation, Spanish insights vs the previous 14 nights. " +
+      "A night logged by hand has sourceKind \"manual\", `manual` {id, note}, one asleep span, no stages.",
+    { from: date, to: date, includeSegments: z.boolean().default(false).describe("The raw stage timeline.") },
     async ({ from, to, includeSegments }) =>
       text(listSleepNights(from, to).map(({ segments, ...night }) => (includeSegments ? { ...night, segments } : night))),
   ),
   tool(
     "get_sleep_summary",
-    "Sleep summary over the last `days` days that have data: average minutes asleep, average score (0–100) and efficiency (0–1), average bedtime/wake " +
-      "(minutes from local midnight, negative = before midnight) and their standard deviations in minutes, a regularity index (0–100, higher = more regular schedule), " +
-      "sleep debt in minutes vs. the target (max(0, Σ(target − asleep))), the target in minutes, and Spanish insights. Use it for recovery or habit questions.",
+    "Sleep over the last `days` days with data: average minutes asleep, score (0–100), efficiency (0–1), bedtime/wake (minutes from local midnight, negative = before) with standard deviations, " +
+      "regularity (0–100, higher = more regular), sleep debt in minutes (Σ max(0, target − asleep)), the target, Spanish insights.",
     { days: z.number().int().min(2).max(60).default(14) },
     async ({ days }) => text(sleepSummary(days)),
   ),
   tool(
     "set_sleep_target",
-    "Sets the person's nightly sleep target in hours (default 8). It drives sleep debt and the duration part of the sleep score. Only call it when the person asks to change their target.",
+    "Set the nightly sleep target in hours (default 8); it drives sleep debt and the score's duration part. Only when the person asks.",
     { hours: z.number().min(4).max(12) },
     async ({ hours }) => text({ targetMin: setSleepTargetMin(hours * 60) }),
   ),
   tool(
     "log_sleep",
-    "Logs a night of sleep by hand, for nights Apple Health didn't record (the watch was off or not worn). Times are the person's local clock, 24 h \"HH:MM\". " +
-      "asleepTime is when they fell asleep (or went to bed, if that's all they say). wakeTime is when they woke up; leave it out when they woke just now " +
-      "(\"me acabo de levantar\" = now). If they didn't say when they woke and it isn't clearly now, ask before logging. " +
-      "A bedtime later on the clock than the wake time is the previous day (23:30 → 07:00 is one night). wakeDate (YYYY-MM-DD, local) only for a night other than last night. " +
-      "The night is named after the morning they woke, must last 1–16 h and can't be in the future. It is refused when Apple Health already measured that night " +
-      "(the measured one always counts) or when one was already logged by hand (use update_sleep_night). " +
-      "Once logged it counts like any night: Sueño, last night's sleep on Hoy, readiness and the morning brief. Returns the night with its id and durationMin.",
+    "Log a night Apple Health didn't record, by the person's local clock. A bedtime later than the wake time is the previous day (23:30 → 07:00). " +
+      "Must last 1–16 h, not in the future. Refused when Apple Health measured that night (it always counts) or one was already logged by hand (update_sleep_night). " +
+      "It then counts like any night (Sueño, Hoy, readiness, the brief). Returns the night with id and durationMin.",
     {
-      asleepTime: clock.describe("Fell asleep, local HH:MM"),
-      wakeTime: clock.optional().describe("Woke up, local HH:MM; omit for now"),
-      wakeDate: date.optional().describe("Local date they woke up; omit for today"),
-      note: z.string().max(280).optional().describe("Optional, in their words (e.g. \"sin reloj\")"),
+      asleepTime: clock.describe("Fell asleep (or went to bed, if that's all they say)"),
+      wakeTime: clock.optional().describe("Omit when they woke just now; ask if unsaid and not now"),
+      wakeDate: date.optional().describe("Only for a night other than last night"),
+      note: z.string().max(280).optional().describe("Their words"),
     },
     async ({ asleepTime, wakeTime, wakeDate, note }) => {
       try {
@@ -72,9 +65,7 @@ export const sleepTools = [
   ),
   tool(
     "update_sleep_night",
-    "Corrects a night logged by hand (log_sleep). Find it by id or by night (YYYY-MM-DD, the morning they woke). Measured Apple Health nights can't be edited. " +
-      "asleepTime / wakeTime are local \"HH:MM\" (24 h); give only what changes. A new wakeTime keeps the night's wake day; a new asleepTime is taken as the last time the clock read it before waking. " +
-      "note replaces the note (empty string clears it). Same limits as log_sleep: 1–16 h, not in the future.",
+    "Correct a night logged by hand, by id or night (the date they woke); Apple Health nights can't be edited. Give only what changes, times local 'HH:MM': a new wakeTime keeps the wake day, a new asleepTime is its last occurrence before waking, note replaces ('' clears). Limits as log_sleep.",
     {
       id: z.string().optional(),
       night: date.optional(),
@@ -95,7 +86,7 @@ export const sleepTools = [
   ),
   tool(
     "delete_sleep_night",
-    "Deletes a night logged by hand (by id, or night = YYYY-MM-DD, the morning they woke), e.g. when it was logged by mistake. Measured Apple Health nights can't be deleted. Returns the deleted night.",
+    "Delete a night logged by hand, by id or night (the date they woke); Apple Health nights can't be deleted. Returns it.",
     { id: z.string().optional(), night: date.optional() },
     async ({ id, night }) => {
       try {
