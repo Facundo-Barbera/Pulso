@@ -129,11 +129,11 @@ const findIn = (day: { exercises: { id: string; exerciseId: string }[] }, from: 
 export const trainingTools = [
   tool(
     "list_exercises",
-    "The exercise library: id, Spanish name, primary muscle (\"cardio\" for cardio), secondary muscles, equipment, kind (compound/isolation/cardio), cardio modality, and hasMedia (the phone shows a demonstration animation for it). Programs and logged sets must use these ids. Filter by muscle (matches primary or secondary), equipment, or a name search.",
+    "The exercise library: id, Spanish name, primary muscle (\"cardio\" for cardio), secondary muscles, equipment, kind, cardio modality, hasMedia (the phone shows a demo). Programs and sets use these ids. muscle matches primary or secondary.",
     {
       muscle: z.enum(muscles).optional(),
       equipment: equipmentEnum.optional(),
-      query: z.string().optional().describe("Substring of the Spanish name or id, e.g. 'remo'."),
+      query: z.string().optional().describe("Part of the Spanish name or id, e.g. 'remo'."),
     },
     async (filter) =>
       guard(() => {
@@ -144,7 +144,7 @@ export const trainingTools = [
 
   tool(
     "get_exercise",
-    "One library exercise in full, by library id (from list_exercises): fine-grained primary and secondary muscles, Spanish step-by-step instructions and technique cues, curated YouTube technique videos, whether it has a demonstration animation, and the person's own notes on it. Use it to explain how to do an exercise or to pick a substitute that hits the same muscles.",
+    "One library exercise in full: detailed muscles, Spanish step-by-step instructions and cues, YouTube technique videos, hasMedia, and the person's notes on it.",
     { exerciseId: z.string().describe("Library id, e.g. 'press-banca'.") },
     async ({ exerciseId }) =>
       guard(() => {
@@ -156,8 +156,8 @@ export const trainingTools = [
 
   tool(
     "create_program",
-    "Write a whole training program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes) and, if wanted, cardio blocks (a cardio exercise with a `cardio` target: duration, heart-rate zone, distance, speed/pace, incline/level, intervals) — mixed in a day or as cardio-only days. Exercise ids must be library ids from list_exercises; respect the person's preferred equipment (get_training_preferences) and, when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno: a new block. The previous block ends (pass `reason`) but nothing is deleted: its sessions, records and the per-exercise history stay, and load suggestions carry over wherever an exercise repeats, so switching focus never restarts the person from zero. Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish. " + SUPERSETS,
-    { ...programShape, activate: z.boolean().default(true).describe("Make it the active program.") },
+    "Write a whole training program: days in rotation order with prescribed exercises and, if wanted, cardio blocks (a cardio exercise with a `cardio` target), mixed or as cardio-only days. Between equivalent exercises prefer hasMedia true (the phone shows how). By default it becomes the active program, a new block: the previous one ends (pass `reason`), its sessions, records and history stay, and loads carry over where exercises repeat. Loads aren't prescribed: the app suggests them by double progression.",
+    { ...programShape, activate: z.boolean().default(true) },
     async ({ activate, ...program }) =>
       guard(() => {
         const created = createProgram(program, activate);
@@ -167,9 +167,9 @@ export const trainingTools = [
 
   tool(
     "get_active_program",
-    "The active program, compact: per day its id, name and one line per exercise («<program exercise id> · name (library id) · sets×reps · rest · RIR/RPE · hand-set load · superserie · «notes»»; cardio blocks give their target), `soloHoy` on a day changed only for today; `nextDayId` (the next day not done this program week: pinned to today's weekday, else the one after the last day done this week; null when the week is complete); `week` (this week of the block: each day done / partial / missed / planned with its session dates; weeks run Monday–Sunday); `earlierBlocks` (one line per earlier program: dates, weeks, why it ended, id); `adjustment` (your review of the next session, when the app noticed a break, low readiness, an injury…). `program` is null when none is active. " +
-      "Pass `dayId` for one day in full: every field of each exercise and its next load (kg, on the steps of its unit, with the reason) — what you need to talk through a session.",
-    { dayId: z.string().optional().describe("A program day id: that day in full, with next loads.") },
+    "The active program (`program` null if none), compact: per day id, name and one line per exercise («<program exercise id> · name (library id) · sets×reps · rest · RIR/RPE · hand-set load · superserie · «notes»»; cardio gives its target); `soloHoy` on a day changed only today; `nextDayId` (next day not done this week: today's pinned one, else after the last done; null when complete); `week` (each day done/partial/missed/planned, Mon–Sun); `earlierBlocks` (dates, weeks, why it ended, id); `adjustment` (your review of the next session). " +
+      "`dayId` gives that day in full, with each exercise's next load (kg, on its unit's steps, with the reason).",
+    { dayId: z.string().optional() },
     async ({ dayId }) =>
       guard(() => {
         const view = activeProgramForCoach(activeProgramView(), dayId);
@@ -180,14 +180,14 @@ export const trainingTools = [
 
   tool(
     "edit_program_days",
-    'Rewrite the exercise list of one or more program days in ONE call: reorder, add, remove, swap or change targets (sets, reps, rest, RIR/RPE, a hand-set weightKg, cardio targets). A change that touches several days ("hazla más corta", "solo máquinas", "añade 10 min de caminata al final") is one call with every day in `days`: one change, one card, one Deshacer. All or nothing. For each day pass its WHOLE new list: read it from get_active_program first and keep each exercise\'s `id` so its load history follows; omit `id` for new ones. scope "today" changes only today\'s session of those days ("solo hoy"); "always" changes the program ("para siempre"). Returns the edited days, one line per exercise with its id. Pair or unpair exercises by setting or clearing supersetId (keep it on the others so their supersets survive). ' + SUPERSETS,
+    "Rewrite the exercise lists of one or more program days in ONE call, all or nothing: reorder, add, remove, swap or change targets. A change touching several days (\"hazla más corta\", \"solo máquinas\") is one call with all of them. Pass each day's WHOLE new list from get_active_program, keeping each exercise's `id` so its history follows (omit for new ones) and the supersetId of the others. Returns the edited days, one line per exercise.",
     {
-      scope: scope.describe('"today" = solo hoy, "always" = para siempre. When unsure, ask.'),
+      scope: scope.describe('"today" = solo hoy (today\'s session of those days), "always" = para siempre.'),
       days: z
         .array(
           z.object({
-            dayId: z.string().describe("Program day id from get_active_program."),
-            exercises: z.array(programExerciseShape.extend({ id: z.string().nullish().describe("Existing program exercise id to keep.") })).min(1).max(20),
+            dayId: z.string(),
+            exercises: z.array(programExerciseShape.extend({ id: z.string().nullish().describe("Program exercise id to keep.") })).min(1).max(20),
           }),
         )
         .min(1)
@@ -204,12 +204,12 @@ export const trainingTools = [
 
   tool(
     "swap_program_exercise",
-    'Replace one exercise with another in the active program, keeping its sets, reps, rest and superset (e.g. "cámbiame las sentadillas por prensa"). `from` is a library id or program exercise id; `to` a library id of the same kind (strength for strength, cardio for cardio) — pick it with find_similar_exercises. scope "always" changes every day that has it (or only `dayId`); "today" changes today\'s session of the next day to train (or `dayId`). Returns the days changed.',
+    'Replace one exercise in the active program, keeping its sets, reps, rest and superset. `to` is a library id of the same kind (strength or cardio), from find_similar_exercises. scope "always": every day that has it; "today": today\'s session of the next day to train; `dayId` limits either to that day. Returns the days changed.',
     {
-      from: z.string().describe("Library id or program exercise id to replace."),
-      to: z.string().describe("Library id to use instead."),
+      from: z.string().describe("Library id or program exercise id."),
+      to: z.string(),
       scope: scope.describe('"today" = solo hoy, "always" = para siempre.'),
-      dayId: z.string().optional().describe("Limit to this program day."),
+      dayId: z.string().optional(),
     },
     async ({ from, to, scope, dayId }) =>
       guard(() => {
@@ -233,10 +233,10 @@ export const trainingTools = [
 
   tool(
     "find_similar_exercises",
-    "Alternatives to an exercise, best first, scored 0–100: same primary muscle and movement pattern first (cardio: same intensity and impact), then the person's preferred equipment (usually machines). Each comes with short Spanish reasons. Use it before any swap so the replacement keeps the same muscle target; filter by equipment when they ask (\"con máquina\", \"sin barra\").",
+    "Alternatives to an exercise, best first, scored 0–100: same primary muscle and movement pattern (cardio: intensity and impact), then preferred equipment; with short Spanish reasons. Filter by equipment when they ask (\"con máquina\").",
     {
-      exerciseId: z.string().describe("Library id of the exercise to replace."),
-      equipment: z.array(equipmentEnum).optional().describe("Only these equipment types."),
+      exerciseId: z.string().describe("Library id to replace."),
+      equipment: z.array(equipmentEnum).optional(),
       limit: z.number().int().min(1).max(30).default(8),
     },
     async ({ exerciseId, equipment, limit }) =>
@@ -249,23 +249,23 @@ export const trainingTools = [
 
   tool(
     "get_training_preferences",
-    'The person\'s training preferences: preferredEquipment, most preferred first (e.g. ["machine", "cable"]); defaultUnit ("kg" or "lb"); exerciseUnits, the exercises (library id) whose machine or plates use their own unit. Respect the equipment when building or adapting programs and choosing swaps. Every weight in the tools is kg, but speak to the person in each exercise\'s unit (exerciseUnits[id] ?? defaultUnit; 1 lb = 0.45359237 kg): "70 lb", not "31,75 kg".',
+    'Training preferences: preferredEquipment (best first), defaultUnit (kg or lb), exerciseUnits (library ids whose machine or plates use their own unit). Tools use kg, but speak in each exercise\'s unit (exerciseUnits[id] ?? defaultUnit; 1 lb = 0.45359237 kg): "70 lb", not "31,75 kg".',
     {},
     async () => guard(() => trainingSettings()),
   ),
 
   tool(
     "set_training_preferences",
-    'Save the equipment the person prefers, most preferred first (e.g. "prefiero máquinas" → ["machine", "cable"]; replaces the whole list, [] clears it; alternatives in the app rank by it), and/or the default weight unit for exercises without their own and for totals ("usa libras" → "lb"). Only the fields given change.',
+    'Save preferredEquipment, best first ("prefiero máquinas" → ["machine", "cable"]; replaces the list, [] clears it), and/or defaultUnit, for exercises without their own and totals. Only the fields given change.',
     { preferredEquipment: z.array(equipmentEnum).max(7).optional(), defaultUnit: weightUnitEnum.optional() },
     async (settings) => guard(() => setTrainingSettings(settings)),
   ),
 
   tool(
     "set_exercise_unit",
-    'Set the unit one exercise is shown, typed and suggested in, because its machine or plates use it (e.g. "este press en libras", "el remo en máquina va en libras"). It sticks for every future session and the live one; weights stay stored in kg and pound loads land on 5 lb steps. null makes it follow the default unit again. Returns the preferences.',
+    'Set the unit one exercise is shown, typed and suggested in, because its machine or plates use it ("este press en libras"), for future sessions and the live one. Stored in kg; lb loads land on 5 lb steps. null = follow the default. Returns the preferences.',
     {
-      exerciseId: z.string().describe("Library id, e.g. 'remo-maquina'; in a live session the exercise's exerciseId from get_live_session."),
+      exerciseId: z.string().describe("Library id (in a live session, its exerciseId)."),
       unit: weightUnitEnum.nullable(),
     },
     async ({ exerciseId, unit }) => guard(() => setExerciseUnit(exerciseId, unit)),
@@ -297,9 +297,8 @@ export const trainingTools = [
 
   tool(
     "list_sessions",
-    "Logged training sessions, newest first: date, minutes, dayId, and per exercise one line of its sets in order, kg×reps (\"80×5→60×3\" is a set where the load dropped mid-set, the first being the top segment; \"@9\" its RPE); cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). startedAt is epoch ms. Pass exerciseId to only get sessions that included it. " +
-      "merged: true means Apple Watch (or another Health app) recorded workouts during the session; they are in `recorded` (parts, kcal summed once, avg/max heart rate, distance, startedAt/endedAt spanning them) " +
-      "and are NOT extra training: never add them again from list_workouts. A cardio block with `recordedBy` had its empty fields filled from that Watch workout.",
+    "Logged training sessions, newest first: date, minutes, dayId, per exercise one line of sets in order, kg×reps (\"80×5→60×3\" = load dropped mid-set, the first is the top segment; \"@9\" = RPE); cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes total). startedAt epoch ms. exerciseId: only sessions with it. " +
+      "merged: true = Apple Watch (or another Health app) recorded workouts during it, in `recorded` (parts, kcal summed once, avg/max HR, distance, span): NOT extra training, never add them again from list_workouts. A cardio block with `recordedBy` was filled in from that workout.",
     {
       limit: z.number().int().min(1).max(100).default(10),
       exerciseId: z.string().optional(),
@@ -309,10 +308,10 @@ export const trainingTools = [
 
   tool(
     "exercise_history",
-    "One exercise's progress, oldest first: per session the top weight (kg), best Epley e1RM (kg; both from top segments only), total reps and volume (kg×reps, counting every segment of drop sets), plus all-time best e1RM and heaviest load. Use it to judge progress or stalls before changing a program.",
+    "One exercise's progress, oldest first: per session top weight and best Epley e1RM (kg, top segments only), total reps and volume (kg×reps, every drop-set segment), plus all-time best e1RM and heaviest load.",
     {
-      exerciseId: z.string().describe("Exercise id from list_exercises."),
-      limit: z.number().int().min(1).max(200).default(30).describe("Most recent sessions to include."),
+      exerciseId: z.string().describe("Library id."),
+      limit: z.number().int().min(1).max(200).default(30).describe("Most recent sessions."),
     },
     async ({ exerciseId, limit }) =>
       guard(() => {
@@ -324,8 +323,8 @@ export const trainingTools = [
 
   tool(
     "suggest_next_loads",
-    "Next load (kg, on the steps of each exercise's unit; the reason speaks in that unit) and target reps for each exercise of a day of the active program, by double progression: all prescribed sets at the top of the rep range → add one increment; short of the bottom → back off; otherwise same load, one more rep. weightKg is null when the exercise has no history. Defaults to the next day to train.",
-    { dayId: z.string().optional().describe("Program day id from get_active_program; omit for the next day.") },
+    "Next load (kg, on the steps of each exercise's unit; the reason speaks in that unit) and target reps for each exercise of an active program day, by double progression: every set at the top of the range → one increment up; short of the bottom → back off; else same load, one more rep. weightKg null without history.",
+    { dayId: z.string().optional().describe("Default the next day to train.") },
     async ({ dayId }) =>
       guard(() => {
         const program = getActiveProgram();
@@ -338,12 +337,12 @@ export const trainingTools = [
 
   tool(
     "log_session",
-    "Record a strength session the person did without the phone (they told you about it). Sets are in order; weightKg is the external load in kg (0 for bodyweight). Returns the saved session (its sets as kg×reps per exercise) and any personal records it set (e1rm, weight, reps). Don't use it for sessions done with the phone: those are logged already.",
+    "Record a strength session done without the phone (sessions done with the phone are logged already). Sets in order; weightKg is the external load (0 for bodyweight). Returns the saved session and any records it set.",
     {
-      name: z.string().min(1).max(80).describe('Session name in Spanish, e.g. "Pierna".'),
-      startedAt: z.string().datetime({ offset: true }).describe("When it started, ISO 8601 with offset."),
+      name: z.string().min(1).max(80).describe('Spanish, e.g. "Pierna".'),
+      startedAt: z.string().datetime({ offset: true }).describe("ISO 8601 with offset."),
       durationMinutes: z.number().int().min(1).max(300),
-      dayId: z.string().optional().describe("Program day it corresponds to, if any; moves the rotation forward."),
+      dayId: z.string().optional().describe("Program day it was, if any; moves the rotation forward."),
       notes: z.string().max(1000).optional(),
       sets: z
         .array(
@@ -380,21 +379,21 @@ export const trainingTools = [
   ),
   tool(
     "set_session_adjustment",
-    "Adjust the person's NEXT session of a program day, for that session only (the program stays): less load, fewer sets, reps within the range, a swap, skipping an exercise, or a short cardio warm-up first — or record that it stays as planned (noChange). Use it when reviewing the upcoming workout, or when the person asks to make the next one easier. Guardrails, enforced (a refusal says what to fix): loadPercent from −40 to 0 against what progression suggests, never under 60 % of the last load lifted; at most 2 sets fewer per exercise and never more; reps within the prescribed range; swaps keep the kind (strength for strength); skip at most half the day; one cardio warm-up of up to 15 min (action add, a cardio library id). The person sees `rationale` on the next-workout card and can set the adjustment aside with \"Entrenar normal\". Returns the session as it will be done.",
+    "Adjust only the NEXT session of a program day (the program stays): less load, fewer sets, reps within the range, a swap, a skip, or a short cardio warm-up first; or noChange to record it stays as planned. Enforced (a refusal says what to fix): loadPercent −40 to 0 vs progression, never under 60 % of the last load; at most 2 fewer sets, never more; reps within range; swaps keep the kind; skip at most half the day; one cardio warm-up ≤ 15 min (add). The person sees `rationale` on the next-workout card and can dismiss it (\"Entrenar normal\"). Returns the session as it will be done.",
     {
-      dayId: z.string().describe("Program day id from get_active_program (usually nextDayId)."),
-      noChange: z.boolean().default(false).describe("True when the plan stays as it is."),
-      rationale: z.string().min(1).max(240).describe('ONE calm Spanish sentence, no jargon: what you noticed and what changes. E.g. "Llevas 9 días sin entrenar: hoy un 10 % menos de peso."'),
+      dayId: z.string().describe("Usually nextDayId (get_active_program)."),
+      noChange: z.boolean().default(false),
+      rationale: z.string().min(1).max(240).describe('ONE calm Spanish sentence: what you noticed and what changes, e.g. "Llevas 9 días sin entrenar: hoy un 10 % menos de peso."'),
       changes: z
         .array(
           z.object({
             action: z.enum(["adjust", "swap", "skip", "add"]),
-            programExerciseId: z.string().nullish().describe("The day's exercise id (ProgramExercise.id); null for add."),
-            loadPercent: z.number().min(-40).max(0).nullish().describe("Load change against progression's suggestion, %."),
+            programExerciseId: z.string().nullish().describe("The day's exercise id; null for add."),
+            loadPercent: z.number().min(-40).max(0).nullish().describe("% vs progression's suggestion."),
             sets: z.number().int().min(1).max(10).nullish(),
             reps: z.number().int().min(1).max(50).nullish(),
-            toExerciseId: z.string().nullish().describe("swap: library id instead; add: a cardio library id."),
-            cardio: cardioTargetShape.nullish().describe("add: the warm-up's target, e.g. { durationMinutes: 8, zone: 1 }."),
+            toExerciseId: z.string().nullish().describe("swap: library id; add: a cardio library id."),
+            cardio: cardioTargetShape.nullish().describe("add: e.g. { durationMinutes: 8, zone: 1 }."),
           }),
         )
         .max(20)
