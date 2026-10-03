@@ -1,4 +1,4 @@
-import { createSdkMcpServer, query, type HookCallback, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type HookCallback, type Options, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentAttachment, AgentMessage, AgentProduct, AgentStreamEvent } from "@pulso/contract";
 import { describeProduct } from "../nutrition/portion";
 import { readImageBase64 } from "./attachments";
@@ -10,8 +10,9 @@ import { forModel } from "./model-results";
 import { TOOLS } from "./registry";
 import { addMessage, failStreamingMessages, listMessages, sdkSessionOf, setSdkSession, updateMessage } from "./threads";
 import { sdkConfigDir, stripImages } from "./transcripts";
+import { getLive } from "../training/live";
 import { liveCoachMode } from "../training/live-coach";
-import { claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
+import { AGENT_BASICS, claudeMd, insideWorkspace, PERSONA, prepareWorkspace } from "./workspace";
 
 /** A thread with its own short prompt and tool subset (the in-workout Coach). */
 export type TurnMode = { persona: string; context: string; tools: string[] };
@@ -40,6 +41,8 @@ const STOPPED = "Detuviste la respuesta.";
 const BUILTIN_TOOLS = ["Read", "Write", "WebSearch", "WebFetch"];
 /** The pulso tools as the Coach reads them: leaned results, full values kept for the cards. */
 const COACH_TOOLS = TOOLS.map(forModel);
+/** Tools for a workout in progress: their schemas (~5k tokens) only ride along while there is one. */
+const LIVE_ONLY = new Set(["get_live_session", "edit_live_session"]);
 /** Tokens of context before the SDK summarizes it by itself (its autoCompactWindow; the model's own window caps it). */
 export const AUTO_COMPACT_WINDOW = 200_000;
 
@@ -98,6 +101,10 @@ const SNAPSHOT_HOOK = { matcher: "mcp__pulso__.*", hooks: [snapshot] };
  * A clean start: the agent knows only the conversation, the profile and the
  * pulso tools. No settings, hooks, plugins, skills, CLAUDE.md files or memory
  * from this Mac are loaded; the thread's own CLAUDE.md goes in the system prompt.
+ * That prompt is Pulso's own, not Claude Code's (a coding assistant's, ~3k
+ * tokens on every request): the stable basics and persona first, so they
+ * cache across turns and days, then this turn's context, rendered fresh each
+ * request so the date and the profile snapshot are never stale.
  * Transcripts live in Pulso's data dir (./transcripts.ts) and the context is
  * summarized by the SDK as it nears AUTO_COMPACT_WINDOW tokens.
  */
@@ -109,13 +116,13 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     resume,
     abortController,
     model: process.env.PULSO_AGENT_MODEL || undefined,
-    systemPrompt: { type: "preset", preset: "claude_code", append: `${PERSONA}\n\n${context}` },
+    systemPrompt: { type: "custom", prompt: [`${AGENT_BASICS}\n\n${PERSONA}`, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, context], snapshot: false },
     settingSources: [],
     // The flag-settings layer applies even with no setting sources. Pulso prunes transcripts itself, so the CLI's sweep is pushed out of the way.
     settings: { autoCompactEnabled: true, autoCompactWindow: AUTO_COMPACT_WINDOW, cleanupPeriodDays: 3650 },
     skills: [],
     strictMcpConfig: true,
-    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: COACH_TOOLS }) },
+    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: getLive() ? COACH_TOOLS : COACH_TOOLS.filter((t) => !LIVE_ONLY.has(t.name)) }) },
     tools: BUILTIN_TOOLS,
     allowedTools: ["mcp__pulso", ...BUILTIN_TOOLS],
     // Nobody is at the Mac to approve anything: what is not allowed above is denied, never asked.

@@ -5,7 +5,21 @@ import { dataDir } from "../db";
 import { knowledgeIndex } from "../knowledge/store";
 
 /**
- * Appended to Claude Code's system prompt for every Coach turn. Stable text, so
+ * What the Coach needs from an agent's system prompt, in place of Claude Code's
+ * own: how tools, the scratch directory and the web work here. Stable, so it
+ * caches with PERSONA.
+ */
+export const AGENT_BASICS = `
+# How you work
+- You act through tools. Call several in one message when they don't depend on each other. When one change touches several things (days of the program, meals of the plan), use the tool that does it in one call: one change, one card for the person.
+- Read what you need before changing anything, and never make up a value a tool didn't give you.
+- Tool results and messages may include <system-reminder> tags: context from the app, not from the person.
+- Read and Write only reach your working directory, a scratchpad that may be wiped.
+- WebSearch finds pages and WebFetch reads one: for checking a specific fact, not for padding answers.
+`.trim();
+
+/**
+ * The Coach's system prompt after AGENT_BASICS, for every turn. Stable text, so
  * it caches; per-person facts go in the workspace CLAUDE.md instead.
  */
 export const PERSONA = `

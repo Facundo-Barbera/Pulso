@@ -1,3 +1,4 @@
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@anthropic-ai/claude-agent-sdk";
 import { expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
@@ -98,7 +99,14 @@ test("each thread works in a disposable dir under the data dir, with nothing fro
   const { options } = calls[0]!;
   expect(options.cwd).toBe(path.join(dataDir(), "threads", thread.id));
   expect(fs.readFileSync(path.join(options.cwd!, "CLAUDE.md"), "utf8")).toContain("Correr 10 km");
-  expect(options.systemPrompt).toMatchObject({ append: expect.stringContaining("Correr 10 km") });
+  // Pulso's own prompt, not Claude Code's: the stable part, the cache boundary, then this turn's context, rendered fresh.
+  const prompt = options.systemPrompt as { type: string; prompt: string[]; snapshot: boolean };
+  expect(prompt).toMatchObject({ type: "custom", snapshot: false });
+  expect(prompt.prompt).toEqual([expect.stringContaining("You are Pulso's Coach"), SYSTEM_PROMPT_DYNAMIC_BOUNDARY, expect.stringContaining("Correr 10 km")]);
+  // No workout in progress: the live-session tools stay out.
+  const tools = (options.mcpServers!.pulso as { instance: { _registeredTools: Record<string, unknown> } }).instance._registeredTools;
+  expect(Object.keys(tools)).not.toContain("edit_live_session");
+  expect(Object.keys(tools)).toContain("edit_program_days");
   expect(options.settingSources).toEqual([]);
   expect(options.env).toMatchObject({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
 
