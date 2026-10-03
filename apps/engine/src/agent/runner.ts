@@ -6,6 +6,7 @@ import { contextMessages, contextOfThread, recordCompaction, setContextSession }
 import { hasOutput, newTurnState, rememberBefore, translate, type TurnState } from "./events";
 import { getProfile } from "./profile";
 import { childEnv, claudeExecutable, providerEnv } from "./provider";
+import { forModel } from "./model-results";
 import { TOOLS } from "./registry";
 import { addMessage, failStreamingMessages, listMessages, sdkSessionOf, setSdkSession, updateMessage } from "./threads";
 import { sdkConfigDir, stripImages } from "./transcripts";
@@ -37,6 +38,8 @@ const RECAP_MESSAGES = 20;
 const RECAP_CHARS = 1500;
 const STOPPED = "Detuviste la respuesta.";
 const BUILTIN_TOOLS = ["Read", "Write", "WebSearch", "WebFetch"];
+/** The pulso tools as the Coach reads them: leaned results, full values kept for the cards. */
+const COACH_TOOLS = TOOLS.map(forModel);
 /** Tokens of context before the SDK summarizes it by itself (its autoCompactWindow; the model's own window caps it). */
 export const AUTO_COMPACT_WINDOW = 200_000;
 
@@ -112,7 +115,7 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
     settings: { autoCompactEnabled: true, autoCompactWindow: AUTO_COMPACT_WINDOW, cleanupPeriodDays: 3650 },
     skills: [],
     strictMcpConfig: true,
-    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: TOOLS }) },
+    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: COACH_TOOLS }) },
     tools: BUILTIN_TOOLS,
     allowedTools: ["mcp__pulso", ...BUILTIN_TOOLS],
     // Nobody is at the Mac to approve anything: what is not allowed above is denied, never asked.
@@ -136,7 +139,7 @@ export function agentOptions(cwd: string, context: string, resume: string | unde
   return {
     ...base,
     systemPrompt: `${mode.persona}\n\n${mode.context}`,
-    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: TOOLS.filter((t) => mode.tools.includes(t.name)) }) },
+    mcpServers: { pulso: createSdkMcpServer({ name: "pulso", version: "1.0.0", tools: COACH_TOOLS.filter((t) => mode.tools.includes(t.name)) }) },
     tools: [],
     allowedTools: ["mcp__pulso"],
     hooks: { PreToolUse: [SNAPSHOT_HOOK] },

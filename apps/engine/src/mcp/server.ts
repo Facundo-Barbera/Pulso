@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpClient } from "@pulso/contract";
 import { z } from "zod";
+import { withoutCard } from "../agent/model-results";
 import { describeFor, visibleTools } from "./access";
 import { authenticateClient, recordCall } from "./clients";
 
@@ -49,7 +50,7 @@ export function serverFor(client: McpClient): McpServer {
     try {
       const result = await t.handler(args.data, extra);
       recordCall(client.id, name, result.isError ? "error" : "ok");
-      return result;
+      return withoutCard(result);
     } catch (error) {
       recordCall(client.id, name, "error");
       return failure((error as Error).message);

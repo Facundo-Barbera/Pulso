@@ -1,6 +1,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentStreamEvent, AgentToolUse } from "@pulso/contract";
 import { isWrite, snapshotBefore, summarizeAction, type Revert } from "./actions";
+import { takeCardData } from "./model-results";
 
 /** A tool as saved on its message: what clients see, plus how to undo it (stripped before it leaves the engine). */
 export type StoredTool = AgentToolUse & { revert?: Revert };
@@ -91,7 +92,8 @@ export function translate(message: SDKMessage, state: TurnState): AgentStreamEve
         tool.status = block.is_error ? "error" : "done";
         const before = befores.get(block.tool_use_id);
         befores.delete(block.tool_use_id);
-        const action = block.is_error ? null : summarizeAction(tool.name, state.inputs.get(block.tool_use_id), block.content, before);
+        const card = takeCardData(block.tool_use_id);
+        const action = block.is_error ? null : summarizeAction(tool.name, state.inputs.get(block.tool_use_id), block.content, before, card === undefined ? undefined : { value: card });
         if (action) {
           tool.result = action.card;
           if (action.revert) tool.revert = action.revert;

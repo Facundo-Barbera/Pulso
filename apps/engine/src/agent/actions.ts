@@ -484,16 +484,20 @@ function resultText(content: unknown): string | null {
 
 /**
  * The action card for a successful write tool, from its input, its result (the
- * tool_result content) and what `snapshotBefore` read; null for reads.
+ * tool_result content, or `card`: the full value the tool kept for it in
+ * ./model-results.ts) and what `snapshotBefore` read; null for reads.
  */
-export function summarizeAction(name: string, input: unknown, content: unknown, before?: unknown): Action | null {
+export function summarizeAction(name: string, input: unknown, content: unknown, before?: unknown, card?: { value: unknown }): Action | null {
   if (!isWrite(name)) return null;
-  const text = resultText(content);
   let result: unknown;
-  try {
-    result = text === null ? undefined : JSON.parse(text);
-  } catch {
-    result = text;
+  if (card) result = card.value;
+  else {
+    const text = resultText(content);
+    try {
+      result = text === null ? undefined : JSON.parse(text);
+    } catch {
+      result = text;
+    }
   }
   const entry = ACTIONS[name];
   if (entry) {
