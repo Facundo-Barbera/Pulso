@@ -22,6 +22,8 @@ struct DailyMetrics: Codable, Identifiable, Equatable {
     var sleepCore: Double?
     var sleepRem: Double?
     var sleepAwake: Double?
+    /// `sleepMinutes` is a night logged by hand (no stages). Engine → phone only.
+    var sleepManual: Bool?
     /// mL/kg/min
     var vo2max: Double?
     /// breaths/min

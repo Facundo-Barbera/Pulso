@@ -93,8 +93,16 @@ struct SleepStagePct: Codable, Equatable {
 
 /// One scored night (`SleepNight`). `bedtimeMin`/`wakeMin` are minutes from local midnight of `night`.
 struct SleepNight: Codable, Equatable, Identifiable {
+    /// Set on a night logged by hand (`sourceKind` "manual").
+    struct Manual: Codable, Equatable {
+        var id: String
+        var note: String?
+    }
+
     var night: String
     var source: String
+    /// "watch" | "phone" | "other" | "manual"; nil from an older engine.
+    var sourceKind: String?
     var inBedStart: Double
     var inBedEnd: Double
     var asleepStart: Double
@@ -107,8 +115,11 @@ struct SleepNight: Codable, Equatable, Identifiable {
     var score: SleepScore
     var insights: [String]
     var segments: [SleepSegment]
+    /// Only on a hand-logged night: one asleep span, no stages, efficiency not measured.
+    var manual: Manual?
 
     var id: String { night }
+    var isManual: Bool { manual != nil }
     /// Local midnight of the day this night ends on.
     var date: Date { SleepNight.dayFormatter.date(from: night) ?? .now }
     var bedtime: Date { Date(timeIntervalSince1970: inBedStart / 1000) }
@@ -162,6 +173,59 @@ extension PulsoAPI {
     func setSleepTarget(minutes: Double) async throws -> Double {
         let response: SleepTargetResponse = try await call("api/mobile/sleep/target", method: "PUT", body: ["minutes": minutes])
         return response.targetMin
+    }
+
+    /// Logs a night by hand. 409 "measured" when Health already has it, "taken" when one was logged for that date.
+    func addManualSleep(start: Date, end: Date, note: String?) async throws -> ManualSleepNight {
+        try await call("api/mobile/sleep/manual", method: "POST", body: ManualSleepBody(start: start, end: end, note: note))
+    }
+
+    func updateManualSleep(id: String, start: Date, end: Date, note: String?) async throws -> ManualSleepNight {
+        try await call("api/mobile/sleep/manual/\(id)", method: "PATCH", body: ManualSleepBody(start: start, end: end, note: note))
+    }
+
+    @discardableResult
+    func deleteManualSleep(id: String) async throws -> ManualSleepNight {
+        try await call("api/mobile/sleep/manual/\(id)", method: "DELETE")
+    }
+}
+
+/// A night logged by hand (`@pulso/contract` `ManualSleepNight`). `night` is the wake date.
+struct ManualSleepNight: Codable, Equatable, Identifiable {
+    var id: String
+    var night: String
+    var start: Double
+    var end: Double
+    var tzOffsetMin: Int
+    var note: String?
+    /// Health measured that night since; the measured one is shown instead.
+    var hidden: Bool
+    var createdAt: Double
+    var updatedAt: Double
+}
+
+/// POST and PATCH body. `note` is always sent, so nil clears it on an edit.
+private struct ManualSleepBody: Encodable {
+    var start: Double
+    var end: Double
+    var tzOffsetMin: Int
+    var note: String?
+
+    init(start: Date, end: Date, note: String?) {
+        self.start = (start.timeIntervalSince1970 * 1000).rounded()
+        self.end = (end.timeIntervalSince1970 * 1000).rounded()
+        tzOffsetMin = TimeZone.current.secondsFromGMT(for: start) / 60
+        self.note = note
+    }
+
+    private enum CodingKeys: String, CodingKey { case start, end, tzOffsetMin, note }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(start, forKey: .start)
+        try c.encode(end, forKey: .end)
+        try c.encode(tzOffsetMin, forKey: .tzOffsetMin)
+        try c.encode(note, forKey: .note)
     }
 }
 

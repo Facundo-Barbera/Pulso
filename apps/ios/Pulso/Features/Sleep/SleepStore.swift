@@ -59,4 +59,56 @@ final class SleepStore {
             model.handle(error)
         }
     }
+
+    // MARK: Nights logged by hand
+
+    /// Counts successful saves, for the success haptic on whichever screen presented the sheet.
+    private(set) var saved = 0
+
+    /// Logs a night by hand (`id` nil) or edits one, then shows it. Returns why the Mac refused, to show in the sheet.
+    func saveManual(id: String?, start: Date, end: Date, note: String?, model: PulsoModel) async -> String? {
+        guard let api = model.api else { return Self.unpaired }
+        do {
+            let night = if let id {
+                try await api.updateManualSleep(id: id, start: start, end: end, note: note)
+            } else {
+                try await api.addManualSleep(start: start, end: end, note: note)
+            }
+            selected = night.night
+            await reload(api)
+            saved += 1
+            return nil
+        } catch {
+            return reason(error, model: model)
+        }
+    }
+
+    func deleteManual(id: String, model: PulsoModel) async -> String? {
+        guard let api = model.api else { return Self.unpaired }
+        do {
+            let night = try await api.deleteManualSleep(id: id)
+            if selected == night.night { selected = nil }
+            await reload(api)
+            return nil
+        } catch {
+            return reason(error, model: model)
+        }
+    }
+
+    private static let unpaired = "Este iPhone no está emparejado con ninguna Mac."
+
+    /// This screen (when it's showing one: Hoy's sheet has its own unloaded store) and Hoy.
+    /// A failed reload is left to their own next load.
+    private func reload(_ api: PulsoAPI) async {
+        if loaded, let fresh = try? await api.sleep() { overview = fresh }
+        await TodayStore.shared.load()
+    }
+
+    /// The engine's Spanish message for a refusal (overlap with Health, out of range…) stays in the sheet;
+    /// anything else (offline, unpaired) also goes to the model, as everywhere else.
+    private func reason(_ error: Error, model: PulsoModel) -> String {
+        if let failure = error as? PulsoAPI.Failure, case .refused = failure.kind { return failure.message }
+        model.handle(error)
+        return error.localizedDescription
+    }
 }

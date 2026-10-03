@@ -3,6 +3,9 @@ import SwiftUI
 struct TodayView: View {
     let model: PulsoModel
     @State private var store = TodayStore.shared
+    /// Backs "Añadir noche" on the sleep card; saving reloads Hoy.
+    @State private var sleep = SleepStore()
+    @State private var addingSleep = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -14,7 +17,7 @@ struct TodayView: View {
                 CalendarWeekStrip(model: model)
                 MedicationTodayCard(model: model)
                 ActivityCard(day: store.today)
-                SleepCard(day: store.today, onSync: sync) { SleepView(model: model) }
+                SleepCard(day: store.today, onSync: sync, onAdd: { addingSleep = true }) { SleepView(model: model) }
                 TrendsCard(store: store)
                 RecentWorkoutsCard(entries: store.recent, onSync: sync)
             }
@@ -34,6 +37,9 @@ struct TodayView: View {
             if phase == .active { sync() }
         }
         .sensoryFeedback(.success, trigger: store.updatedAt)
+        .sheet(isPresented: $addingSleep) {
+            ManualSleepSheet(store: sleep, model: model)
+        }
     }
 
     /// Today's date and a quiet sync status; errors show here too, never as a blocking row.

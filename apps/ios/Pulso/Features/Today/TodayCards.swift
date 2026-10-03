@@ -238,10 +238,12 @@ struct ActivityCard: View {
 
 // MARK: - Sleep
 
-/// Compact summary of last night. Pass a destination (the sleep deep-dive) to make the whole card a link.
+/// Compact summary of last night. Pass a destination (the sleep deep-dive) to make the whole card a link,
+/// and `onAdd` to offer logging a missing night by hand.
 struct SleepCard<Destination: View>: View {
     let day: DailyMetrics?
     let onSync: () -> Void
+    var onAdd: (() -> Void)?
     @ViewBuilder var destination: () -> Destination
 
     var body: some View {
@@ -273,9 +275,13 @@ struct SleepCard<Destination: View>: View {
                     Spacer()
                     Text("Meta 8 h").font(.caption).foregroundStyle(.secondary)
                 }
-                if let stages, stages.contains(where: { $0.minutes > 0 }) {
+                if day?.sleepManual == true {
+                    ManualSleepChip()
+                } else if let stages, stages.contains(where: { $0.minutes > 0 }) {
                     StagesBar(stages: stages)
                 }
+            } else if let onAdd {
+                missing(onAdd)
             } else {
                 EmptyCardState(
                     symbol: "bed.double",
@@ -284,6 +290,29 @@ struct SleepCard<Destination: View>: View {
                 )
             }
         }
+    }
+
+    /// No night yet: log it by hand first, or check Salud again.
+    private func missing(_ add: @escaping () -> Void) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "bed.double")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(.secondary)
+                .symbolEffect(.pulse, options: .repeat(2))
+            Text("No hay datos de anoche. Si dormiste sin el Apple Watch, añádela a mano.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            AdaptiveStack {
+                Button("Añadir noche", systemImage: "plus", action: add)
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.sleep)
+                Button("Actualizar", systemImage: "arrow.clockwise", action: onSync)
+                    .buttonStyle(.glass)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
     }
 
     private var stages: [Stage]? {
@@ -520,6 +549,13 @@ private let previewDay = DailyMetrics(
         ReadinessHero(readiness: previewReadiness)
         ActivityCard(day: previewDay)
         SleepCard(day: previewDay, onSync: {})
+    }
+}
+
+#Preview("Sueño en Hoy · a mano y sin datos") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        SleepCard(day: DailyMetrics(date: "2026-10-01", sleepMinutes: 445, sleepManual: true), onSync: {})
+        SleepCard(day: DailyMetrics(date: "2026-10-01"), onSync: {}, onAdd: {}) { EmptyView() }
     }
 }
 

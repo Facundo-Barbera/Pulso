@@ -6,6 +6,10 @@ import SwiftUI
 struct SleepView: View {
     let model: PulsoModel
     @State private var store = SleepStore()
+    /// The add/edit sheet: a new night, or the hand-logged one to edit.
+    @State private var sheet: ManualSleepTarget?
+    @State private var deleting: SleepNight?
+    @State private var deleteRefusal: String?
 
     var body: some View {
         ScrollView {
@@ -13,7 +17,17 @@ struct SleepView: View {
                 VStack(spacing: 20) {
                     NightPicker(store: store, night: night)
                     SleepHero(night: night)
-                    HypnogramCard(night: night)
+                        .contextMenu {
+                            if night.isManual {
+                                Button("Editar noche", systemImage: "pencil") { sheet = ManualSleepTarget(night: night) }
+                                Button("Borrar noche", systemImage: "trash", role: .destructive) { deleting = night }
+                            }
+                        }
+                    if night.isManual {
+                        ManualNightCard(night: night) { sheet = ManualSleepTarget(night: night) }
+                    } else {
+                        HypnogramCard(night: night)
+                    }
                     InsightsCard(insights: night.insights + (night.night == store.nights.first?.night ? overview.summary.insights : []))
                     ScoreFactorsCard(score: night.score)
                     TrendCard(nights: store.nights, targetMin: overview.targetMin, selected: $store.selected)
@@ -26,8 +40,11 @@ struct SleepView: View {
                 .padding(.bottom, 32)
                 .animation(.snappy, value: night.night)
             } else if store.loaded && !store.syncing {
-                SleepEmptyState { Task { await store.sync(model, force: true) } }
-                    .containerRelativeFrame(.vertical)
+                SleepEmptyState(
+                    sync: { Task { await store.sync(model, force: true) } },
+                    add: { sheet = ManualSleepTarget(night: nil) }
+                )
+                .containerRelativeFrame(.vertical)
             } else {
                 ProgressView("Leyendo tu sueño…")
                     .containerRelativeFrame(.vertical)
@@ -37,12 +54,18 @@ struct SleepView: View {
         .navigationTitle("Sueño")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            if store.syncing {
-                ProgressView()
-            } else {
-                Button("Sincronizar", systemImage: "arrow.triangle.2.circlepath") {
-                    Task { await store.sync(model, force: true) }
+            ToolbarItem {
+                if store.syncing {
+                    ProgressView()
+                } else {
+                    Button("Sincronizar", systemImage: "arrow.triangle.2.circlepath") {
+                        Task { await store.sync(model, force: true) }
+                    }
                 }
+            }
+            ToolbarSpacer(.fixed)
+            ToolbarItem {
+                Button("Añadir noche", systemImage: "plus") { sheet = ManualSleepTarget(night: nil) }
             }
         }
         .refreshable { await store.sync(model, force: true) }
@@ -50,7 +73,39 @@ struct SleepView: View {
             await store.load(model)
             await store.sync(model)
         }
+        .sheet(item: $sheet) { target in
+            ManualSleepSheet(store: store, model: model, night: target.night)
+        }
+        .sensoryFeedback(.success, trigger: store.saved)
+        .confirmationDialog(
+            "¿Borrar esta noche?",
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            titleVisibility: .visible,
+            presenting: deleting
+        ) { night in
+            Button("Borrar noche", role: .destructive) {
+                guard let id = night.manual?.id else { return }
+                Task { deleteRefusal = await store.deleteManual(id: id, model: model) }
+            }
+        } message: { night in
+            Text("La noche del \(night.date.formatted(.dateTime.weekday(.wide).day().month(.wide))) se quita de tu sueño y de tu recuperación.")
+        }
+        .alert(
+            "No se pudo borrar",
+            isPresented: Binding(get: { deleteRefusal != nil }, set: { if !$0 { deleteRefusal = nil } }),
+            presenting: deleteRefusal
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { reason in
+            Text(reason)
+        }
     }
+}
+
+/// What the manual-night sheet opens on: nil logs a new night.
+private struct ManualSleepTarget: Identifiable {
+    let night: SleepNight?
+    var id: String { night?.night ?? "new" }
 }
 
 // MARK: - Night picker and hero
@@ -138,6 +193,9 @@ private struct SleepHero: View {
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .symbolRenderingMode(.multicolor)
+                if night.isManual {
+                    ManualSleepChip().padding(.top, 4)
+                }
             }
 
             Text(night.score.explanation)
@@ -152,6 +210,68 @@ private struct SleepHero: View {
             LinearGradient(colors: [Theme.sleep.opacity(0.18), .clear], startPoint: .top, endPoint: .bottom),
             in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
         )
+    }
+}
+
+/// Marks a night the person logged by hand, in words and a symbol. Hoy's sleep card uses it too.
+struct ManualSleepChip: View {
+    var body: some View {
+        GlassChip("Registrada a mano", systemImage: "hand.draw")
+            .accessibilityLabel("Noche registrada a mano")
+    }
+}
+
+// MARK: - Manual night
+
+/// Stands in for the hypnogram on a hand-logged night: no stages, so just when it was
+/// on the clock, the note, and a way to fix it.
+private struct ManualNightCard: View {
+    let night: SleepNight
+    let edit: () -> Void
+
+    /// 21:00 the evening before to 09:00, widened to fit the night.
+    private var domain: ClosedRange<Date> {
+        let from = min(night.bedtime, night.date.addingTimeInterval(-3 * 3600))
+        let to = max(night.wake, night.date.addingTimeInterval(9 * 3600))
+        return from.addingTimeInterval(-1800)...to.addingTimeInterval(1800)
+    }
+
+    var body: some View {
+        Card {
+            CardTitle(text: "Tu noche", systemImage: "bed.double")
+            Chart {
+                BarMark(
+                    xStart: .value("Me dormí", night.bedtime),
+                    xEnd: .value("Me desperté", night.wake),
+                    y: .value("Fase", SleepStage.asleep.label)
+                )
+                .foregroundStyle(LinearGradient(colors: [Theme.sleepDeep, Theme.sleep, Theme.sleepREM], startPoint: .leading, endPoint: .trailing))
+                .clipShape(Capsule())
+            }
+            .chartXScale(domain: domain)
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .hour, count: 3)) { _ in
+                    AxisValueLabel(format: .dateTime.hour())
+                }
+            }
+            .chartYAxis(.hidden)
+            .frame(height: 64)
+            .accessibilityLabel("Dormido de \(night.bedtime.formatted(date: .omitted, time: .shortened)) a \(night.wake.formatted(date: .omitted, time: .shortened))")
+
+            if let note = night.manual?.note, !note.isEmpty {
+                Label {
+                    Text(note).font(.callout)
+                } icon: {
+                    Image(systemName: "text.quote").foregroundStyle(Theme.sleep)
+                }
+            }
+            Text("Sin el reloj no hay fases ni eficiencia: sólo cuenta el horario que anotaste.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Editar noche", systemImage: "pencil", action: edit)
+                .buttonStyle(.glass)
+                .padding(.top, 2)
+        }
     }
 }
 
@@ -595,6 +715,7 @@ private struct DebtCard: View {
 
 private struct SleepEmptyState: View {
     let sync: () -> Void
+    let add: () -> Void
 
     var body: some View {
         VStack(spacing: 18) {
@@ -602,13 +723,17 @@ private struct SleepEmptyState: View {
                 .font(.system(size: 64))
                 .foregroundStyle(LinearGradient(colors: [Theme.sleepREM, Theme.sleepDeep], startPoint: .top, endPoint: .bottom))
                 .symbolEffect(.breathe)
-            Text("Duerme con tu Apple Watch y tus noches aparecerán aquí.")
+            Text("Duerme con tu Apple Watch y tus noches aparecerán aquí. Si dormiste sin él, añádela a mano.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Sincronizar desde Salud", systemImage: "heart.text.square", action: sync)
-                .buttonStyle(.glassProminent)
-                .tint(Theme.sleep)
+            VStack(spacing: 10) {
+                Button("Sincronizar desde Salud", systemImage: "heart.text.square", action: sync)
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.sleep)
+                Button("Añadir noche", systemImage: "plus", action: add)
+                    .buttonStyle(.glass)
+            }
         }
         .padding(32)
         .frame(maxWidth: .infinity)
@@ -626,7 +751,7 @@ private let previewNight: SleepNight = {
         return SleepSegment(start: start, end: start + minutes * 60_000, stage: stage)
     }
     return SleepNight(
-        night: "2026-10-01", source: "watch", inBedStart: bed, inBedEnd: start, asleepStart: bed, asleepEnd: start,
+        night: "2026-10-01", source: "Apple Watch", sourceKind: "watch", inBedStart: bed, inBedEnd: start, asleepStart: bed, asleepEnd: start,
         minutes: SleepMinutes(inBed: 515, asleep: 495, awake: 20, core: 260, deep: 85, rem: 150, unspecified: 0),
         efficiency: 0.96, stagePct: SleepStagePct(core: 0.53, deep: 0.17, rem: 0.30), bedtimeMin: -30, wakeMin: 485,
         score: SleepScore(value: 100, factors: [
@@ -634,6 +759,22 @@ private let previewNight: SleepNight = {
         ], explanation: "Dormiste más de ocho horas con mucho sueño profundo y REM, y te despertaste poco."),
         insights: ["Te acostaste 40 minutos más tarde que tu media de las últimas dos semanas."],
         segments: segments
+    )
+}()
+
+private let previewManualNight: SleepNight = {
+    let start = 1_790_811_000_000.0 // 00:10
+    let end = start + 445 * 60_000
+    return SleepNight(
+        night: "2026-10-01", source: "Registrada a mano", sourceKind: "manual", inBedStart: start, inBedEnd: end, asleepStart: start, asleepEnd: end,
+        minutes: SleepMinutes(inBed: 445, asleep: 445, awake: 0, core: 0, deep: 0, rem: 0, unspecified: 445),
+        efficiency: 1, stagePct: nil, bedtimeMin: 10, wakeMin: 455,
+        score: SleepScore(value: 74, factors: [
+            SleepScoreFactor(key: "duration", label: "Duración respecto a tu objetivo de sueño", points: 30, maxPoints: 40, detail: "7 h 25 min de 8 h"),
+        ], explanation: "Dormiste algo menos que tu objetivo."),
+        insights: [],
+        segments: [SleepSegment(start: start, end: end, stage: .asleep)],
+        manual: SleepNight.Manual(id: "m1", note: "Sin reloj, se quedó cargando")
     )
 }()
 
@@ -649,5 +790,13 @@ private let previewSummary = SleepSummary(
         ScoreFactorsCard(score: previewNight.score)
         ConsistencyCard(nights: [previewNight], summary: previewSummary)
         DebtCard(summary: previewSummary) { _ in }
+    }
+}
+
+#Preview("Sueño a mano · 375 pt · XXL") {
+    NarrowPreview(dynamicType: .xxLarge) {
+        SleepHero(night: previewManualNight)
+        ManualNightCard(night: previewManualNight) {}
+        SleepEmptyState(sync: {}, add: {})
     }
 }
