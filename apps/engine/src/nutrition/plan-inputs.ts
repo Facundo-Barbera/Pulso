@@ -9,25 +9,25 @@ import { dateString, macroShape, planItem, slot } from "./inputs";
 export const MAX_DAY_CHANGE_PCT = 15;
 
 const where = {
-  date: dateString.optional().describe("Local day (YYYY-MM-DD). Defaults to today"),
-  slot: slot.optional().describe("Meal slot on that day; required unless slotId is given"),
-  slotId: z.string().optional().describe("Exact slot id from get_diet_horizon (needed only when a day has two snacks)"),
+  date: dateString.optional().describe("Local day; default today"),
+  slot: slot.optional().describe("Required unless slotId"),
+  slotId: z.string().optional().describe("From get_diet_horizon; needed only when a day has two snacks"),
 };
 
 const compensate = {
   compensate: z
     .enum(["none", "day", "spread"])
     .default("none")
-    .describe("How to make up for the difference: none (minor slip, let it go), day (rebalance the rest of that day), spread (over the next days)"),
-  spreadDays: z.number().int().min(1).max(7).default(3).describe("Days to spread over when compensate = spread"),
-  maxChangePct: z.number().min(1).max(MAX_DAY_CHANGE_PCT).default(MAX_DAY_CHANGE_PCT).describe(`Most any day may move, % of its kcal goal (max ${MAX_DAY_CHANGE_PCT})`),
+    .describe("none (minor slip), day (rebalance the rest of that day), spread (over the next days)"),
+  spreadDays: z.number().int().min(1).max(7).default(3).describe("For spread"),
+  maxChangePct: z.number().min(1).max(MAX_DAY_CHANGE_PCT).default(MAX_DAY_CHANGE_PCT).describe("Most any day may move, % of its kcal goal"),
 };
 
 export const fillSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("items"),
     name: z.string().trim().max(120).nullish().describe("Dish name"),
-    items: z.array(planItem).min(1).max(30).describe("Foods with quantity and the TOTAL macros for that quantity"),
+    items: z.array(planItem).min(1).max(30).describe("TOTAL macros for each quantity"),
   }),
   z.object({ kind: z.literal("recipe"), recipeId: z.string(), portions: z.number().positive().max(10).default(1) }),
   z.object({ kind: z.literal("prep"), prepId: z.string(), portions: z.number().positive().max(10).default(1) }),
@@ -40,38 +40,36 @@ export const fillSchema = z.discriminatedUnion("kind", [
 export type Fill = z.infer<typeof fillSchema>;
 
 export const substituteSchema = z.object({
-  name: z.string().trim().min(1).max(120).describe("What to use instead, in Spanish, e.g. 'Atún en conserva al natural'"),
-  ratio: z.number().positive().max(5).default(1).describe("Amount of substitute per unit of the original (1 = same grams)"),
-  per100: z
-    .object(macroShape)
-    .describe("Macros of the substitute per 100 g or 100 ml (per 1 serving when the original is counted in servings): kcal and grams"),
+  name: z.string().trim().min(1).max(120).describe("In Spanish, e.g. 'Atún al natural'"),
+  ratio: z.number().positive().max(5).default(1).describe("Per unit of the original (1 = same grams)"),
+  per100: z.object(macroShape).describe("Per 100 g or ml (per serving when the original is in servings)"),
 });
 
 export const opShapes = {
   skip: { ...where, ...compensate, note: z.string().trim().max(200).optional() },
   replace: {
     ...where,
-    entryIds: z.array(z.string()).max(20).optional().describe("Logged entries (from log_meal) eaten instead"),
-    what: z.string().trim().max(200).optional().describe("What was eaten instead, in the person's words, when not logged"),
+    entryIds: z.array(z.string()).max(20).optional().describe("Logged entries eaten instead"),
+    what: z.string().trim().max(200).optional().describe("What they ate, in their words, when not logged"),
     ...compensate,
   },
   ate_out: {
     ...where,
-    name: z.string().trim().max(120).optional().describe("What and where, in the person's words, e.g. 'Tacos al pastor con amigos'"),
-    kcal: z.number().min(0).max(5000).optional().describe("Estimated kcal of what they ate; omit to estimate as the planned meal × 1.3"),
-    protein: z.number().min(0).max(500).optional().describe("Grams, with kcal"),
-    carbs: z.number().min(0).max(800).optional().describe("Grams, with kcal"),
-    fat: z.number().min(0).max(400).optional().describe("Grams, with kcal"),
-    fiber: z.number().min(0).max(150).optional().describe("Grams, with kcal"),
-    eatenAt: z.number().int().optional().describe("Epoch ms; default now (or midday for another day)"),
+    name: z.string().trim().max(120).optional().describe("What and where, in their words"),
+    kcal: z.number().min(0).max(5000).optional().describe("Estimate; omit for the planned meal × 1.3"),
+    protein: z.number().min(0).max(500).optional().describe("g"),
+    carbs: z.number().min(0).max(800).optional().describe("g"),
+    fat: z.number().min(0).max(400).optional().describe("g"),
+    fiber: z.number().min(0).max(150).optional().describe("g"),
+    eatenAt: z.number().int().optional().describe("Epoch ms; default now (midday on another day)"),
     note: z.string().trim().max(200).optional(),
     ...compensate,
   },
   place: {
-    entryIds: z.array(z.string()).min(1).max(20).describe("Logged entries of one day (list_meals ids)"),
-    slot: slot.optional().describe("The meal they were, on their day (desayuno, comida…)"),
-    slotId: z.string().optional().describe("Exact slot id from get_diet_horizon"),
-    extra: z.boolean().optional().describe("true: they were a snack or extra, not any planned meal"),
+    entryIds: z.array(z.string()).min(1).max(20).describe("One day's entries"),
+    slot: slot.optional().describe("The meal they were"),
+    slotId: z.string().optional().describe("From get_diet_horizon"),
+    extra: z.boolean().optional().describe("A snack or extra, no planned meal"),
   },
   rebalance: {
     date: where.date,
@@ -79,46 +77,46 @@ export const opShapes = {
       .array(z.object({ slot, name: z.string().max(120).nullish(), items: z.array(planItem).min(1).max(15) }))
       .max(6)
       .optional()
-      .describe("Replacement meals for some remaining slots; macros are totals per item"),
-    slots: z.array(slot).max(6).optional().describe("Override which slots are still ahead, only if the default is wrong"),
-    note: z.string().trim().max(200).optional().describe("Why, in one short Spanish sentence"),
+      .describe("Replacement meals for remaining slots; TOTAL macros per item"),
+    slots: z.array(slot).max(6).optional().describe("Override which slots are still ahead"),
+    note: z.string().trim().max(200).optional().describe("Why, one short Spanish sentence"),
     resetSwaps: z.boolean().optional(),
     maxChangePct: compensate.maxChangePct,
   },
   spread: {
-    date: where.date.describe("The day the deviation happened (YYYY-MM-DD); spreading starts the day after. Defaults to today"),
-    kcal: z.number().min(-5000).max(5000).describe("The deviation in kcal: positive when the person ate MORE than planned, negative when less"),
+    date: where.date.describe("Day of the deviation (default today); spreading starts the next day"),
+    kcal: z.number().min(-5000).max(5000).describe("Eaten minus planned: positive = ate MORE"),
     days: compensate.spreadDays,
     maxChangePct: compensate.maxChangePct,
   },
   ingredient_unavailable: {
-    ingredient: z.string().trim().min(1).max(120).describe("What can't be had, in Spanish, e.g. 'salmón'"),
+    ingredient: z.string().trim().min(1).max(120).describe("In Spanish, e.g. 'salmón'"),
     substitute: substituteSchema.optional().describe("Omit to preview the affected meals"),
-    from: dateString.optional().describe("First day to change (default today)"),
-    to: dateString.optional().describe("Last day to change (default the end of the plan's horizon)"),
+    from: dateString.optional().describe("Default today"),
+    to: dateString.optional().describe("Default the horizon's end"),
   },
   no_time_to_cook: {
     date: where.date,
-    slot: slot.optional().describe("The meal they can't cook; default every meal that day that needs more than 15 min"),
+    slot: slot.optional().describe("Default: every meal that day needing over 15 min"),
     strategy: z
       .enum(["auto", "leftover", "move", "quick"])
       .default("auto")
-      .describe("leftover: a portion from a batch already planned or cooked; move: swap with the same meal on a later day that needs no cooking; quick: the fill you give; auto: leftover, else move"),
-    toDate: dateString.optional().describe("For move: the day to swap with (default the next one that needs no cooking)"),
-    quick: fillSchema.optional().describe("For quick: what to eat instead (items, a quick recipe, or eat_out)"),
+      .describe("leftover: a free batch portion cooked by then; move: swap with the same meal on a later no-cook day; quick: `quick`; auto: leftover, else move"),
+    toDate: dateString.optional().describe("For move; default the next no-cook day"),
+    quick: fillSchema.optional().describe("For quick: what to eat instead"),
   },
   move: {
     ...where,
-    toDate: dateString.describe("Day to move it to"),
-    toSlot: slot.optional().describe("Slot on that day (default the same slot). If it holds a meal, the two swap"),
+    toDate: dateString,
+    toSlot: slot.optional().describe("Default the same slot; a meal there swaps with it"),
   },
   swap_days: { a: dateString, b: dateString },
   fill: { ...where, fill: fillSchema, note: z.string().trim().max(200).optional() },
   schedule_prep: {
     recipeId: z.string(),
-    cookDate: dateString.describe("Day they cook the batch"),
-    portions: z.number().int().min(1).max(20).describe("Portions the batch yields"),
-    assign: z.array(z.object({ date: dateString, slot })).max(20).default([]).describe("Slots that eat a portion each, on or after cookDate"),
+    cookDate: dateString,
+    portions: z.number().int().min(1).max(20).describe("Portions it yields"),
+    assign: z.array(z.object({ date: dateString, slot })).max(20).default([]).describe("Slots eating a portion each, on or after cookDate"),
   },
   prep_cooked: { prepId: z.string(), cooked: z.boolean().default(true) },
   use_leftover: { prepId: z.string(), date: dateString, slot },

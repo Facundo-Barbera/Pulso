@@ -8,18 +8,18 @@ import { macroShape } from "./inputs";
 import { pick, scale, sum } from "./macros";
 
 export const ingredientSchema = z.object({
-  name: z.string().trim().min(1).max(120).describe("Ingredient in Spanish, as you'd buy it: 'Carne picada de ternera', 'Tomate triturado'"),
-  quantity: z.number().positive().max(10000).describe("Amount for the WHOLE recipe, in `unit`"),
-  unit: z.enum(MEASURE_UNITS).describe("g, ml, serving, or a household unit (lata, taza, cucharada, unidad…)"),
+  name: z.string().trim().min(1).max(120).describe("In Spanish, as bought: 'Tomate triturado'"),
+  quantity: z.number().positive().max(10000).describe("For the WHOLE recipe"),
+  unit: z.enum(MEASURE_UNITS),
   ...macroShape,
 });
 
 export const recipeShape = {
-  name: z.string().trim().min(1).max(120).describe("Dish name in Spanish, e.g. 'Pasta boloñesa'"),
-  servings: z.number().positive().max(30).describe("Portions the ingredients make"),
-  prepMinutes: z.number().int().min(0).max(600).describe("Active cooking time in minutes"),
-  batch: z.boolean().default(false).describe("true when it keeps well for several days (stews, bolognese, lentils, rice dishes): good for meal prep"),
-  ingredients: z.array(ingredientSchema).min(1).max(40).describe("For the whole recipe; macros are totals for each ingredient's amount"),
+  name: z.string().trim().min(1).max(120).describe("In Spanish, e.g. 'Pasta boloñesa'"),
+  servings: z.number().positive().max(30).describe("Portions it makes"),
+  prepMinutes: z.number().int().min(0).max(600).describe("Active cooking minutes"),
+  batch: z.boolean().default(false).describe("Keeps well for days (stews, lentils): good for meal prep"),
+  ingredients: z.array(ingredientSchema).min(1).max(40).describe("TOTAL macros for each amount"),
   steps: z.string().trim().max(4000).nullish().describe("Short method, in Spanish"),
 };
 export const recipeSchema = z.object(recipeShape);
