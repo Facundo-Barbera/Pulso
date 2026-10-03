@@ -28,6 +28,25 @@ extension Readiness {
         return score >= 75 ? "Bien" : score >= 50 ? "Normal" : "Atención"
     }
 
+    /// From 20:00 to 5:00 the training window is over: the hero talks about winding down, whatever the score.
+    static func isNight(_ date: Date) -> Bool {
+        let hour = Calendar.current.component(.hour, from: date)
+        return hour >= 20 || hour < 5
+    }
+
+    func title(at date: Date) -> String {
+        Self.isNight(date) && score != nil ? "Hora de bajar el ritmo" : title
+    }
+
+    func explanation(at date: Date) -> String {
+        guard Self.isNight(date), score != nil else { return explanation }
+        return switch level {
+        case "high": "Hoy te recuperaste bien. Ahora toca descansar: dormir bien es lo que lo mantiene mañana."
+        case "low": "Hoy venías bajo de recuperación. Acuéstate temprano: es lo que más ayuda para mañana."
+        default: "Recuperación normal hoy. Lo que más suma ahora es dormir tus horas."
+        }
+    }
+
     var title: String {
         switch level {
         case "high": "Lista para exigirte"
@@ -57,22 +76,25 @@ struct ReadinessHero: View {
             }
             .frame(width: 180, height: 180)
 
-            VStack(spacing: 6) {
-                Label {
-                    Text(readiness?.title ?? "Calculando…").multilineTextAlignment(.center)
-                } icon: {
-                    if let readiness, readiness.score != nil {
-                        Image(systemName: readiness.symbol)
-                            .foregroundStyle(readiness.color)
-                            .contentTransition(.symbolEffect(.replace))
+            // Re-read every few minutes so the words turn to winding down at 20:00 with the screen open.
+            TimelineView(.periodic(from: .now, by: 300)) { context in
+                VStack(spacing: 6) {
+                    Label {
+                        Text(readiness?.title(at: context.date) ?? "Calculando…").multilineTextAlignment(.center)
+                    } icon: {
+                        if let readiness, readiness.score != nil {
+                            Image(systemName: readiness.symbol)
+                                .foregroundStyle(readiness.color)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
                     }
-                }
-                .font(.title3.weight(.semibold))
-                if let explanation = readiness?.explanation {
-                    Text(explanation)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    .font(.title3.weight(.semibold))
+                    if let explanation = readiness?.explanation(at: context.date) {
+                        Text(explanation)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             }
 

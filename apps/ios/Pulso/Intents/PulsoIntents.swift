@@ -99,11 +99,11 @@ struct ReadinessIntent: AppIntent {
 }
 
 enum ReadinessPhrase {
-    static func text(_ r: Readiness) -> String {
+    static func text(_ r: Readiness, at date: Date = .now) -> String {
         guard let score = r.score else {
             return "Todavía no tengo datos suficientes para calcular tu recuperación. \(r.explanation)"
         }
-        return "Tu recuperación está en \(score) de 100: \(r.title.lowercased()). \(r.explanation)"
+        return "Tu recuperación está en \(score) de 100: \(r.title(at: date).lowercased()). \(r.explanation(at: date))"
     }
 }
 
@@ -119,12 +119,12 @@ struct ReadinessSnippet: View {
             .frame(width: 84, height: 84)
             VStack(alignment: .leading, spacing: 4) {
                 Label {
-                    Text(readiness.title).lineLimit(2)
+                    Text(readiness.title(at: .now)).lineLimit(2)
                 } icon: {
                     if readiness.score != nil { Image(systemName: readiness.symbol).foregroundStyle(readiness.color) }
                 }
                 .font(.headline)
-                Text(readiness.explanation).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                Text(readiness.explanation(at: .now)).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
         }
         .padding()

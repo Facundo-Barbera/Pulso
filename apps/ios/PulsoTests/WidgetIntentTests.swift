@@ -175,7 +175,10 @@ final class IntentParameterTests: XCTestCase {
 
     func testReadinessPhrase() {
         let ready = Readiness(date: "2026-10-01", score: 81, level: "high", factors: [], explanation: "Dormiste 8 h.", baselineDays: 14)
-        XCTAssertEqual(ReadinessPhrase.text(ready), "Tu recuperación está en 81 de 100: lista para exigirte. Dormiste 8 h.")
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: .now)!
+        XCTAssertEqual(ReadinessPhrase.text(ready, at: noon), "Tu recuperación está en 81 de 100: lista para exigirte. Dormiste 8 h.")
+        let night = Calendar.current.date(bySettingHour: 22, minute: 0, second: 0, of: .now)!
+        XCTAssertTrue(ReadinessPhrase.text(ready, at: night).contains("hora de bajar el ritmo"))
         let unknown = Readiness(date: "2026-10-01", score: nil, level: "unknown", factors: [], explanation: "Faltan noches.", baselineDays: 0)
         XCTAssertTrue(ReadinessPhrase.text(unknown).hasPrefix("Todavía no tengo datos"))
     }
