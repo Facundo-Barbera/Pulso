@@ -45,6 +45,13 @@ export type AgentToolResult = {
    * `index` into the message's `tools`); `done`: it was undone. Absent: it can't be.
    */
   undo?: "available" | "done";
+  /**
+   * The kind of change and what it changed, e.g. `program:<id>`. Consecutive
+   * cards of one message with the same group are one change to the person:
+   * clients show them as one card («N cambios») whose Deshacer undoes each of
+   * them, last first. Absent: the card stands alone.
+   */
+  group?: string;
 };
 
 export type AgentToolUse = {
