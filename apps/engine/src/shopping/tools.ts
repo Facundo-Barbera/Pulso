@@ -1,5 +1,5 @@
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { SHOPPING_CATEGORIES, type ShoppingItem, type ShoppingList } from "@pulso/contract";
+import type { ShoppingItem, ShoppingList } from "@pulso/contract";
 import { z } from "zod";
 import { withCard } from "../agent/card";
 import {
@@ -46,19 +46,14 @@ async function safely(run: () => unknown) {
 }
 
 const RETURNS =
-  "Returns the whole list: one line per item («id · name · amount as shown, e.g. '1,4 kg' / '2 L' / '12' · category · 'a mano' when added by hand · comprado · ya tengo · «note»»), progress = bought/to buy («ya tengo» excluded), stale. " +
-  `Categories: ${SHOPPING_CATEGORIES.join(", ")}.`;
-const RETURNS_CHANGED = "Returns only the items it touched, as lines like get_shopping_list's, and the progress.";
+  "Returns one line per item («id · name · amount · category · 'a mano' if added by hand · comprado · ya tengo · «note»»), progress = bought/to buy («ya tengo» excluded), stale.";
+const RETURNS_CHANGED = "Returns the items it touched, as get_shopping_list lines, and the progress.";
 
 export const shoppingTools = [
   tool(
     "generate_shopping_list",
-    "Builds the shopping list from the active diet plan for the next `days` days (default 7; the app offers 3, 7 or 14) starting `from` " +
-      "(local YYYY-MM-DD, default today): adds up the dated plan's meals still to eat (and whole prep batches still to cook) per ingredient, " +
-      "rounds up to buyable amounts. Regenerating the same range keeps the person's manual items and " +
-      "the bought / 'ya tengo' marks of ingredients still needed; a new start date is a new trip (marks reset). " +
-      "Plan changes (ingredient_unavailable, schedule_prep…) rebuild it by themselves. " +
-      "Use it after creating a new plan when the person accepts, or when they ask for the list. " +
+    "Build the shopping list from the active plan's meals still to eat (and batches to cook) for `days` from `from` (local YYYY-MM-DD, default today), per ingredient, in buyable amounts. " +
+      "The same range keeps manual items and the bought / 'ya tengo' marks still needed; a new start date is a new trip (marks reset). Plan changes rebuild it by themselves. " +
       RETURNS,
     generateSchema.shape,
     async (input) => safely(() => listForCoach(generateShoppingList(input))),
@@ -71,9 +66,7 @@ export const shoppingTools = [
   ),
   tool(
     "add_shopping_items",
-    "Adds items the person needs that are not in the plan (e.g. 'apunta papel de cocina y café'). amount is free text in Spanish " +
-      "('2 kg', '1 paquete'); category is guessed from the name when omitted. " +
-      RETURNS_CHANGED,
+    "Add items not in the plan ('apunta papel de cocina'). amount is Spanish free text ('2 kg'); category is guessed when omitted. " + RETURNS_CHANGED,
     { items: z.array(itemInputSchema).min(1).max(50) },
     async ({ items }) =>
       safely(() => {
@@ -84,23 +77,19 @@ export const shoppingTools = [
   ),
   tool(
     "update_shopping_item",
-    "Changes fields of one item by id (only the ones given): rename, change the amount text, move it to another category when it is " +
-      "in the wrong aisle, add a note, or set pantry = true when the person already has it at home ('ya tengo'). " +
-      RETURNS_CHANGED,
-    { id: z.string().describe("Item id from get_shopping_list."), ...itemPatchSchema.shape },
+    "Change one item by id, only the fields given; pantry true = 'ya tengo' (they have it at home). " + RETURNS_CHANGED,
+    { id: z.string(), ...itemPatchSchema.shape },
     async ({ id, ...patch }) => safely(() => changed(updateShoppingItem(id, patch), [id])),
   ),
   tool(
     "check_shopping_items",
-    "Marks items as bought (checked = true) or back to pending (false), e.g. when the person says what they already bought. " + RETURNS_CHANGED,
+    "Mark items bought (checked true) or back to pending (false). " + RETURNS_CHANGED,
     { ids: z.array(z.string()).min(1).max(200), checked: z.boolean().default(true) },
     async ({ ids, checked }) => safely(() => changed(checkShoppingItems(ids, checked), ids)),
   ),
   tool(
     "remove_shopping_items",
-    "Deletes items from the list by id. Prefer update_shopping_item with pantry = true for a plan ingredient the person already has, " +
-      "since a regeneration would bring a deleted plan item back. " +
-      RETURNS_CHANGED,
+    "Delete items by id. For a plan ingredient they already have, prefer pantry true (update_shopping_item): a regeneration brings deleted plan items back. " + RETURNS_CHANGED,
     { ids: z.array(z.string()).min(1).max(200) },
     async ({ ids }) => safely(() => changed(removeShoppingItems(ids), ids)),
   ),
