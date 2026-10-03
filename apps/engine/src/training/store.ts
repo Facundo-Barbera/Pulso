@@ -5,6 +5,8 @@ import type {
   CardioLog,
   CardioTarget,
   DayEdit,
+  DayExerciseInput,
+  EditScope,
   Equipment,
   Exercise,
   ExerciseDetail,
@@ -48,6 +50,8 @@ import { programWeeks } from "./weeks";
 
 /** A caller error: the message says what to fix. */
 export class TrainingError extends Error {}
+/** Deshacer refused: the program changed since the change being undone. */
+export class ProgramConflictError extends TrainingError {}
 
 // ── Exercises ────────────────────────────────────────────────────────────────
 
@@ -295,6 +299,83 @@ function programOfDay(dayId: string): Program {
  * stores the list as today's override and leaves the program alone.
  */
 export function updateProgramDay(dayId: string, edit: DayEdit, now = Date.now()): ActiveProgramResponse {
+  editDay(dayId, edit, now);
+  return activeProgramView(now);
+}
+
+/**
+ * Rewrites several days of one program in one write, all or nothing (see
+ * updateProgramDay for each day). Returns the program as it is now.
+ */
+export function updateProgramDays(edits: { dayId: string; exercises: DayExerciseInput[] }[], scope: EditScope, now = Date.now()): Program {
+  const ids = new Set(edits.map((e) => e.dayId));
+  if (ids.size !== edits.length) throw new TrainingError("Each day can appear only once: put all of a day's changes in its one exercise list.");
+  const programs = new Set(edits.map((e) => programOfDay(e.dayId).id));
+  if (programs.size > 1) throw new TrainingError("All days must belong to the same program.");
+  db().transaction(() => {
+    for (const e of edits) editDay(e.dayId, { scope, exercises: e.exercises }, now);
+  })();
+  return withOverrides(getProgram([...programs][0]!)!, now);
+}
+
+/** Days of a program as they are, to put back with restoreProgramDays: each one's own list and today's one-off list. */
+export type ProgramDaysSnapshot = {
+  programId: string;
+  /** The local date `override` is for. */
+  date: string;
+  days: { dayId: string; exercises: DayExerciseInput[]; override: ProgramExercise[] | null }[];
+};
+
+const asInput = (e: ProgramExercise): DayExerciseInput => ({
+  id: e.id,
+  exerciseId: e.exerciseId,
+  sets: e.sets,
+  repMin: e.repMin,
+  repMax: e.repMax,
+  targetRpe: e.targetRpe,
+  targetRir: e.targetRir,
+  restSeconds: e.restSeconds,
+  notes: e.notes,
+  cardio: e.cardio,
+  weightKg: e.weightKg ?? null,
+  supersetId: e.supersetId,
+});
+
+/** `dayIds` of the active program (all of its days when omitted) as they are now; undefined without an active program. */
+export function snapshotProgramDays(dayIds?: string[], now = Date.now()): ProgramDaysSnapshot | undefined {
+  const program = getActiveProgram();
+  if (!program) return undefined;
+  const date = localDate(new Date(now));
+  const today = new Map(withOverrides(program, now).days.filter((d) => d.overridden).map((d) => [d.id, d.exercises]));
+  const days = program.days.filter((d) => !dayIds || dayIds.includes(d.id));
+  return { programId: program.id, date, days: days.map((d) => ({ dayId: d.id, exercises: d.exercises.map(asInput), override: today.get(d.id) ?? null })) };
+}
+
+/** What a snapshot's days say, to tell whether they changed since (hand-set loads aside: logging a session spends them). */
+export const daysFingerprint = (s: ProgramDaysSnapshot): string =>
+  JSON.stringify(s.days.map((d) => [d.dayId, d.exercises.map(({ weightKg: _w, ...e }) => e), d.override?.map(({ weightKg: _w, ...e }) => e) ?? null]));
+
+/**
+ * Puts days back as `snapshot` had them (Deshacer on a program change).
+ * `expected` is the fingerprint of the days right after that change: when they
+ * changed since, nothing is touched and it throws, so a later change is never lost.
+ */
+export function restoreProgramDays(snapshot: ProgramDaysSnapshot, expected: string | null, now = Date.now()): void {
+  const current = snapshotProgramDays(snapshot.days.map((d) => d.dayId), now);
+  if (!current || current.programId !== snapshot.programId) throw new ProgramConflictError("That program is no longer the active one.");
+  if (expected !== null && daysFingerprint(current) !== expected) throw new ProgramConflictError("A later change touched these days.");
+  const database = db();
+  database.transaction(() => {
+    for (const d of snapshot.days) {
+      editDay(d.dayId, { scope: "always", exercises: d.exercises }, now);
+      if (d.override && snapshot.date === localDate(new Date(now))) {
+        database.run("INSERT INTO program_day_overrides (day_id, date, exercises, updated_at) VALUES (?, ?, ?, ?)", [d.dayId, snapshot.date, JSON.stringify(d.override), now]);
+      }
+    }
+  })();
+}
+
+function editDay(dayId: string, edit: DayEdit, now: number): void {
   const program = programOfDay(dayId);
   const day = program.days.find((d) => d.id === dayId)!;
   const checked = prescribeDay(day.name, edit.exercises, libraryMap());
@@ -320,7 +401,7 @@ export function updateProgramDay(dayId: string, edit: DayEdit, now = Date.now())
         [dayId, date, JSON.stringify(exercises), now],
       );
     })();
-    return activeProgramView(now);
+    return;
   }
 
   const existing = new Map(
@@ -344,7 +425,6 @@ export function updateProgramDay(dayId: string, edit: DayEdit, now = Date.now())
     for (const id of existing.keys()) if (!kept.has(id)) database.run("DELETE FROM program_exercises WHERE id = ?", [id]);
     database.run("DELETE FROM program_day_overrides WHERE day_id = ? AND date = ?", [dayId, date]);
   })();
-  return activeProgramView(now);
 }
 
 /** Drops today's one-off changes to a day. */
