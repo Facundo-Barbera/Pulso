@@ -36,6 +36,7 @@ final class ConversationStore {
     @ObservationIgnored private var serverIds: [String: String] = [:]
     @ObservationIgnored private var localOf: [String: String] = [:]
     @ObservationIgnored private var compactedInTurn = false
+    @ObservationIgnored private var summaryTask: Task<Void, Never>?
 
     var isEmpty: Bool { !items.contains { $0.message != nil } }
     /// Earlier contexts with something in them, newest first: where «Volver a» can go.
@@ -98,7 +99,19 @@ final class ConversationStore {
         threadId = page.threadId
         compacting = page.compacting
         loaded = true
+        if compacting, !attach { watchSummary() }
         return attach
+    }
+
+    /// An hourly summary has no stream to say it ended: re-read the feed until the Mac says it did.
+    private func watchSummary() {
+        guard summaryTask == nil else { return }
+        summaryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard let self, !Task.isCancelled else { return }
+            summaryTask = nil
+            await load()
+        }
     }
 
     func send(_ raw: String, photos: [ChatPhoto] = [], products: [AgentProduct] = []) async {
@@ -204,6 +217,9 @@ final class ConversationStore {
     }
 
     private func apply(_ event: AgentStreamEvent) {
+        // Anything after the compacting status (the turn starting after an hourly summary,
+        // its boundary, text, a tool) means the summary is over, even if its closing status got lost.
+        if case .compacting = event {} else if compacting { compacting = false }
         switch event {
         case let .start(messageId, userMessageId):
             // Ids stay local so rows keep their identity; the Mac's are remembered for undo and reloads.

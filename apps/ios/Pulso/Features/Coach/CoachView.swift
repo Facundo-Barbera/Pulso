@@ -61,7 +61,7 @@ struct CoachView: View {
                     }
                 }
                 if store.compacting {
-                    Label("Compactando lo anterior…", systemImage: "sparkles")
+                    Label(store.streaming ? "Resumiendo para seguir…" : "Resumiendo la conversación…", systemImage: "sparkles")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .symbolEffect(.pulse, options: .repeating)
@@ -166,7 +166,7 @@ struct CoachView: View {
         }
         .navigationTitle("Coach")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationSubtitle(store.compacting ? "Compactando…" : store.streaming ? "Respondiendo…" : "")
+        .navigationSubtitle(store.compacting ? "Resumiendo…" :store.streaming ? "Respondiendo…" : "")
         .sensoryFeedback(.impact(weight: .medium), trigger: store.sentCount)
         .sensoryFeedback(.success, trigger: store.finishedCount)
         .sensoryFeedback(.selection, trigger: store.activeContextId)
