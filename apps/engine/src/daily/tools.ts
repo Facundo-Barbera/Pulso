@@ -11,7 +11,7 @@ export const dailyTools = [
     "get_daily_metrics",
     "Per-day Apple Health signals for a date range (inclusive, local dates YYYY-MM-DD, max 90 days; defaults to the last 7 days). " +
       "Each day: steps; activeEnergy kcal; exerciseMinutes min; restingHeartRate bpm; hrv ms (SDNN); " +
-      "sleepMinutes, sleepDeep, sleepCore, sleepRem, sleepAwake in minutes (sleep is the night that ENDED on that date); " +
+      "sleepMinutes, sleepDeep, sleepCore, sleepRem, sleepAwake in minutes (sleep is the night that ENDED on that date; sleepManual true when it is a night the person logged by hand, without stages); " +
       "vo2max mL/kg/min; respiratoryRate breaths/min. Any field may be null when not measured. Days with no data are omitted. " +
       "restingHeartRateEstimated / exerciseMinutesEstimated are true when Health had no value and the phone estimated it " +
       "(lowest overnight heart rate; summed workout minutes), so treat those as approximate. " +
