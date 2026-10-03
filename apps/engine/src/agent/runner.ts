@@ -59,6 +59,10 @@ function turns(): Map<string, Turn> {
 
 export const activeTurn = (threadId: string): Turn | undefined => turns().get(threadId);
 
+// threadId → when its last turn ended. A reply's row is written when the turn starts, so this is when the thread last went quiet.
+const ended = (): Map<string, number> => ((globalThis as { __pulso_turn_ended__?: Map<string, number> }).__pulso_turn_ended__ ??= new Map());
+export const lastTurnEndedAt = (threadId: string): number | undefined => ended().get(threadId);
+
 /** Replays the turn so far, then forwards live events. Returns the unsubscribe. */
 export function subscribe(turn: Turn, listener: (event: AgentStreamEvent) => void): () => void {
   for (const event of turn.events) listener(event);
@@ -271,7 +275,10 @@ export function startTurn(
         tokens: (n) => setContextTokens(context.id, n),
       }
     : { get: () => sdkSessionOf(threadId), set: (id) => setSdkSession(threadId, id), seed: null, compacted: () => {}, tokens: () => {} };
-  const done = runTurn(turn, history, withProducts(text, products), attachments, run, slot, !!context).finally(() => turns().delete(threadId));
+  const done = runTurn(turn, history, withProducts(text, products), attachments, run, slot, !!context).finally(() => {
+    turns().delete(threadId);
+    ended().set(threadId, Date.now());
+  });
   return { turn, done };
 }
 

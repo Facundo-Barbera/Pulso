@@ -26,15 +26,20 @@ import { dataDir } from "../db";
 import { distillPrompt, type LegacyThread } from "./distill";
 import { newTurnState, translate } from "./events";
 import { getProfile } from "./profile";
-import { activeTurn, agentOptions, type QueryFn } from "./runner";
+import { activeTurn, agentOptions, lastTurnEndedAt, type QueryFn } from "./runner";
 import { deleteTranscript, stripImages } from "./transcripts";
 import { claudeMd, prepareWorkspace } from "./workspace";
 
 export const HOUR_MS = 60 * 60_000;
 /** The hourly summary waits this long after the latest message, so it never lands between a reply and the person's answer. */
 export const IDLE_BEFORE_COMPACT_MS = 30 * 60_000;
-/** Below this many tokens a context is cheap to carry: the hourly summary leaves it alone. */
-export const COMPACT_ABOVE_TOKENS = 60_000;
+/**
+ * Below this many tokens the hourly summary leaves a context alone. The fixed
+ * part (system prompt and tool schemas) is most of the first ~60k and no
+ * summary shrinks it; above this the history is big enough that the next long
+ * turn could hit the SDK's own compaction near AUTO_COMPACT_WINDOW mid-turn.
+ */
+export const COMPACT_ABOVE_TOKENS = 110_000;
 const COMPACT_LIMIT_MS = 5 * 60_000;
 const DISTILL_LIMIT_MS = 5 * 60_000;
 /** What /compact keeps; the CLI takes the rest of the line as instructions for the summary. */
@@ -56,7 +61,8 @@ export const compacting = () => running().compaction !== null;
  * its last turn measured it (unknown size: no).
  */
 export function worthCompacting(context: ContextRow, now = Date.now()): boolean {
-  const last = lastMessageAt(context.id);
+  const at = lastMessageAt(context.id);
+  const last = at === null ? null : Math.max(at, lastTurnEndedAt(context.thread_id) ?? 0);
   return (
     hasNewSinceCompaction(context) &&
     last !== null &&

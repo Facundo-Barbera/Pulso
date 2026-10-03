@@ -178,11 +178,11 @@ test("a turn keeps how big its context got; the SDK's summary resets it until th
 
 test("the hourly summary waits until the conversation is quiet and big, then runs /compact on the active session", async () => {
   const calls: Call[] = [];
-  const boundary = m(S1, { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 80_000, post_tokens: 9_000 } });
+  const boundary = m(S1, { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 130_000, post_tokens: 9_000 } });
   const run = fakeQuery([[boundary, m(S1, { type: "result", subtype: "success", is_error: false, result: "" })]], calls);
   await Bun.sleep(2);
-  await turn("Cuéntame más", fakeQuery([reply(S1, "Claro.", [usage(S1, 80_000)])]));
-  expect(activeContext().context_tokens).toBe(80_000);
+  await turn("Cuéntame más", fakeQuery([reply(S1, "Claro.", [usage(S1, 130_000)])]));
+  expect(activeContext().context_tokens).toBe(130_000);
   const quiet = new Date(Date.now() + IDLE_BEFORE_COMPACT_MS);
 
   // Right after the turn: the person may answer any moment.
@@ -199,6 +199,20 @@ test("the hourly summary waits until the conversation is quiet and big, then run
   expect(feedPage().items.at(-1)).toMatchObject({ type: "marker", marker: { kind: "compacted" } });
 });
 
+test("quiet counts from when the last turn ended, not from when its reply started", async () => {
+  await Bun.sleep(2);
+  const started = Date.now();
+  const slow = (async function* () {
+    await Bun.sleep(60);
+    yield* reply(S1, "Listo.", [usage(S1, COMPACT_ABOVE_TOKENS + 1)]);
+  }) as unknown as QueryFn;
+  await turn("Haz la rutina más corta", slow);
+  const calls: Call[] = [];
+  // Half an hour after the reply's row was written, but not after the turn ended.
+  expect(await compactActive(fakeQuery([], calls), new Date(started + IDLE_BEFORE_COMPACT_MS + 20))).toBe(false);
+  expect(calls).toHaveLength(0);
+});
+
 test("the hourly summary leaves a small context, or one of unknown size, alone however quiet", async () => {
   const calls: Call[] = [];
   await Bun.sleep(2);
@@ -212,7 +226,7 @@ test("the hourly summary leaves a small context, or one of unknown size, alone h
 
 test("the hourly summary waits for a turn in flight", async () => {
   await Bun.sleep(2);
-  setContextTokens(activeContext().id, 100_000);
+  setContextTokens(activeContext().id, COMPACT_ABOVE_TOKENS + 1);
   const calls: Call[] = [];
   const slow = (async function* () {})();
   const { done } = startTurn(ensureConversation().thread_id, "espera", (() => slow) as unknown as QueryFn);
@@ -311,7 +325,7 @@ test("sends wait for the hourly summary, then go into the active context", async
       await gate;
       yield boundary;
     })()) as unknown as QueryFn;
-  setContextTokens(activeContext().id, 100_000);
+  setContextTokens(activeContext().id, COMPACT_ABOVE_TOKENS + 1);
   const compaction = compactActive(slowCompact, new Date(Date.now() + IDLE_BEFORE_COMPACT_MS));
   expect(conversationView().compacting).toBe(true);
   const calls: Call[] = [];
