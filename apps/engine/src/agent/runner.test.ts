@@ -10,6 +10,7 @@ import { updateProfile } from "./profile";
 import { recapPrompt, startTurn, stopTurn, subscribe, type QueryFn } from "./runner";
 import { addMessage, createThread, getMessage, sdkSessionOf, setSdkSession } from "./threads";
 import { removeWorkspace } from "./workspace";
+import { clearLive } from "../training/live";
 
 const SESSION = "11111111-1111-1111-1111-111111111111";
 
@@ -93,6 +94,7 @@ test("a turn streams text and tool activity as NDJSON and is saved", async () =>
 test("each thread works in a disposable dir under the data dir, with nothing from this Mac", async () => {
   const thread = createThread();
   updateProfile({ goals: "Correr 10 km" });
+  clearLive();
   const calls: Call[] = [];
   await startTurn(thread.id, "hola", fakeQuery([TURN], calls)).done;
 
@@ -104,7 +106,7 @@ test("each thread works in a disposable dir under the data dir, with nothing fro
   expect(prompt).toMatchObject({ type: "custom", snapshot: false });
   expect(prompt.prompt).toEqual([expect.stringContaining("You are Pulso's Coach"), SYSTEM_PROMPT_DYNAMIC_BOUNDARY, expect.stringContaining("Correr 10 km")]);
   // No workout in progress: the live-session tools stay out.
-  const tools = (options.mcpServers!.pulso as { instance: { _registeredTools: Record<string, unknown> } }).instance._registeredTools;
+  const tools = (options.mcpServers!.pulso as unknown as { instance: { _registeredTools: Record<string, unknown> } }).instance._registeredTools;
   expect(Object.keys(tools)).not.toContain("edit_live_session");
   expect(Object.keys(tools)).toContain("edit_program_days");
   expect(options.settingSources).toEqual([]);
