@@ -13,38 +13,36 @@ export const unit = z.enum(QUANTITY_UNITS);
 const grams = z.number().min(0).max(2000);
 
 export const macroShape = {
-  kcal: z.number().min(0).max(20000).describe("Energy in kcal"),
-  protein: grams.describe("Protein in grams"),
-  carbs: grams.describe("Carbohydrates in grams"),
-  fat: grams.describe("Fat in grams"),
-  fiber: grams.default(0).describe("Fiber in grams"),
+  kcal: z.number().min(0).max(20000),
+  protein: grams.describe("g"),
+  carbs: grams.describe("g"),
+  fat: grams.describe("g"),
+  fiber: grams.default(0).describe("g"),
 };
 
 export const measureSchema = z.object({
   amount: z.number().positive().max(10000),
   unit: z.enum(MEASURE_UNITS),
   size: z.number().positive().max(5000).nullish().describe("g or ml in one household unit, when not its default"),
-  base: z.enum(["g", "ml"]).optional().describe("Whether `size` is grams or ml; defaults to the unit's own (ml for spoons and cups). estimate_portion sets it"),
+  base: z.enum(["g", "ml"]).optional().describe("Whether `size` is g or ml; default the unit's own. estimate_portion sets it"),
 });
 
 export const mealShape = {
-  name: z.string().trim().min(1).max(120).describe("Food or drink name in Spanish, e.g. 'Avena con leche', 'Coca-Cola'"),
-  slot: slot.describe(
-    "Meal slot: desayuno, media_manana, comida, merienda, cena or snack. Use snack for anything eaten or drunk between meals, at any hour; a day can have several",
-  ),
+  name: z.string().trim().min(1).max(120).describe("In Spanish, e.g. 'Avena con leche'"),
+  slot: slot.describe("snack = anything between meals, at any hour"),
   measure: z
     .union([z.string().trim().min(1).max(80), measureSchema])
     .optional()
     .describe(
-      `How much, in the person's words: '2 latas', '1 taza', 'media taza', '250 ml', '33 cl', '30 g', 'un puño', '2 galletas', 'una lata de 330 ml', '2 unidades de 11 g'. Household units and their default sizes: taza 240 ml, vaso 250 ml, lata 355 ml, botella 500 ml, cucharada 15 ml, cucharadita 5 ml, puño 30 g; add the size when it differs ('una botella de 330 ml'). A count of things without a weight ('2 galletas') is stored as servings. Prefer this over quantity + unit`,
+      "How much, in the person's words; preferred over quantity + unit: '2 latas', '250 ml', '30 g', 'un puño', '2 galletas' (a count without weight = servings). Defaults: taza 240 ml, vaso 250, lata 355, botella 500, cucharada 15, cucharadita 5, puño 30 g; say the size when it differs ('una botella de 330 ml')",
     ),
-  quantity: z.number().positive().max(10000).optional().describe("Amount in `unit`, only when not using `measure`"),
-  unit: unit.optional().describe("'g' for grams, 'ml' for drinks and other liquids, 'serving' for portions. Defaults to 'g'; ignored with `measure`"),
+  quantity: z.number().positive().max(10000).optional().describe("In `unit`, only without `measure`"),
+  unit: unit.optional().describe("Default 'g'; ignored with `measure`"),
   ...macroShape,
-  caffeineMg: z.number().min(0).max(2000).nullish().describe("Caffeine in mg, for coffee, tea, mate, cola or energy drinks (an espresso ≈ 63 mg, a 355 ml cola ≈ 34 mg)"),
-  alcoholG: z.number().min(0).max(500).nullish().describe("Grams of pure alcohol, for alcoholic drinks: ml × ABV × 0.789 (a 330 ml beer at 5 % ≈ 13 g)"),
-  eatenAt: z.number().optional().describe("When it was eaten, epoch ms. Defaults to now"),
-  date: dateString.optional().describe("Local day it counts toward (YYYY-MM-DD). Defaults to the day of eatenAt"),
+  caffeineMg: z.number().min(0).max(2000).nullish().describe("For coffee, tea, mate, cola, energy drinks (espresso ≈ 63 mg)"),
+  alcoholG: z.number().min(0).max(500).nullish().describe("Pure alcohol: ml × ABV × 0.789"),
+  eatenAt: z.number().optional().describe("Epoch ms; default now"),
+  date: dateString.optional().describe("Local day it counts toward; default eatenAt's"),
   barcode: z.string().max(32).nullish(),
 };
 export const mealSchema = z.object(mealShape);
@@ -82,21 +80,21 @@ export const planItem = z.object({
 });
 
 export const planShape = {
-  name: z.string().trim().min(1).max(120).describe("Plan name, e.g. 'Definición 2200 kcal'"),
-  notes: z.string().max(4000).nullish().describe("Free-text guidance shown with the plan: rules, swaps, hydration"),
-  startsOn: dateString.optional().describe("Day the plan's first day applies (YYYY-MM-DD). Defaults to today"),
-  activate: z.boolean().default(true).describe("Make this the active plan (the previous one is deactivated)"),
-  horizonDays: z.number().int().min(3).max(28).optional().describe("Days the plan is laid out ahead as dated meals (and the shopping list's default), usually 7 or 14. Default 14"),
+  name: z.string().trim().min(1).max(120).describe("e.g. 'Definición 2200 kcal'"),
+  notes: z.string().max(4000).nullish().describe("Guidance shown with the plan"),
+  startsOn: dateString.optional().describe("Day the first day applies; default today"),
+  activate: z.boolean().default(true).describe("Make it active, deactivating the previous"),
+  horizonDays: z.number().int().min(3).max(28).optional().describe("Days laid out ahead as dated meals (and the shopping list's default). Default 14"),
   days: z
     .array(
       z.object({
-        label: z.string().trim().min(1).max(60).describe("e.g. 'Lunes' or 'Día de entreno'"),
+        label: z.string().trim().min(1).max(60).describe("e.g. 'Lunes'"),
         meals: z
           .array(
             z.object({
               slot,
-              name: z.string().max(120).nullish().describe("Optional dish name for the meal"),
-              items: z.array(planItem).min(1).max(30).describe("Foods with quantity and the macros for that quantity"),
+              name: z.string().max(120).nullish().describe("Dish name"),
+              items: z.array(planItem).min(1).max(30).describe("TOTAL macros for each quantity"),
             }),
           )
           .min(1)
@@ -105,30 +103,30 @@ export const planShape = {
     )
     .min(1)
     .max(14)
-    .describe("Days in order; they repeat cyclically from startsOn. 1 day = same every day, 7 = a weekly plan"),
+    .describe("Repeat cyclically from startsOn: 1 = same every day, 7 = weekly"),
 };
 export const planSchema = z.object(planShape);
 
 export const targetsShape = {
-  kcal: z.number().min(0).max(20000).describe("Daily energy target in kcal"),
-  protein: grams.describe("Daily protein in grams"),
-  carbs: grams.describe("Daily carbohydrates in grams"),
-  fat: grams.describe("Daily fat in grams"),
-  fiber: grams.optional().describe("Daily fiber in grams. Defaults to 14 g per 1000 kcal"),
+  kcal: z.number().min(0).max(20000),
+  protein: grams.describe("g"),
+  carbs: grams.describe("g"),
+  fat: grams.describe("g"),
+  fiber: grams.optional().describe("g; default 14 per 1000 kcal"),
   zones: z
     .partialRecord(
       z.enum(["kcal", "protein", "carbs", "fat", "fiber"]),
       z
         .object({
-          min: z.number().min(0).max(20000).nullish().describe("Lower bound (kcal or g): eating less is 'below'"),
-          max: z.number().min(0).max(20000).nullish().describe("Upper bound (kcal or g): eating more is 'above'; for kind 'min' it only ends the band drawn"),
-          kind: z.enum(["min", "range", "max"]).optional().describe("min = reach at least min; range = stay between; max = stay under. Defaults from the bounds given"),
+          min: z.number().min(0).max(20000).nullish().describe("kcal or g; less is 'below'"),
+          max: z.number().min(0).max(20000).nullish().describe("More is 'above'; with kind 'min' it only ends the drawn band"),
+          kind: z.enum(["min", "range", "max"]).optional().describe("min = at least; range = between; max = under. Default from the bounds"),
         })
         .refine((zone) => zone.min == null || zone.max == null || zone.min <= zone.max, "min must not exceed max"),
     )
     .optional()
     .describe(
-      "Custom zones (the 'estás bien aquí' band each ring shows), only where the derived ones don't fit. Omitted nutrients are derived from the target and the body goal: kcal −10/+5 % on a fat-loss goal (±5 % maintaining, −5/+10 % gaining), protein and fiber at least the target, carbs and fat −20/+10 %. Every call replaces all custom zones.",
+      "Custom 'estás bien aquí' bands, only where the derived ones don't fit. Derived: kcal −10/+5 % losing fat (±5 % maintaining, −5/+10 % gaining), protein and fiber ≥ target, carbs and fat −20/+10 %. Each call replaces all custom zones.",
     ),
 };
 export const targetsSchema = z.object(targetsShape);

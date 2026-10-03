@@ -24,11 +24,11 @@ const components = z
   .array(componentSchema)
   .min(1)
   .max(30)
-  .describe("Each food in the dish with its amount (`measure` in words, as in log_meal) and TOTAL macros for that amount: kcal and grams. estimate_portion's logItem fits as is");
+  .describe("One per food, with TOTAL macros for its amount (estimate_portion's logItem fits as is)");
 
 const dishRef = {
-  id: z.string().optional().describe("The saved dish's id (list_dishes)"),
-  name: z.string().trim().min(1).max(120).optional().describe("Or its name, when you don't have the id"),
+  id: z.string().optional().describe("Saved dish id (list_dishes)"),
+  name: z.string().trim().min(1).max(120).optional().describe("Or its name"),
 };
 
 function findDish(id?: string, name?: string) {
@@ -41,20 +41,18 @@ function findDish(id?: string, name?: string) {
 export const dishTools = [
   tool(
     "list_dishes",
-    "The person's saved dishes (Mis platillos), most used first: id, name, usual slot, components (each with quantity in g/ml/serving, measure as said, TOTAL macros: kcal and grams), the dish's total macros and how many times it was logged. " +
-      "Check it whenever the person describes something they eat often (a shake, a usual breakfast) and log a match with log_dish.",
+    "Saved dishes (Mis platillos), most used first: id, name, usual slot, components (quantity g/ml/serving, measure as said, TOTAL macros), the dish's macros and times logged. Log a match with log_dish.",
     {},
     async () => json(listSavedDishes()),
   ),
   tool(
     "save_dish",
-    "Save a dish for next time (Mis platillos), so it logs in one go: from a dish already logged (loggedDishId, the entries' dish.id: saved as eaten), from a plan recipe (recipeId: one portion), or from components. " +
-      "Offer it when the person logs something they'll repeat (their shake, their usual breakfast) and save once they agree, or when they ask. Components are one default portion.",
+    "Save a dish (Mis platillos) to log in one go, once the person agrees or asks: from a logged dish (loggedDishId = the entries' dish.id, as eaten), a plan recipe (recipeId, one portion) or components (one default portion).",
     {
-      loggedDishId: z.string().optional().describe("A logged dish to save as it was eaten"),
-      recipeId: z.string().optional().describe("A plan recipe (list_recipes) to save one portion of"),
-      name: z.string().trim().min(1).max(120).optional().describe("Dish name in Spanish, e.g. 'Batido de proteína'. Required with components; defaults to the logged dish's or recipe's"),
-      slot: slot.nullish().describe("The meal it is usually eaten as; null when it varies (it then logs as the meal nearest the time)"),
+      loggedDishId: z.string().optional(),
+      recipeId: z.string().optional().describe("From list_recipes"),
+      name: z.string().trim().min(1).max(120).optional().describe("In Spanish. Required with components; else the source's"),
+      slot: slot.nullish().describe("Usual meal; null when it varies (then the meal nearest the time)"),
       components: components.optional(),
     },
     async ({ loggedDishId, recipeId, name, slot: usual, components: items }) =>
@@ -67,28 +65,26 @@ export const dishTools = [
   ),
   tool(
     "log_dish",
-    "Log a saved dish the person ate, as one meal ('me tomé mi batido de proteína'): its components at their default portion, or scaled ('medio' → scale 0.5, 'uno y medio' → 1.5), " +
-      "with one-off changes just this time ('con 300 ml de leche hoy' → overrides [{ component: 'leche', measure: '300 ml' }]; macros follow the amount; 'sin fresas' → remove) and foods added just this time (add). The saved dish itself does not change: use update_dish for that. " +
-      "Tie it to the plan like log_meal (at, slotId). Tell the person you used their saved dish.",
+    "Log a saved dish as one meal: default portion or scaled ('medio' → 0.5), with one-off changes ('con 300 ml de leche hoy' → overrides [{ component: 'leche', measure: '300 ml' }]; 'sin fresas' → remove) and one-off foods (add). The saved dish stays as is (update_dish changes it). Tied to the plan like log_meal.",
     {
       ...dishRef,
-      scale: z.number().positive().max(10).optional().describe("Portion factor, 1 by default"),
+      scale: z.number().positive().max(10).optional().describe("Default 1"),
       overrides: z
         .array(
           z.object({
-            component: z.union([z.number().int().min(0), z.string().trim().min(1)]).describe("Component index (0-based, as list_dishes orders them) or part of its name"),
-            measure: z.string().trim().min(1).max(80).optional().describe("New amount in words, in the component's own kind of unit: '300 ml', '2 tazas', '40 g'"),
-            remove: z.boolean().optional().describe("Leave it out this time"),
+            component: z.union([z.number().int().min(0), z.string().trim().min(1)]).describe("0-based index (list_dishes order) or part of its name"),
+            measure: z.string().trim().min(1).max(80).optional().describe("New amount in words, same kind of unit"),
+            remove: z.boolean().optional(),
           }),
         )
         .max(30)
         .optional(),
-      add: components.optional().describe("Foods added just this time"),
-      slot: slot.optional().describe("Defaults to the dish's usual meal, else the meal nearest the time"),
-      at: z.string().max(40).optional().describe("Local time it happened, 'HH:MM' 24 h, or an ISO 8601 date-time. Defaults to now"),
-      date: dateString.optional().describe("Local day (YYYY-MM-DD) it counts toward. Defaults to the day of `at`, i.e. today"),
-      slotId: z.string().optional().describe("The plan slot (get_diet_horizon) it is, when the time alone would put it in the wrong meal"),
-      description: z.string().trim().max(300).optional().describe("The person's own words, in Spanish"),
+      add: components.optional().describe("Foods added this time"),
+      slot: slot.optional().describe("Default the dish's usual, else nearest the time"),
+      at: z.string().max(40).optional().describe("Local 'HH:MM' (24 h) or ISO 8601 date-time; default now"),
+      date: dateString.optional().describe("Local day it counts toward; default `at`'s"),
+      slotId: z.string().optional().describe("Plan slot (get_diet_horizon), only when the time would pick the wrong meal"),
+      description: z.string().trim().max(300).optional().describe("Their words, in Spanish"),
     },
     async ({ id, name, scale, overrides, add, slot: as, at, date, slotId, description }) =>
       safely(() => {
@@ -105,11 +101,11 @@ export const dishTools = [
   ),
   tool(
     "update_dish",
-    "Change a saved dish for good: rename it, set its usual slot, or replace its components (send the whole list as it should be from now on). Dishes already logged keep what they were.",
+    "Change a saved dish for good: rename, usual slot, or components (the whole new list). Logged dishes keep what they were.",
     {
       ...dishRef,
       newName: z.string().trim().min(1).max(120).optional(),
-      slot: slot.nullish().describe("Its usual meal; null when it varies"),
+      slot: slot.nullish().describe("null when it varies"),
       components: components.optional(),
     },
     async ({ id, name, newName, slot: usual, components: items }) =>
@@ -117,7 +113,7 @@ export const dishTools = [
   ),
   tool(
     "delete_dish",
-    "Delete a saved dish the person no longer wants in Mis platillos. Dishes already logged keep their entries.",
+    "Delete a saved dish (Mis platillos). Logged dishes keep their entries.",
     dishRef,
     async ({ id, name }) => safely(() => ({ deleted: deleteSavedDish(findDish(id, name).id) })),
   ),

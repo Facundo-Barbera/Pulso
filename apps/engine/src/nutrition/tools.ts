@@ -16,7 +16,7 @@ import { getWaterSettings, logWater, setWaterSettings, toMl, waterDay } from "./
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 const fail = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true });
 
-const timeDescription = "Local time it happened, 'HH:MM' 24 h (e.g. '14:30'), or an ISO 8601 date-time. Defaults to now";
+const timeDescription = "Local 'HH:MM' (24 h) or ISO 8601 date-time; default now";
 
 /** What log_meal needs from an estimate: the amount as said, the total macros and the barcode. */
 export function logItem(estimate: PortionEstimate) {
@@ -32,23 +32,23 @@ export function logItem(estimate: PortionEstimate) {
 export const nutritionTools = [
   tool(
     "log_meal",
-    "Log what the person ate or drank (except plain water: use log_water), as one meal: one or more foods or drinks with the time. " +
-      "Foods eaten together (a plate, a shake, a sandwich, a bowl) are ONE dish: pass every food as its own item and name the dish in `dish` ('Tortitas de carne con queso y arroz', 'Batido de proteína con fresas'); never log them as separate meals and never cram several foods into one item's name. Several items sharing a slot become one dish even without `dish` (named from the foods). If a saved dish matches (list_dishes), use log_dish instead. To add a food to a dish already logged ('también le puse fresas'), pass its dish id (each entry's dish.id) as addToDish. Give each item's amount as `measure` in the person's own words ('2 latas', '1 taza', '250 ml', '30 g', 'un puño', '2 galletas Oreo' → '2 galletas'); it is stored as said and converted to g or ml. Each item's macros are TOTALS for that amount (not per 100 g or per unit): kcal for energy, grams for protein/carbs/fat/fiber. Estimate them when the person doesn't give them; for branded, packaged, restaurant or regional foods and drinks look the values up on the web first. Add caffeineMg for coffee, tea, mate, cola or energy drinks and alcoholG for alcoholic drinks. Set `at` to the time they said ('a las 14:30' → '14:30') and `description` to their own words. Pick the item slot from what it was: the meal (desayuno, comida, cena…) for a main meal, 'snack' for snacks and drinks between meals. " +
-      "With an active plan every meal is tied to the plan automatically (Planeado → Real): the slot you pass, else the planned item it is (planItemId from get_active_plan, or the same food name), else the meal it was logged as, else the meal whose time window holds it; it then reads «eaten as planned» when it is the plan's food and «ate this instead» otherwise, and that is undoable. Snacks and drinks under ~250 kcal between meals stay extras; the first food of the day is breakfast. " +
-      "Pass slotId (get_diet_horizon) only when you know better than the time (e.g. breakfast eaten at 12:30). Each returned entry has slotId: the meal it became (null = extra). If that is wrong, fix it with place_meal. Then decide by magnitude whether to compensate (rebalance_day, spread_deviation, or nothing)",
+    "Log food or drinks the person had (plain water: log_water) as one meal. Foods eaten together are ONE dish: one item per food and the dish's name in `dish`, never several foods in one item's name; items sharing a slot become one dish anyway. A saved dish that matches (list_dishes) → log_dish. " +
+      "Item macros are TOTALS for the amount (not per 100 g): kcal and grams. `at` is the time they said, `description` their words. " +
+      "With an active plan each meal is tied to a plan slot by itself (slotId, else the planned item by planItemId or name, else the item's slot, else the time window): «eaten as planned» or «ate this instead», undoable. Snacks and drinks under ~250 kcal between meals stay extras; the day's first food is breakfast. " +
+      "Returns the entries with slotId (null = extra); fix a wrong one with place_meal.",
     {
       items: z
-        .array(z.object({ ...mealShape, planItemId: z.string().optional().describe("The active plan's item this fulfils, from get_active_plan") }))
+        .array(z.object({ ...mealShape, planItemId: z.string().optional().describe("Plan item it fulfils (get_active_plan)") }))
         .min(1)
         .max(30)
-        .describe("Foods and drinks; items of one meal share a slot"),
+        .describe("One per food; one meal shares a slot"),
       at: z.string().max(40).optional().describe(timeDescription),
-      date: dateString.optional().describe("Local day (YYYY-MM-DD) the meal counts toward. Defaults to the day of `at`, i.e. today"),
-      description: z.string().trim().max(300).optional().describe("The person's own words for the meal, in Spanish, e.g. 'Big Mac y papas medianas en McDonald's'"),
-      offPlan: z.boolean().optional().describe("Legacy, rarely needed: with slotId, counts the meal as eaten instead of that slot even if it matches the plan's foods. Whether a meal was the plan or not is worked out automatically"),
-      slotId: z.string().optional().describe("The plan slot (get_diet_horizon) this meal is, when the time alone would put it in the wrong meal. Omit otherwise"),
-      dish: z.string().trim().min(1).max(120).optional().describe("The dish's name in Spanish, when the items were eaten together as one thing, e.g. 'Batido de proteína con fresas'"),
-      addToDish: z.string().optional().describe("A logged dish's id (entry.dish.id) to add these items to, at its time and meal. at, slotId and dish are ignored"),
+      date: dateString.optional().describe("Local day it counts toward; default `at`'s"),
+      description: z.string().trim().max(300).optional().describe("The person's own words, in Spanish"),
+      offPlan: z.boolean().optional().describe("Legacy, rarely needed: with slotId, counts it as eaten instead of that slot even if it matches the plan"),
+      slotId: z.string().optional().describe("Plan slot (get_diet_horizon), only when the time would pick the wrong meal"),
+      dish: z.string().trim().min(1).max(120).optional().describe("Dish name in Spanish, e.g. 'Batido de proteína con fresas'"),
+      addToDish: z.string().optional().describe("Logged dish id (entry.dish.id) to add these to ('también le puse fresas'); ignores at, slotId, dish"),
     },
     async ({ items, at, date, description, offPlan, slotId, dish, addToDish: into }) => {
       const when = at ? parseTime(at, date) : null;
@@ -80,27 +80,25 @@ export const nutritionTools = [
   ),
   tool(
     "estimate_portion",
-    "Work out how much of a packaged product the person ate when they say it in words: 'una cucharada', '2 cucharaditas', 'media taza', 'la mitad del paquete', 'un tercio de la botella', '2 de 6 galletas', '3 galletas', 'un scoop', '30 g', '20 %'. " +
-      "Give the product by `barcode` (a scanned product in the message has one; it is looked up in Open Food Facts) or, without one, as `product` with its label values. " +
-      "Spoons and cups of a solid are converted with a food-specific density (azúcar, harina, avena, arroz crudo/cocido, crema de cacahuate, mayonesa, miel, aceite, leche/proteína en polvo, mantequilla, queso rallado, cereal…; level spoons: cucharada 15 ml, cucharadita 5 ml, taza 240 ml); shares use the package size; counts use `unitGrams`, `unitsPerPackage` (from the label or the photo) or a typical weight (galleta ~10 g). " +
-      "Returns `estimate` (quantity in g, or ml for drinks; total macros: kcal and grams; share of the package; `assumption`, one Spanish line to tell the person, e.g. '1 cucharada de Crema de cacahuete (rasa, ~16 g como crema de cacahuate) ≈ 16 g → 94 kcal'), `logItem` to pass as is (adding slot) in log_meal's items. " +
-      "An error is a question to ask the person (e.g. how much each one weighs).",
+    "Turn an amount of a packaged product in words ('una cucharada', 'media taza', 'la mitad del paquete', '2 de 6 galletas', 'un scoop', '20 %') into grams and macros. " +
+      "Give `barcode` (looked up in Open Food Facts) or else `product` with its label values. Spoons and cups of solids use a food-specific density (level: cucharada 15 ml, cucharadita 5 ml, taza 240 ml); shares use the package size; counts use unitGrams, unitsPerPackage or a typical weight. " +
+      "Returns `estimate` (g, or ml for drinks; total macros; package share; `assumption`, a Spanish line to tell the person) and `logItem`, to pass as is (plus slot) in log_meal's items. An error is a question to ask the person.",
     {
       barcode: z.string().optional().describe("8 to 14 digits"),
       product: z
         .object({
           name: z.string().trim().min(1).max(120),
-          per100g: z.object(macroShape).describe("Macros per 100 g (per 100 ml when liquid)"),
+          per100g: z.object(macroShape).describe("Per 100 g (100 ml when liquid)"),
           liquid: z.boolean().default(false),
-          packageSize: z.number().positive().max(100000).nullish().describe("g (ml when liquid) in the package"),
+          packageSize: z.number().positive().max(100000).nullish().describe("g (ml when liquid)"),
           servingGrams: z.number().positive().max(5000).nullish(),
         })
         .optional()
-        .describe("The product's label values, when there is no barcode"),
+        .describe("Label values, without a barcode"),
       amount: z.string().trim().min(1).max(120).describe("How much, in the person's words"),
-      unitGrams: z.number().positive().max(2000).optional().describe("Grams of one counted unit (one cookie, one slice), when the label says"),
-      unitsPerPackage: z.number().int().positive().max(500).optional().describe("Units in the package ('12 galletas'), when the label says"),
-      density: z.number().positive().max(3).optional().describe("g per ml, to override the table for spoons and cups"),
+      unitGrams: z.number().positive().max(2000).optional().describe("Grams of one counted unit (a cookie, a slice)"),
+      unitsPerPackage: z.number().int().positive().max(500).optional().describe("e.g. '12 galletas'"),
+      density: z.number().positive().max(3).optional().describe("g per ml, overriding the table"),
     },
     async ({ barcode, product: given, amount, unitGrams, unitsPerPackage, density }) => {
       let product: FoodProduct | null = null;
@@ -129,13 +127,13 @@ export const nutritionTools = [
   ),
   tool(
     "delete_meal",
-    "Delete a logged food entry by id (from list_meals or log_meal), e.g. to fix a wrong log.",
+    "Delete a logged food entry by id (list_meals or log_meal).",
     { id: z.string() },
     async ({ id }) => (deleteMeal(id) ? json({ deleted: id }) : fail(`No meal entry ${id}`)),
   ),
   tool(
     "list_meals",
-    "Logged food and drink entries between two local days (YYYY-MM-DD, inclusive), oldest first. dish is the dish an entry is a component of ({ id, name, savedDishId }), null for a food logged on its own; a dish's components come together, in order. Macros are totals per entry: kcal and grams. quantity + unit is the normalized amount (g, ml or serving); measure is the amount as the person said it (e.g. 2 lata, size null = 355 ml each), or null. caffeineMg and alcoholG when known. eatenAt is epoch ms; slotId is the plan meal it is the real meal of (null = an extra), offPlan true when it was eaten instead of that meal, note how the person described it. Defaults to today. Max 62 days.",
+    "Logged food and drink entries for local days from–to (inclusive; default today; max 62 days), oldest first. Per entry: total macros (kcal, g); quantity + unit normalized (g, ml, serving); measure as said (size null = the unit's default) or null; caffeineMg, alcoholG; eatenAt epoch ms; dish ({ id, name, savedDishId }, components together; null alone); slotId (the plan meal it is, null = extra); offPlan (eaten instead of it); note (their words).",
     { from: dateString.optional(), to: dateString.optional() },
     async ({ from, to }) => {
       const start = from ?? localDate();
@@ -146,25 +144,25 @@ export const nutritionTools = [
   ),
   tool(
     "daily_summary",
-    "Totals eaten on a local day versus the daily targets: totals, targets, remaining (targets minus totals; negative means over), zones (each nutrient's value against its zone: min, max, kind and status below/inZone/above), inZone (kcal in zone and protein at least its minimum), per-slot totals, and the day's caffeineMg and alcoholG. kcal and grams. Defaults to today. Use before suggesting what to eat next: aim for what is still below its zone, mind what is near its max.",
+    "What was eaten on a local day (default today) vs the daily targets, kcal and g: totals, targets, remaining (negative = over), zones (each nutrient vs its min/max/kind: below, inZone, above), inZone (kcal in zone and protein at least its min), per-slot totals, caffeineMg, alcoholG.",
     { date: dateString.optional() },
     async ({ date }) => json(dailySummary(date ?? localDate())),
   ),
   tool(
     "get_targets",
-    "The person's daily nutrition targets: kcal and grams of protein, carbs, fat and fiber, each with its zone (min, max, kind: min = reach at least, range = stay between, max = stay under; custom when set by hand). null if never set.",
+    "Daily nutrition targets (kcal; g of protein, carbs, fat, fiber), each with its zone (min, max, kind: min = at least, range = between, max = under; custom when set by hand). null if never set.",
     {},
     async () => json(getTargets()),
   ),
   tool(
     "set_targets",
-    "Replace the daily nutrition targets (kcal; grams of protein, carbs, fat, fiber) and their zones. Set them when you design or adjust a diet; the Dieta tab's rings show each zone as the band where the person is doing well, and adherence counts days in zone. Pass zones only to change a derived one (e.g. protein { min: 150 }, kcal { min: 1800, max: 2050 }); to keep custom zones, pass them again.",
+    "Replace the daily nutrition targets and their zones (the Dieta rings' bands; adherence counts days in zone). Pass zones only to change a derived one (e.g. protein { min: 150 }); custom zones not passed again are dropped.",
     targetsShape,
     async (targets) => json(setTargets(targets)),
   ),
   tool(
     "create_diet_plan",
-    "Create a complete NEW diet plan in one call: days → meals (by slot) → items with quantity and the macros for that quantity (kcal, grams). Days repeat cyclically from startsOn and are laid out as dated slots over the horizon (horizonDays, 7 or 14). By default it becomes the active plan, replacing the previous one and its dated changes. Only when the person asks for a new plan: for anything that went differently (a skipped meal, a missing ingredient, no time to cook) use the small changes (skip_slot, replace_slot, ingredient_unavailable, no_time_to_cook, move_slot…). Item macros should add up close to the daily targets; call set_targets too if they change.",
+    "Create a NEW diet plan: days → meals by slot → items with quantity and TOTAL macros (kcal, g). Days repeat from startsOn, laid out as dated slots over horizonDays. By default it replaces the active plan and its dated changes. Only when the person asks for a new plan, never for a deviation (skip_slot, ingredient_unavailable, no_time_to_cook… do those). Items should add up near the targets; set_targets if they change.",
     planShape,
     async ({ horizonDays, ...input }) => {
       const plan = createPlan(input);
@@ -174,13 +172,13 @@ export const nutritionTools = [
   ),
   tool(
     "get_active_plan",
-    "The active diet plan, plus the plan as written for the given local day (default today; from today on it is the dated plan with its changes, skipped and replaced meals left out), which of its items are already logged as eaten, and the day's adjustment (the remaining meals as rebalance_day rewrote them) if any. null if there is no active plan. get_diet_horizon has the dated slots with ids and status.",
+    "The active diet plan (null if none) and its plan for a local day (default today; from today on with its changes, skipped and replaced meals left out), which items are already eaten, and the day's rebalance_day adjustment if any. Slot ids and status: get_diet_horizon.",
     { date: dateString.optional() },
     async ({ date }) => json(planForDay(date ?? localDate())),
   ),
   tool(
     "lookup_food_barcode",
-    "Look up a packaged food by its EAN/UPC barcode in Open Food Facts. Returns name, brand, macros per 100 g (kcal, grams) and serving size in grams, or null if unknown. Scale per100g by grams/100 before logging.",
+    "Look up a packaged food by EAN/UPC barcode in Open Food Facts: name, brand, macros per 100 g (kcal, g), serving g; null if unknown. Scale per100g by grams/100 before logging.",
     { barcode: z.string().describe("8 to 14 digits") },
     async ({ barcode }) => {
       const code = normalizeBarcode(barcode);
@@ -194,12 +192,12 @@ export const nutritionTools = [
   ),
   tool(
     "log_water",
-    "Log water the person drank. Give the amount in their words: ml, litres ('l'), or glasses ('vaso') and bottles ('botella') of the sizes they set in the app (see get_water's settings). Returns the entry (amountMl) and the day's total against the goal, in ml.",
+    "Log plain water. amount in the unit they used: ml, l, vaso or botella (their sizes: get_water). Returns the entry (amountMl), the day's totalMl and goalMl.",
     {
       amount: z.number().positive().max(10000).describe("How much, in `unit`"),
       unit: z.enum(["ml", "l", "vaso", "botella"]).default("ml"),
       at: z.string().max(40).optional().describe(timeDescription),
-      date: dateString.optional().describe("Local day (YYYY-MM-DD). Defaults to the day of `at`, i.e. today"),
+      date: dateString.optional().describe("Local day; default `at`'s"),
     },
     async ({ amount, unit, at, date }) => {
       const when = at ? parseTime(at, date) : null;
@@ -213,13 +211,13 @@ export const nutritionTools = [
   ),
   tool(
     "get_water",
-    "Water drunk on a local day (default today), in ml: total, goal (the person's own, else 35 ml/kg of body weight kept within 2000–3700, else 2000), each entry, and their settings (preferred unit and glass/bottle sizes in ml). Use it to tell them how much is left in their own unit.",
+    "Water on a local day (default today), ml: total, goal (theirs, else 35 ml/kg within 2000–3700, else 2000), entries, and settings (preferred unit, glass and bottle ml).",
     { date: dateString.optional() },
     async ({ date }) => json(waterDay(date ?? localDate())),
   ),
   tool(
     "set_water_goal",
-    "Set the person's daily water goal in ml, or null to go back to the automatic one (35 ml per kg of body weight, kept within 2–3.7 L).",
+    "Set the daily water goal in ml; null = automatic (35 ml/kg, within 2–3.7 L).",
     { goalMl: z.number().min(250).max(10000).nullable() },
     async ({ goalMl }) => json(setWaterSettings({ ...getWaterSettings(), goalMl })),
   ),
