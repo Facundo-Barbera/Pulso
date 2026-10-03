@@ -1,10 +1,14 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import { db } from "../db";
 import { addMedication, dosesBetween, logDose } from "../medication/store";
 import { listMeals, logMeals } from "../nutrition/store";
+import { createProgram, getActiveProgram } from "../training/store";
 import { ownDatabase } from "../web/test-db";
 import { summarizeAction } from "./actions";
+import { forModel } from "./model-results";
+import { TOOLS } from "./registry";
 import { newTurnState, rememberBefore, translate } from "./events";
 import { getProfile, updateProfile } from "./profile";
 import { addMessage, createThread, listMessages, updateMessage } from "./threads";
@@ -41,6 +45,7 @@ test("a profile update shows before → after and Deshacer puts the old values b
     detail: "Objetivo: Bajar de peso → Bajar 10 kg de grasa · Lesiones: Hombro derecho",
     tab: "cuerpo",
     place: "perfil",
+    group: "profile",
     lines: [
       { label: "Objetivo", before: "Bajar de peso", value: "Bajar 10 kg de grasa" },
       { label: "Lesiones", before: null, value: "Hombro derecho" },
@@ -148,4 +153,67 @@ test("Deshacer refuses what it can't undo", () => {
   const { threadId, messageId } = runTool("create_program", {}, () => ({ name: "Torso/Pierna", days: [{}] }));
   expect(() => undoToolAction(threadId, messageId, 0)).toThrow(UndoError);
   expect(() => undoToolAction(threadId, "nope", 0)).toThrow("No encontré ese cambio.");
+});
+
+/** Runs real Coach tools the way a turn does (snapshot hook, the model's wrapper, the result) and saves them on one message. */
+async function runCoachTools(calls: { name: string; input: Record<string, unknown> }[]) {
+  const state = newTurnState();
+  for (const [i, { name, input }] of calls.entries()) {
+    const id = `tc${i}`;
+    const t = forModel(TOOLS.find((x) => x.name === name)!);
+    translate(m({ type: "assistant", message: { content: [{ type: "tool_use", id, name: `mcp__pulso__${name}`, input }] } }), state);
+    rememberBefore(id, `mcp__pulso__${name}`, input);
+    const result = await t.handler(z.object(t.inputSchema).parse(input) as never, { _meta: { "claudecode/toolUseId": id } });
+    translate(m({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: result.content, is_error: !!result.isError }] } }), state);
+  }
+  const thread = createThread();
+  const message = addMessage(thread.id, "assistant", "Listo.", "done");
+  updateMessage(message.id, { text: "Listo.", tools: state.tools, status: "done" });
+  return { state, threadId: thread.id, messageId: message.id };
+}
+
+test("shortening every day is one card, one group and one Deshacer that puts the program back", async () => {
+  const rx = (exerciseId: string) => ({ exerciseId, sets: 3, repMin: 8, repMax: 12, restSeconds: 90 });
+  createProgram({
+    name: "Torso/Pierna",
+    goal: "Fuerza",
+    weeks: 8,
+    days: [
+      { name: "Torso", exercises: [rx("press-pecho-maquina"), rx("remo-maquina"), rx("curl-maquina")] },
+      { name: "Pierna", exercises: [rx("prensa"), rx("extension-cuadriceps"), rx("curl-femoral-tumbado")] },
+    ],
+  });
+  const program = getActiveProgram()!;
+  const shorter = program.days.map((d) => ({ dayId: d.id, exercises: d.exercises.slice(0, 2).map((e) => ({ ...e, sets: 2 })) }));
+  const { state, threadId, messageId } = await runCoachTools([{ name: "edit_program_days", input: { scope: "always", days: shorter } }]);
+  expect(state.tools).toHaveLength(1);
+  expect(state.tools[0]!.result).toMatchObject({
+    title: "Programa actualizado",
+    group: `program:${program.id}`,
+    undo: "available",
+    lines: [
+      { label: "Torso", before: "3 ejercicios", value: "2 ejercicios" },
+      { label: "Pierna", before: "3 ejercicios", value: "2 ejercicios" },
+    ],
+  });
+  expect(getActiveProgram()!.days.map((d) => d.exercises.length)).toEqual([2, 2]);
+
+  undoToolAction(threadId, messageId, 0);
+  const back = getActiveProgram()!;
+  expect(back.days.map((d) => d.exercises.map((e) => [e.exerciseId, e.sets]))).toEqual(program.days.map((d) => d.exercises.map((e) => [e.exerciseId, e.sets])));
+  // Kept exercises keep their ids, so their load history follows.
+  expect(back.days[0]!.exercises[0]!.id).toBe(program.days[0]!.exercises[0]!.id);
+});
+
+test("undoing a program change refuses when a later change touched the same days", async () => {
+  const rx = (exerciseId: string) => ({ exerciseId, sets: 3, repMin: 8, repMax: 12, restSeconds: 90 });
+  createProgram({ name: "Uno", goal: "Fuerza", weeks: 4, days: [{ name: "Día", exercises: [rx("prensa"), rx("remo-maquina")] }] });
+  const day = getActiveProgram()!.days[0]!;
+  const first = await runCoachTools([{ name: "edit_program_days", input: { scope: "always", days: [{ dayId: day.id, exercises: [day.exercises[0]] }] } }]);
+  const second = await runCoachTools([{ name: "swap_program_exercise", input: { from: "prensa", to: "sentadilla-hack", scope: "always" } }]);
+  expect(second.state.tools[0]!.result).toMatchObject({ title: "Ejercicio cambiado en el programa", group: `program:${getActiveProgram()!.id}`, undo: "available" });
+  expect(() => undoToolAction(first.threadId, first.messageId, 0)).toThrow(UndoError);
+  undoToolAction(second.threadId, second.messageId, 0);
+  undoToolAction(first.threadId, first.messageId, 0);
+  expect(getActiveProgram()!.days[0]!.exercises.map((e) => e.exerciseId)).toEqual(["prensa", "remo-maquina"]);
 });

@@ -32,6 +32,7 @@ import { getManualNight, manualNightOn } from "../sleep/manual";
 import { formatDuration } from "../sleep/metrics";
 import { accessOf, classified } from "../mcp/access";
 import { getTargets } from "../nutrition/store";
+import { snapshotProgramDays, type ProgramDaysSnapshot } from "../training/store";
 import { getProfile } from "./profile";
 
 /** How Deshacer puts a change back. Engine-only: stored with the tool, never sent to clients. */
@@ -45,12 +46,14 @@ export type Revert =
   | { kind: "medication"; id: string; patch: Record<string, unknown> }
   | { kind: "sleep_added"; id: string }
   | { kind: "sleep"; id: string; patch: { start: number; end: number; tzOffsetMin: number; note: string | null } }
-  | { kind: "sleep_deleted"; night: ManualSleepNight };
+  | { kind: "sleep_deleted"; night: ManualSleepNight }
+  | { kind: "program"; before: ProgramDaysSnapshot; after: string | null };
 
 export type Action = { card: AgentToolResult; revert?: Revert };
 
 type Line = AgentActionLine | string | null | undefined | false;
-type Card = { title: string; tab: AgentResultTab; place?: AgentResultPlace; lines?: Line[]; revert?: Revert };
+/** `group`: the change it is part of (see AgentToolResult.group); consecutive cards with the same one show as one. */
+type Card = { title: string; tab: AgentResultTab; place?: AgentResultPlace; lines?: Line[]; revert?: Revert; group?: string };
 type Formatter = (result: any, input: any, before: any) => Card | null;
 type Entry = { format: Formatter; /** Reads what the tool is about to change, before it runs. */ before?: (input: any) => unknown };
 
@@ -123,6 +126,7 @@ function updateProfileCard(saved: Profile, patch: Record<string, unknown>, befor
     title: "Perfil actualizado",
     tab: "cuerpo",
     place: "perfil",
+    group: "profile",
     lines: lines.length ? lines : ["Sin cambios"],
     revert: before && changed.length ? { kind: "profile", patch: Object.fromEntries(changed.map((k) => [k, before[k] ?? null])) } : undefined,
   };
@@ -174,6 +178,7 @@ const planCard =
     return {
       title: PLAN_TITLES[name] ?? "Plan ajustado",
       tab: "dieta",
+      group: c.revision?.planId ? `plan:${c.revision.planId}` : undefined,
       lines: sentences.map(planLine),
       revert: name !== "undo_plan_change" && c.revision?.id ? { kind: "plan", revisionId: c.revision.id } : undefined,
     };
@@ -203,6 +208,24 @@ const MACRO_LINES: [keyof NutritionTargets, string, string][] = [
   ["carbs", "Carbohidratos", "g"],
   ["fat", "Grasa", "g"],
 ];
+
+// --- Program ---
+
+/** What the training tools hand a program change's card (training/tools.ts programCard). */
+type ProgramChange = { programId?: string; name?: string; scope: "today" | "always"; days?: { id: string; name: string; exercises: number }[]; after: string | null };
+
+/** One line per day changed, "Torso A: 7 → 5 ejercicios"; Deshacer puts the days back as they were. */
+function programChangeCard(title: string, c: ProgramChange, before: ProgramDaysSnapshot | undefined, extra: Line[] = []): Card {
+  const was = new Map(before?.days.map((d) => [d.dayId, (c.scope === "today" ? (d.override ?? d.exercises) : d.exercises).length]));
+  const count = (k: number | undefined) => (k === undefined ? null : k === 1 ? "1 ejercicio" : `${k} ejercicios`);
+  return {
+    title,
+    tab: "entreno",
+    lines: [...extra, ...(c.days ?? []).map((d) => change(d.name, count(was.get(d.id)), count(d.exercises)!))],
+    group: c.programId ? `program:${c.programId}` : undefined,
+    revert: before && c.programId === before.programId ? { kind: "program", before, after: c.after } : undefined,
+  };
+}
 
 // --- Medication ---
 
@@ -260,6 +283,7 @@ function updateMedicationCard(m: Medication, input: Record<string, unknown>, bef
     title: m.kind === "suplemento" ? "Suplemento actualizado" : "Medicamento actualizado",
     tab: "hoy",
     place: "medicacion",
+    group: `medication:${m.id}`,
     lines,
     revert: before && keys.length ? { kind: "medication", id: m.id, patch: Object.fromEntries(keys.map((k) => [k, before[k as keyof Medication]])) } : undefined,
   };
@@ -302,7 +326,7 @@ const ACTIONS: Record<string, Entry> = {
       const lines = MACRO_LINES.filter(([k]) => typeof t[k] === "number" && (!before || Math.round(before[k] as number) !== Math.round(t[k] as number))).map(([k, label, unit]) =>
         change(label, before ? `${n(before[k] as number)} ${unit}` : null, `${n(t[k] as number)} ${unit}`),
       );
-      return { title: "Objetivos de comida actualizados", tab: "dieta", lines: lines.length ? lines : [`${n(t.kcal)} kcal · ${n(t.protein)} g proteína`] };
+      return { title: "Objetivos de comida actualizados", tab: "dieta", group: "targets", lines: lines.length ? lines : [`${n(t.kcal)} kcal · ${n(t.protein)} g proteína`] };
     },
   },
   save_dish: { format: (d: SavedDish) => ({ title: "Platillo guardado", tab: "dieta", lines: [`${d.name} · ${n(d.macros.kcal)} kcal`] }) },
@@ -325,18 +349,15 @@ const ACTIONS: Record<string, Entry> = {
       lines: [s.session.name, s.prs.length ? (s.prs.length === 1 ? "1 récord" : `${s.prs.length} récords`) : null],
     }),
   },
-  edit_program_day: {
-    format: (v: ActiveProgramResponse) => {
-      const today = v.program?.days.some((d) => d.overridden);
-      return { title: today ? "Día cambiado solo para hoy" : "Programa actualizado", tab: "entreno", lines: [v.program?.name] };
-    },
+  edit_program_days: {
+    before: (input: { days?: { dayId?: string }[] }) => snapshotProgramDays(input?.days?.flatMap((d) => (d.dayId ? [d.dayId] : []))),
+    format: (c: ProgramChange, _input, before: ProgramDaysSnapshot | undefined) =>
+      programChangeCard(c.scope === "today" ? (c.days?.length === 1 ? "Día cambiado solo para hoy" : "Días cambiados solo para hoy") : "Programa actualizado", c, before),
   },
   swap_program_exercise: {
-    format: (r: { scope: "today" | "always"; to: string; days: string[] }) => ({
-      title: r.scope === "today" ? "Ejercicio cambiado solo hoy" : "Ejercicio cambiado en el programa",
-      tab: "entreno",
-      lines: [r.to, r.days.join(", ")],
-    }),
+    before: () => snapshotProgramDays(),
+    format: (r: ProgramChange & { to: string }, _input, before: ProgramDaysSnapshot | undefined) =>
+      programChangeCard(r.scope === "today" ? "Ejercicio cambiado solo hoy" : "Ejercicio cambiado en el programa", r, before, [r.to]),
   },
   set_training_preferences: { format: () => ({ title: "Preferencias de entreno guardadas", tab: "entreno" }) },
   edit_live_session: { format: (r: { changes: string[] }) => ({ title: "Sesión cambiada", tab: "entreno", lines: r.changes }) },
@@ -445,7 +466,8 @@ function tabOf(name: string): AgentResultTab {
 function fallback(name: string, result: unknown): Card {
   const r = result && typeof result === "object" && !Array.isArray(result) ? (result as Record<string, unknown>) : {};
   const line = [r.summary, r.name, r.title].find((v): v is string => typeof v === "string" && v.trim().length > 0);
-  return { title: TITLES[name] ?? "Cambio guardado", tab: tabOf(name), lines: [line] };
+  // The shopping list is one thing: several edits to it in a row are one change.
+  return { title: TITLES[name] ?? "Cambio guardado", tab: tabOf(name), lines: [line], group: /shopping/.test(name) ? "shopping" : undefined };
 }
 
 const toLine = (line: Line): AgentActionLine | null =>
@@ -458,6 +480,7 @@ function toAction(card: Card): Action {
   const shown = lines.length > MAX_LINES ? [...lines.slice(0, MAX_LINES - 1), { label: null, before: null, value: `y ${lines.length - MAX_LINES + 1} cambios más` }] : lines;
   const result: AgentToolResult = { title: card.title, detail: shown.length ? shown.map(lineText).join(" · ") : null, tab: card.tab, lines: shown };
   if (card.place) result.place = card.place;
+  if (card.group) result.group = card.group;
   if (card.revert) result.undo = "available";
   return card.revert ? { card: result, revert: card.revert } : { card: result };
 }
