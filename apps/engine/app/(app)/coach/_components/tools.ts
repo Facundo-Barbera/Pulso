@@ -1,4 +1,4 @@
-import type { AgentResultPlace, AgentResultTab, AgentToolResult, AgentToolUse } from "@pulso/contract";
+import type { AgentActionLine, AgentResultPlace, AgentResultTab, AgentToolResult, AgentToolUse } from "@pulso/contract";
 import { Apple, BookOpen, CalendarDays, Dumbbell, FileText, Globe, HeartPulse, Moon, NotebookPen, PersonStanding, Pill, Search, ShoppingCart, Sparkles, Sun, UserRound, type LucideIcon } from "lucide-react";
 
 export type ToolLook = { label: string; icon: LucideIcon; color: string };
@@ -53,3 +53,55 @@ export const placeOf = (result: AgentToolResult): ResultPlace => RESULT_PLACES[r
 
 /** A tool that changed something: it gets an action card, not a quiet chip. Older messages have no `access`. */
 export const isAction = (tool: AgentToolUse) => tool.access === "write" || !!tool.result;
+
+/** An action card on screen: one tool's card, or a run of cards that are one change («N cambios»). */
+export type ActionView = {
+  result: AgentToolResult;
+  /** The message's `tools` indexes behind it, in order. */
+  indices: number[];
+  /** What Deshacer undoes, in order: the members whose undo is available, last first. */
+  undoOrder: number[];
+};
+
+type IndexedResult = { result: AgentToolResult; index: number };
+
+const MAX_LINES = 5;
+const lineText = (l: AgentActionLine) => `${l.label ? `${l.label}: ` : ""}${l.before ? `${l.before} → ` : ""}${l.value}`;
+const linesOf = (r: AgentToolResult): AgentActionLine[] => r.lines ?? (r.detail ? [{ label: null, before: null, value: r.detail }] : []);
+const undoOrderOf = (members: IndexedResult[]) => members.filter((m) => m.result.undo === "available").map((m) => m.index).reverse();
+
+type Run = [IndexedResult, ...IndexedResult[]];
+
+function merge(members: Run): ActionView {
+  const seen = new Set<string>();
+  const lines = members
+    .flatMap((m) => linesOf(m.result))
+    .filter((l) => {
+      const text = lineText(l);
+      if (seen.has(text)) return false;
+      seen.add(text);
+      return true;
+    });
+  // Capped like the engine's toAction: four lines and «y N cambios más».
+  const shown = lines.length > MAX_LINES ? [...lines.slice(0, MAX_LINES - 1), { label: null, before: null, value: `y ${lines.length - MAX_LINES + 1} cambios más` }] : lines;
+  const { undo: _, ...first } = members[0].result;
+  const result: AgentToolResult = { ...first, detail: shown.length ? shown.map(lineText).join(" · ") : null, lines: shown };
+  const undos = members.map((m) => m.result.undo).filter((u) => u !== undefined);
+  if (undos.includes("available")) result.undo = "available";
+  else if (undos.length) result.undo = "done";
+  return { result, indices: members.map((m) => m.index), undoOrder: undoOrderOf(members) };
+}
+
+/**
+ * The cards a message shows: consecutive action cards with the same non-empty
+ * `group` fold into one; a card without a group stands alone, unchanged.
+ */
+export function groupActions(actions: IndexedResult[]): ActionView[] {
+  const runs: Run[] = [];
+  for (const action of actions) {
+    const run = runs.at(-1);
+    if (run && action.result.group && run[0].result.group === action.result.group) run.push(action);
+    else runs.push([action]);
+  }
+  return runs.map((run) => (run.length === 1 ? { result: run[0].result, indices: [run[0].index], undoOrder: undoOrderOf(run) } : merge(run)));
+}
