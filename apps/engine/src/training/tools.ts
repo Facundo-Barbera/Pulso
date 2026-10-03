@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { withCard } from "../agent/card";
 import { listMergedSessions } from "../workouts-merge";
+import { activeProgramForCoach, dayOutline, programOutline, sessionForCoach } from "./coach-view";
 import { cardioTargetShape, equipmentEnum, programExerciseShape, programShape, supersetIdShape, weightUnitEnum } from "./inputs";
 import { describeLive, editLive, getLive, type LiveOp } from "./live";
 import { idsWithMedia } from "./media";
@@ -10,6 +12,7 @@ import {
   activeProgramToday,
   activeProgramView,
   createProgram,
+  daysFingerprint,
   exerciseDetail,
   exerciseHistory,
   getActiveProgram,
@@ -20,23 +23,47 @@ import {
   setExerciseUnit,
   setSessionAdjustment,
   setTrainingSettings,
+  snapshotProgramDays,
   suggestDay,
   trainingSettings,
   TrainingError,
   updateProgramDay,
+  updateProgramDays,
 } from "./store";
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
 const fail = (message: string) => ({ content: [{ type: "text" as const, text: message }], isError: true });
 
-/** Runs a handler, turning caller mistakes into a tool error the model can read and fix. */
+/** Runs a handler, turning caller mistakes into a tool error the model can read and fix. A handler may return its own result (withCard). */
 async function guard(run: () => unknown) {
   try {
-    return json(run());
+    const value = run();
+    return value instanceof Carded ? withCard(value.model, value.card) : json(value);
   } catch (error) {
     if (error instanceof TrainingError) return fail(error.message);
     throw error;
   }
+}
+
+/** What the model reads, and the fuller value its action card is built from. */
+class Carded {
+  constructor(
+    readonly model: unknown,
+    readonly card: unknown,
+  ) {}
+}
+
+/** The card of a program change: which days, and how they look right after it (Deshacer checks nothing changed since). */
+function programCard(scope: "today" | "always", dayIds: string[]) {
+  const after = snapshotProgramDays(dayIds);
+  const program = activeProgramToday();
+  return {
+    programId: program?.id,
+    name: program?.name,
+    scope,
+    days: program?.days.filter((d) => dayIds.includes(d.id)).map((d) => ({ id: d.id, name: d.name, exercises: d.exercises.length })),
+    after: after ? daysFingerprint(after) : null,
+  };
 }
 
 const muscles = ["chest", "back", "shoulders", "biceps", "triceps", "forearms", "quads", "hamstrings", "glutes", "calves", "core", "full_body", "cardio"] as const;
@@ -131,25 +158,48 @@ export const trainingTools = [
     "create_program",
     "Write a whole training program in one call: days in rotation order, each with prescribed exercises (sets, rep range, target RPE or RIR, rest seconds, notes) and, if wanted, cardio blocks (a cardio exercise with a `cardio` target: duration, heart-rate zone, distance, speed/pace, incline/level, intervals) — mixed in a day or as cardio-only days. Exercise ids must be library ids from list_exercises; respect the person's preferred equipment (get_training_preferences) and, when two exercises would do the same job, prefer the one with hasMedia true, since the phone then shows how to do it. By default it becomes the active program the phone shows in Entreno: a new block. The previous block ends (pass `reason`) but nothing is deleted: its sessions, records and the per-exercise history stay, and load suggestions carry over wherever an exercise repeats, so switching focus never restarts the person from zero. Loads are not prescribed: the app suggests them by double progression from logged sessions. Write names, focus and notes in Spanish. " + SUPERSETS,
     { ...programShape, activate: z.boolean().default(true).describe("Make it the active program.") },
-    async ({ activate, ...program }) => guard(() => createProgram(program, activate)),
+    async ({ activate, ...program }) =>
+      guard(() => {
+        const created = createProgram(program, activate);
+        return new Carded(programOutline(created), created);
+      }),
   ),
 
   tool(
     "get_active_program",
-    "The active program with its days and prescriptions, plus `nextDayId` (the next day not done this program week: pinned to today's weekday, else the one after the last day done this week; null when the week is complete), `blocks` (every program so far, oldest first, the active one last: its weeks with each day done / partial / missed / planned and the sessions behind it; weeks are Monday–Sunday, week 1 being the week of the block's first session), `adjustment` (your review of the next session, when the app noticed a break, low readiness, an injury…) and `suggestions` (next load per program exercise id, kg, on the steps of each exercise's unit: see get_training_preferences). `program` is null when none is active.",
-    {},
-    async () => guard(() => activeProgramView()),
+    "The active program, compact: per day its id, name and one line per exercise («<program exercise id> · name (library id) · sets×reps · rest · RIR/RPE · hand-set load · superserie · «notes»»; cardio blocks give their target), `soloHoy` on a day changed only for today; `nextDayId` (the next day not done this program week: pinned to today's weekday, else the one after the last day done this week; null when the week is complete); `week` (this week of the block: each day done / partial / missed / planned with its session dates; weeks run Monday–Sunday); `earlierBlocks` (one line per earlier program: dates, weeks, why it ended, id); `adjustment` (your review of the next session, when the app noticed a break, low readiness, an injury…). `program` is null when none is active. " +
+      "Pass `dayId` for one day in full: every field of each exercise and its next load (kg, on the steps of its unit, with the reason) — what you need to talk through a session.",
+    { dayId: z.string().optional().describe("A program day id: that day in full, with next loads.") },
+    async ({ dayId }) =>
+      guard(() => {
+        const view = activeProgramForCoach(activeProgramView(), dayId);
+        if (view === null) throw new TrainingError(`Day ${dayId} is not in the active program.`);
+        return view;
+      }),
   ),
 
   tool(
-    "edit_program_day",
-    'Rewrite one program day\'s exercise list in its new order: reorder, add, remove, swap or change targets (sets, reps, rest, RIR/RPE, a hand-set weightKg, cardio targets) in one call. Pass the WHOLE list: read it from get_active_program first and keep each exercise\'s `id` so its load history follows; omit `id` for new ones. scope "today" changes only today\'s session of that day ("solo hoy"); "always" changes the program ("para siempre"). Returns the updated active program. Pair or unpair exercises by setting or clearing supersetId (keep it on the others so their supersets survive). ' + SUPERSETS,
+    "edit_program_days",
+    'Rewrite the exercise list of one or more program days in ONE call: reorder, add, remove, swap or change targets (sets, reps, rest, RIR/RPE, a hand-set weightKg, cardio targets). A change that touches several days ("hazla más corta", "solo máquinas", "añade 10 min de caminata al final") is one call with every day in `days`: one change, one card, one Deshacer. All or nothing. For each day pass its WHOLE new list: read it from get_active_program first and keep each exercise\'s `id` so its load history follows; omit `id` for new ones. scope "today" changes only today\'s session of those days ("solo hoy"); "always" changes the program ("para siempre"). Returns the edited days, one line per exercise with its id. Pair or unpair exercises by setting or clearing supersetId (keep it on the others so their supersets survive). ' + SUPERSETS,
     {
-      dayId: z.string().describe("Program day id from get_active_program."),
       scope: scope.describe('"today" = solo hoy, "always" = para siempre. When unsure, ask.'),
-      exercises: z.array(programExerciseShape.extend({ id: z.string().nullish().describe("Existing program exercise id to keep.") })).min(1).max(20),
+      days: z
+        .array(
+          z.object({
+            dayId: z.string().describe("Program day id from get_active_program."),
+            exercises: z.array(programExerciseShape.extend({ id: z.string().nullish().describe("Existing program exercise id to keep.") })).min(1).max(20),
+          }),
+        )
+        .min(1)
+        .max(7),
     },
-    async ({ dayId, scope, exercises }) => guard(() => updateProgramDay(dayId, { scope, exercises })),
+    async ({ scope, days }) =>
+      guard(() => {
+        const program = updateProgramDays(days, scope);
+        const ids = days.map((d) => d.dayId);
+        const edited = program.days.filter((d) => ids.includes(d.id));
+        return new Carded({ program: program.name, scope, days: edited.map(dayOutline) }, programCard(scope, ids));
+      }),
   ),
 
   tool(
@@ -176,7 +226,8 @@ export const trainingTools = [
           const exercises = day.exercises.map((e, i) => ({ ...e, exerciseId: i === findIn(day, from) ? to : e.exerciseId }));
           updateProgramDay(day.id, { scope, exercises });
         }
-        return { scope, to: target.name, days: changed.map((d) => d.name) };
+        const result = { scope, to: target.name, days: changed.map((d) => d.name) };
+        return new Carded(result, { to: result.to, ...programCard(scope, changed.map((d) => d.id)) });
       }),
   ),
 
@@ -246,14 +297,14 @@ export const trainingTools = [
 
   tool(
     "list_sessions",
-    "Logged training sessions, newest first, with every set (exerciseId, weightKg, reps, rpe, setIndex; `segments` lists each load of a set where the load dropped mid-set, top first, weightKg/reps being the top one) and cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). Times are epoch ms. Pass exerciseId to only get sessions that included it. " +
+    "Logged training sessions, newest first: date, minutes, dayId, and per exercise one line of its sets in order, kg×reps (\"80×5→60×3\" is a set where the load dropped mid-set, the first being the top segment; \"@9\" its RPE); cardio blocks (durationSeconds, distanceKm, avgHr, kcal; cardioMinutes in total). startedAt is epoch ms. Pass exerciseId to only get sessions that included it. " +
       "merged: true means Apple Watch (or another Health app) recorded workouts during the session; they are in `recorded` (parts, kcal summed once, avg/max heart rate, distance, startedAt/endedAt spanning them) " +
       "and are NOT extra training: never add them again from list_workouts. A cardio block with `recordedBy` had its empty fields filled from that Watch workout.",
     {
       limit: z.number().int().min(1).max(100).default(10),
       exerciseId: z.string().optional(),
     },
-    async ({ limit, exerciseId }) => guard(() => listMergedSessions(limit, exerciseId)),
+    async ({ limit, exerciseId }) => guard(() => listMergedSessions(limit, exerciseId).map(sessionForCoach)),
   ),
 
   tool(
@@ -267,7 +318,7 @@ export const trainingTools = [
       guard(() => {
         const history = exerciseHistory(exerciseId, limit);
         if (!history) throw new TrainingError(`Unknown exercise id: ${exerciseId}. Use ids from list_exercises.`);
-        return history;
+        return { ...history, points: history.points.map(({ sets: _sets, ...point }) => point) };
       }),
   ),
 
@@ -287,7 +338,7 @@ export const trainingTools = [
 
   tool(
     "log_session",
-    "Record a strength session the person did without the phone (they told you about it). Sets are in order; weightKg is the external load in kg (0 for bodyweight). Returns the saved session and any personal records it set (e1rm, weight, reps). Don't use it for sessions done with the phone: those are logged already.",
+    "Record a strength session the person did without the phone (they told you about it). Sets are in order; weightKg is the external load in kg (0 for bodyweight). Returns the saved session (its sets as kg×reps per exercise) and any personal records it set (e1rm, weight, reps). Don't use it for sessions done with the phone: those are logged already.",
     {
       name: z.string().min(1).max(80).describe('Session name in Spanish, e.g. "Pierna".'),
       startedAt: z.string().datetime({ offset: true }).describe("When it started, ISO 8601 with offset."),
@@ -314,7 +365,7 @@ export const trainingTools = [
         const programId = active?.days.some((d) => d.id === dayId) ? active.id : null;
         // Spread set times across the session so history keeps their order.
         const step = (end - start) / sets.length;
-        return saveSession({
+        const saved = saveSession({
           id: randomUUID(),
           programId,
           dayId: programId ? dayId : null,
@@ -324,6 +375,7 @@ export const trainingTools = [
           notes: notes ?? null,
           sets: sets.map((s, i) => ({ ...s, rpe: s.rpe ?? null, setIndex: i, doneAt: Math.round(start + step * (i + 1)) })),
         });
+        return new Carded({ session: sessionForCoach(saved.session), prs: saved.prs }, saved);
       }),
   ),
   tool(

@@ -395,7 +395,7 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested, now: numb
  */
 export function editLive(ops: LiveOp[], now = Date.now()): { session: LiveSession; changes: string[] } {
   const current = getLive();
-  if (!current) throw new TrainingError("There is no session in progress. Changes to the program go through edit_program_day or swap_program_exercise.");
+  if (!current) throw new TrainingError("There is no session in progress. Changes to the program go through edit_program_days or swap_program_exercise.");
   const session: LiveSession = structuredClone(current);
   const requested: Requested = new Map();
   const changes = ops.map((op) => apply(session, op, requested, now));

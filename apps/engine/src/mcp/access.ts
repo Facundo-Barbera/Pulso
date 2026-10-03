@@ -69,7 +69,7 @@ const ACCESS: Record<string, McpToolInfo["access"]> = {
   exercise_history: "read",
   suggest_next_loads: "read",
   log_session: "write",
-  edit_program_day: "write",
+  edit_program_days: "write",
   swap_program_exercise: "write",
   find_similar_exercises: "read",
   get_training_preferences: "read",
