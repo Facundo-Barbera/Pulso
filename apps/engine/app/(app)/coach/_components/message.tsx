@@ -9,7 +9,7 @@ import { Markdown } from "../../../_ui/markdown";
 import { CoachAvatar, copyText, ThinkingDots } from "./bits";
 import { photoSrc } from "./photos";
 import { ProductCard } from "./product-card";
-import { isAction, placeOf, toolLook } from "./tools";
+import { groupActions, isAction, placeOf, toolLook } from "./tools";
 
 /** Deshacer on tool `index` of a message: null when done, else what went wrong. */
 export type UndoAction = (index: number) => Promise<string | null>;
@@ -118,7 +118,17 @@ function AssistantRow({ message, last, onUndo }: { message: AgentMessage; last: 
   // Lookups that finished fold into one quiet line; what is running (or failed) shows as a chip; what changed something gets a card.
   const checked = message.tools.filter((t) => t.status === "done" && !isAction(t));
   const activity = message.tools.filter((t) => t.status !== "done" || (isAction(t) && !t.result));
-  const actions = message.tools.flatMap((t, index) => (t.status === "done" && t.result ? [{ result: t.result, index }] : []));
+  const actions = groupActions(message.tools.flatMap((t, index) => (t.status === "done" && t.result ? [{ result: t.result, index }] : [])));
+  // A folded card undoes each member, last first; the first failure stops it and shows.
+  const undoAll =
+    onUndo &&
+    (async (indices: number[]) => {
+      for (const index of indices) {
+        const error = await onUndo(index);
+        if (error) return error;
+      }
+      return null;
+    });
 
   return (
     <div className="group/msg flex flex-col gap-3.5 motion-safe:animate-[pulso-rise_280ms_ease-out_both]">
@@ -134,8 +144,8 @@ function AssistantRow({ message, last, onUndo }: { message: AgentMessage; last: 
       {message.text && <Markdown text={message.text} className="space-y-3 text-[15.5px] leading-[1.65]" />}
       {actions.length > 0 && (
         <div className="grid gap-2.5 sm:grid-cols-2">
-          {actions.map(({ result, index }) => (
-            <ActionCard key={index} result={result} onUndo={onUndo && result.undo ? () => onUndo(index) : undefined} />
+          {actions.map(({ result, indices, undoOrder }) => (
+            <ActionCard key={indices[0]} result={result} count={indices.length} onUndo={undoAll && result.undo ? () => undoAll(undoOrder) : undefined} />
           ))}
         </div>
       )}
@@ -217,8 +227,8 @@ function ActionLine({ line }: { line: AgentActionLine }) {
   );
 }
 
-/** What a tool changed: title, before → after, a link to where it lives and Deshacer when it can be undone. */
-function ActionCard({ result, onUndo }: { result: AgentToolResult; onUndo?: () => Promise<string | null> }) {
+/** What a tool changed: title, before → after, a link to where it lives and Deshacer when it can be undone. `count` > 1: several cards folded into one change. */
+function ActionCard({ result, count = 1, onUndo }: { result: AgentToolResult; count?: number; onUndo?: () => Promise<string | null> }) {
   const place = placeOf(result);
   const Icon = place.icon;
   const lines = result.lines ?? (result.detail ? [{ label: null, before: null, value: result.detail }] : []);
@@ -244,7 +254,10 @@ function ActionCard({ result, onUndo }: { result: AgentToolResult; onUndo?: () =
         <span className="grid size-9 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in oklab, ${place.color} 18%, transparent)`, color: place.color }}>
           {undone ? <Undo2 className="size-[18px]" strokeWidth={2.2} /> : <Icon className="size-[18px]" strokeWidth={2.2} />}
         </span>
-        <span className="min-w-0 flex-1 text-[14px] font-semibold">{result.title}</span>
+        <span className="min-w-0 flex-1 text-[14px] font-semibold">
+          {result.title}
+          {count > 1 && <span className="text-muted-foreground ml-1.5 text-[12px] font-medium tabular-nums">· {count} cambios</span>}
+        </span>
         {undone && <span className="text-muted-foreground bg-muted shrink-0 rounded-full px-2 py-0.5 text-[11.5px] font-semibold">Deshecho</span>}
       </div>
       {lines.length > 0 && (
