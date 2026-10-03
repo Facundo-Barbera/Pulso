@@ -49,7 +49,12 @@ export function listBriefs(kind?: CoachBriefKind, limit = 30): CoachBrief[] {
  * the row now `running`, or undefined when someone else is on it, it is
  * already done (unless `force`), or it failed less than RETRY_MS ago.
  */
-export function claimBrief(kind: CoachBriefKind, period: string, { force = false, now = Date.now() } = {}): CoachBrief | undefined {
+export function claimBrief(kind: CoachBriefKind, period: string, { force = false, now = Date.now(), refreshAfterMs }: { force?: boolean; now?: number; refreshAfterMs?: number } = {}): CoachBrief | undefined {
+  // A done brief older than `refreshAfterMs` is rewritten, like a regenerate.
+  if (refreshAfterMs !== undefined) {
+    const existing = briefFor(kind, period);
+    if (existing?.status === "done" && now - existing.updatedAt >= refreshAfterMs) force = true;
+  }
   return db().transaction(() => {
     const existing = briefFor(kind, period);
     if (!existing) {

@@ -3,7 +3,7 @@ import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { QueryFn } from "../agent/runner";
 import { listMessages } from "../agent/threads";
 import { generateBrief } from "./generate";
-import { dueBriefs, lastSunday, periodFor } from "./periods";
+import { DAILY_REFRESH_MS, dueBriefs, lastSunday, periodFor } from "./periods";
 import { briefPrompt } from "./prompts";
 import { replyToBrief } from "./reply";
 import { regenerateBrief, runDueBriefs, startCoachScheduler, stopCoachScheduler } from "./scheduler";
@@ -122,6 +122,27 @@ test("due briefs are written once, however many ticks race", async () => {
   expect(calls).toHaveLength(2);
   expect(latestBrief("daily")?.period).toBe("2026-09-30");
   expect(listBriefs(undefined, 100).filter((b) => b.period === "2026-10-04" || b.period === "2026-09-30")).toHaveLength(2);
+});
+
+test("the day's brief is rewritten once it is an hour old, until 22:00", () => {
+  const now = Date.now();
+  const brief = claimBrief("daily", "2020-03-01", { now })!;
+  completeBrief(brief.id, "Mañana", now);
+  expect(claimBrief("daily", "2020-03-01", { now: now + DAILY_REFRESH_MS - 1, refreshAfterMs: DAILY_REFRESH_MS })).toBeUndefined();
+  expect(claimBrief("daily", "2020-03-01", { now: now + DAILY_REFRESH_MS, refreshAfterMs: DAILY_REFRESH_MS })).toMatchObject({ status: "running", text: "Mañana" });
+});
+
+test("the scheduler refreshes today's brief hourly, but not late at night", async () => {
+  const calls: Call[] = [];
+  const run = fakeQuery([ok("Al día.")], calls);
+  const day = (h: number, min = 0) => new Date(2026, 10, 11, h, min);
+  await runDueBriefs(day(10), run);
+  completeBrief(briefFor("daily", "2026-11-11")!.id, "Al día.", day(10).getTime());
+  expect(await runDueBriefs(day(10, 30), run)).toEqual([]);
+  expect(await runDueBriefs(day(11), run)).toHaveLength(1);
+  completeBrief(briefFor("daily", "2026-11-11")!.id, "Al día.", day(21, 30).getTime());
+  expect(await runDueBriefs(day(23), run)).toEqual([]);
+  expect(calls).toHaveLength(2);
 });
 
 test("regenerate rewrites the current period, once at a time", async () => {

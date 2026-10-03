@@ -4,6 +4,10 @@ import type { CoachBriefKind } from "@pulso/contract";
 export const BRIEF_HOUR = 6;
 /** Until this hour the morning brief waits for last night's sleep to arrive from the phone. */
 export const SLEEP_WAIT_HOUR = 10;
+/** Once written, the day's brief is rewritten every hour so it follows the day (meals, training, doses)… */
+export const DAILY_REFRESH_MS = 60 * 60_000;
+/** …until this local hour; after it the evening is left alone. */
+export const DAILY_REFRESH_UNTIL_HOUR = 22;
 /** A missed Sunday check-in is still written on the following days, up to this many. */
 export const WEEKLY_GRACE_DAYS = 1;
 

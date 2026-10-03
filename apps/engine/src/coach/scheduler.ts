@@ -3,7 +3,7 @@ import type { CoachBrief, CoachBriefKind } from "@pulso/contract";
 import type { QueryFn } from "../agent/runner";
 import { latestNight } from "../sleep/store";
 import { generateBrief } from "./generate";
-import { dueBriefs, localDate, periodFor } from "./periods";
+import { DAILY_REFRESH_MS, DAILY_REFRESH_UNTIL_HOUR, dueBriefs, localDate, periodFor } from "./periods";
 import { claimBrief, failRunningBriefs } from "./store";
 
 export const TICK_MS = 15 * 60_000;
@@ -15,13 +15,15 @@ const g = globalThis as { __pulso_coach_scheduler__?: Scheduler };
 
 /**
  * Writes every brief that is due at `at` and does not exist yet, one after
- * another. Safe to call any number of times: each period is claimed in SQLite
+ * another, and rewrites the day's brief once it is an hour old (until
+ * DAILY_REFRESH_UNTIL_HOUR). Safe to call any number of times: each period is claimed in SQLite
  * before it is generated. Returns the briefs it wrote.
  */
 export async function runDueBriefs(at = new Date(), run: QueryFn = query): Promise<CoachBrief[]> {
   const written: CoachBrief[] = [];
   for (const { kind, period } of dueBriefs(at, { sleptToday: latestNight() === localDate(at) })) {
-    const claimed = claimBrief(kind, period, { now: at.getTime() });
+    const hourly = kind === "daily" && at.getHours() < DAILY_REFRESH_UNTIL_HOUR;
+    const claimed = claimBrief(kind, period, { now: at.getTime(), refreshAfterMs: hourly ? DAILY_REFRESH_MS : undefined });
     if (claimed) written.push(await generateBrief(claimed, run, at));
   }
   return written;
