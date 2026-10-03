@@ -12,13 +12,13 @@ const patchShape = Object.fromEntries(Object.entries(profileShape).map(([key, sc
 export const profileTools = [
   tool(
     "get_profile",
-    "The person's stored profile: age, sex, heightCm, goals, experience, equipment, schedule, injuries, allergies, foodPreferences, notes. Missing fields are unknown. Read it before designing a routine or diet.",
+    "The stored profile (age, sex, heightCm, goals, experience, equipment, schedule, injuries, allergies, foodPreferences, notes); missing fields are unknown.",
     {},
     async () => json(getProfile()),
   ),
   tool(
     "update_profile",
-    "The person's long-term memory: the profile is all a new conversation knows about them. Call it in the same turn, without asking, whenever they mention something durable — a goal or deadline (goals), an injury, pain or condition (injuries), days and time available (schedule), equipment, training history (experience), allergies, foods they like or avoid (foodPreferences), how they like to be coached or anything else lasting (notes). Pass only the fields that changed; the rest are kept. Text fields replace the old value, so merge in what should stay. Pass null to clear a field. Not for one-off facts (today's meal, today's mood). Returns the saved profile.",
+    "Save durable facts about the person (the profile is all a new conversation knows), in the same turn, without asking. Only the fields that changed; text replaces the old value, so merge in what should stay; null clears. Not for one-off facts. Returns the saved profile.",
     patchShape,
     async (patch) => json(updateProfile(patch)),
   ),
