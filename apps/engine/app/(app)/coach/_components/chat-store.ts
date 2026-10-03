@@ -33,6 +33,7 @@ type Listener = () => void;
 
 const API = "/api/web/coach/conversation";
 const RETRIES = 5;
+const SUMMARY_RECHECK_MS = 4000;
 
 async function problem(response: Response): Promise<string> {
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -67,6 +68,7 @@ export class Chat {
   private localOf = new Map<string, string>();
   /** The SDK summarized during the turn: re-read the feed for its marker once it ends. */
   private compactedInTurn = false;
+  private recheck: ReturnType<typeof setTimeout> | null = null;
 
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
@@ -101,9 +103,19 @@ export class Chat {
 
   /** From an effect: re-attaches to the turn the server said is in flight. */
   start() {
+    this.watchSummary();
     if (!this.pendingAttach || this.following) return;
     this.pendingAttach = false;
     void this.follow(() => fetch(`${API}/turn`, { cache: "no-store" }));
+  }
+
+  /** An hourly summary has no stream to say it ended: re-read the feed until the Mac says it did. */
+  private watchSummary() {
+    if (this.recheck || !this.state.compacting || this.following) return;
+    this.recheck = setTimeout(() => {
+      this.recheck = null;
+      void this.resume();
+    }, SUMMARY_RECHECK_MS);
   }
 
   /** Re-reads the latest page unless a stream is live (e.g. the tab comes back into view). */
@@ -228,6 +240,8 @@ export class Chat {
           for await (const event of readEvents(response.body)) {
             if (event.type === "start") this.adopt(event.messageId, event.userMessageId);
             if (event.type === "status") this.set({ compacting: event.status === "compacting" });
+            // Anything else (the turn starting after an hourly summary, its boundary, text, a tool) means the summary is over.
+            else if (this.state.compacting) this.set({ compacting: false });
             if (event.type === "compacted") this.compactedInTurn = true;
             this.patchLast((m) => applyEvent(m, event));
             if (event.type === "done" || event.type === "error") finished = true;

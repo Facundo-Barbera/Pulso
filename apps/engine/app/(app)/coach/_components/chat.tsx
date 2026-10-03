@@ -141,7 +141,7 @@ export function CoachFeed({ initial, brief, starter, replyTo }: { initial: Agent
           {state.compacting && (
             <p className="text-muted-foreground flex items-center gap-2 text-[13px]" role="status">
               <Loader2 className="size-3.5 motion-safe:animate-spin" />
-              Compactando lo anterior…
+              {state.streaming ? "Resumiendo para seguir…" : "Resumiendo la conversación…"}
             </p>
           )}
           {(state.error || notice) && (
@@ -181,7 +181,7 @@ export function CoachFeed({ initial, brief, starter, replyTo }: { initial: Agent
 function FeedHeader({ chat, onBrief, briefOpen, onContext }: { chat: Chat; onBrief: () => void; briefOpen: boolean; onContext: (id?: string) => void }) {
   const state = useChat(chat);
   const icon = "app-no-drag text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2";
-  const status = state.compacting ? "compactando…" : state.streaming ? "respondiendo…" : null;
+  const status = state.compacting ? "resumiendo…" : state.streaming ? "respondiendo…" : null;
   return (
     <header className="app-drag border-border/60 relative z-10 flex min-h-14 shrink-0 items-center gap-1 border-b px-3 pt-[env(safe-area-inset-top)] md:h-[var(--titlebar-height)] md:min-h-0 md:px-4 md:pt-0">
       <div className="flex min-w-0 flex-1 items-center gap-2.5 px-1">
