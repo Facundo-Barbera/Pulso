@@ -47,8 +47,10 @@ export const mealShape = {
 };
 export const mealSchema = z.object(mealShape);
 
-/** One food of a dish: a meal item without its own slot or time (the dish has them). */
-export const componentSchema = mealSchema.omit({ slot: true, eatenAt: true, date: true });
+/** One food of a dish: a meal item without its own slot or time (the dish has them). Its measure help points to log_meal's rather than repeating it. */
+export const componentSchema = mealSchema
+  .omit({ slot: true, eatenAt: true, date: true })
+  .extend({ measure: mealShape.measure.describe("Amount in the person's words, as log_meal's measure") });
 
 type Amount = { name: string; measure?: z.infer<typeof mealSchema>["measure"]; quantity?: number; unit?: QuantityUnit };
 type Parsed<T> = Omit<T, "measure" | "quantity" | "unit"> & Pick<MealInput, "quantity" | "unit" | "measure">;
