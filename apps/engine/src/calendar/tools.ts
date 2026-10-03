@@ -4,7 +4,6 @@ import { placementSchema, planTrainingWeek, replan, updatePlannedSession } from 
 import {
   addBusyBlock,
   addHealthEvent,
-  BODY_AREAS,
   busyInputSchema,
   dateSchema,
   deleteBusyBlock,
@@ -36,24 +35,21 @@ async function safely(run: () => unknown) {
 
 const today = () => local().date;
 
-const FORMATS = "Dates are the person's local 'YYYY-MM-DD', times local 24h 'HH:MM', weekdays ISO (1 = Monday … 7 = Sunday).";
+const FORMATS = "Local dates 'YYYY-MM-DD', times 'HH:MM' 24 h, ISO weekdays (1 = Monday).";
 const REPLAN =
-  "Afterwards every upcoming planned training session is re-checked: a clashing one moves to the nearest free slot (same day, then ±1–3 days) and comes back in `replan.moved`; " +
-  "one that can't move (no room, or an injury) stays with a conflict in `replan.unresolved` — decide what to do and tell the person what changed.";
+  "Then upcoming planned sessions are re-checked: a clashing one moves to the nearest free slot (same day, then ±1–3 days), in `replan.moved`; one that can't move stays with a conflict in `replan.unresolved`.";
 const HEALTH_BOUNDARY =
-  "Record what the person reports in their words; never diagnose, name a likely condition, or suggest treatment. For pain that is sharp, worsening or follows an injury, tell them to see a professional.";
-const AREAS = `bodyArea: a joint (knee, shoulder, ankle, wrist, elbow, hip), a muscle (${BODY_AREAS.slice(7).join(", ")}), or 'general' for the whole body (a cold, fever, surgery).`;
+  "Record it in their words; never diagnose, name a likely condition or suggest treatment. Sharp, worsening or post-injury pain: tell them to see a professional.";
+const AREAS = "bodyArea 'general' = the whole body (a cold, fever, surgery).";
 
 export const calendarTools = [
   tool(
     "get_calendar",
-    `The person's calendar for [from, to] (at most ~4 months): one timeline merging planned and logged training (status planned/moved/done/skipped/missed, conflict text), ` +
-      `Health workouts, meals and planned meal times, medication doses taken or skipped, sleep, busy blocks, health events and body scans. ` +
-      `Also returns the busy block definitions (ids for update/remove), active health events and scheduling preferences. Read it before planning a week, ` +
-      `when the person asks about their schedule, or to answer "when was I sick / what did I do around then". ${FORMATS}`,
+    `The calendar for [from, to] (at most ~4 months): one timeline of planned and logged training (planned/moved/done/skipped/missed, conflicts), Health workouts, meals and meal times, medication doses, sleep, busy blocks, health events and body scans; ` +
+      `plus busy block definitions (ids), active health events and scheduling preferences. ${FORMATS}`,
     {
-      from: dateSchema.optional().describe("First day; default today."),
-      to: dateSchema.optional().describe("Last day, inclusive; default from + 6."),
+      from: dateSchema.optional().describe("Default today."),
+      to: dateSchema.optional().describe("Inclusive; default from + 6."),
     },
     async ({ from, to }) =>
       safely(() => {
@@ -69,56 +65,48 @@ export const calendarTools = [
   ),
   tool(
     "set_availability",
-    `Saves when the person likes to train and their day: trainingTimes (preferred session start times, best first), sessionMinutes (usual session length), ` +
-      `restDays (weekdays they never train), wakeTime and sleepTime (sessions fit between them), mealTimes (default meal times, [{slot, time}], slot one of ` +
-      `desayuno, media_manana, comida, merienda, cena, snack). Only the fields given change. Use it when they say things like "entreno por la tarde" or "los domingos descanso". ${FORMATS} ${REPLAN}`,
+    `Save when they like to train and their day ("entreno por la tarde", "los domingos descanso"): trainingTimes (session starts, best first), sessionMinutes, restDays (weekdays never trained), wakeTime and sleepTime (sessions fit between), mealTimes (defaults). Only the fields given change. ${FORMATS} ${REPLAN}`,
     preferencesSchema.shape,
     async (prefs) => safely(() => ({ preferences: setPreferences(prefs), replan: replan() })),
   ),
   tool(
     "add_busy_block",
-    `Records time the person is busy and can't train: a meeting, work shift, trip, a family day. One-off: date (to endDate for several days, e.g. a trip). ` +
-      `Weekly: weekdays + optional until. Give start and end for a timed block; omit both (or allDay true) for the whole day. ` +
-      `Record it as soon as they mention being busy or travelling, then re-plan. ${FORMATS} ${REPLAN}`,
+    `Record time they're busy and can't train (a meeting, shift, trip). One-off: date (to endDate for several days); weekly: weekdays (+ until). start and end for a timed block; neither (or allDay) for the whole day. ${FORMATS} ${REPLAN}`,
     { ...busyInputSchema.shape, source: z.literal("coach").default("coach") },
     async (input) => safely(() => ({ block: addBusyBlock(input), replan: replan() })),
   ),
   tool(
     "update_busy_block",
-    `Changes a busy block by id (from get_calendar's busyBlocks): only the fields given. ${FORMATS} ${REPLAN}`,
-    { id: z.string().describe("Busy block id."), ...busyPatchSchema.omit({ source: true }).shape },
+    `Change a busy block by id (get_calendar's busyBlocks), only the fields given. ${FORMATS} ${REPLAN}`,
+    { id: z.string(), ...busyPatchSchema.omit({ source: true }).shape },
     async ({ id, ...patch }) => safely(() => ({ block: updateBusyBlock(id, patch), replan: replan() })),
   ),
   tool(
     "remove_busy_block",
-    `Deletes a busy block by id (from get_calendar's busyBlocks), e.g. a meeting that was cancelled. Sessions moved because of it stay where they are. ${REPLAN}`,
+    `Delete a busy block by id (get_calendar's busyBlocks). Sessions it moved stay where they are. ${REPLAN}`,
     { id: z.string() },
     async ({ id }) => safely(() => ({ removed: deleteBusyBlock(id), replan: replan() })),
   ),
   tool(
     "add_health_event",
-    `Records an injury, illness, symptom or surgery the person mentions, so there is a history ("me enfermé por esas fechas") and training respects it. ` +
-      `kind: lesion, enfermedad, sintoma, cirugia, otro. ${AREAS} severity 1 (mild) … 5 (severe), as the person describes it. ` +
-      `startDate when it began (ask or estimate from what they say); endDate empty while ongoing. status: activa, recuperandose or resuelta (default activa, or resuelta if it ended in the past). ` +
-      `affectedTraining: how it limits training in their words ("evitar sentadilla", "nada de impacto"). ` +
-      `An active illness or surgery of severity ≥ 3 takes training days off the plan; an active injury of severity ≥ 4 keeps the program days that load that area off it; milder ones only warn. ` +
+    `Record an injury, illness, symptom or surgery, for the history and so training respects it. ${AREAS} severity 1 (mild) … 5 (severe) as they describe it. startDate when it began (ask or estimate); no endDate while ongoing. ` +
+      `status defaults to activa (resuelta if it ended in the past). affectedTraining: how it limits training, their words ("nada de impacto"). ` +
+      `An active illness or surgery of severity ≥ 3 takes training days off the plan; an active injury ≥ 4 keeps the days loading that area off; milder ones only warn. ` +
       `${HEALTH_BOUNDARY} ${FORMATS} ${REPLAN}`,
     healthInputSchema.shape,
     async (input) => safely(() => ({ event: addHealthEvent(input, today()), replan: replan() })),
   ),
   tool(
     "update_health_event",
-    `Updates a health event by id (only the fields given): it got better or worse (severity), it is healing (status recuperandose) or over (status resuelta, endDate). ` +
-      `Resolving without endDate ends it today. ${AREAS} ${HEALTH_BOUNDARY} ${REPLAN}`,
-    { id: z.string().describe("Health event id from list_health_events."), ...healthPatchSchema.shape },
+    `Update a health event by id, only the fields given: severity, healing (recuperandose) or over (resuelta; without endDate it ends today). ${HEALTH_BOUNDARY} ${REPLAN}`,
+    { id: z.string().describe("From list_health_events."), ...healthPatchSchema.shape },
     async ({ id, ...patch }) => safely(() => ({ event: updateHealthEvent(id, patch, today()), replan: replan() })),
   ),
   tool(
     "list_health_events",
-    `The person's injuries, illnesses, symptoms and surgeries: active first, then history (newest first), each with kind, bodyArea, severity 1–5, start/end dates, status, notes and affectedTraining. ` +
-      `Check the active ones before prescribing or changing training, and say what you adapted because of them. Filter by dates to answer "what was going on around then". ${HEALTH_BOUNDARY}`,
+    `Injuries, illnesses, symptoms and surgeries: active first, then history (newest first), with kind, bodyArea, severity 1–5, dates, status, notes, affectedTraining. ${HEALTH_BOUNDARY}`,
     {
-      activeOnly: z.boolean().default(false).describe("Only events not resolved yet."),
+      activeOnly: z.boolean().default(false).describe("Only unresolved ones."),
       from: dateSchema.optional().describe("Only events overlapping [from, to]."),
       to: dateSchema.optional(),
     },
@@ -126,22 +114,19 @@ export const calendarTools = [
   ),
   tool(
     "plan_training_week",
-    `Places the active program's days on the 7 days from \`from\` (default today) with a start time each, around busy blocks, rest days, sleep/wake times and active health events, ` +
-      `replacing what was planned there from today on; program days already done this ISO week are left out. Without placements it decides itself: days pinned to a weekday stay there, ` +
-      `the rest spread out avoiding back-to-back days. Pass placements [{dayId, date, time, durationMin?}] to choose yourself (clashes come back as warnings). ` +
-      `Returns the planned sessions, the days it could not place and why, and warnings for injuries the plan touches — adapt or swap those exercises and tell the person. ` +
-      `Use it after creating a program, when the person shares their week, or after their availability changes a lot. ${FORMATS}`,
+    `Place the active program's days on the 7 days from \`from\` with start times, around busy blocks, rest days, sleep/wake times and active health events, replacing what was planned there from today on; days already done this ISO week are left out. ` +
+      `Without placements it decides: pinned days stay on their weekday, the rest spread out avoiding back-to-back days; with them, clashes come back as warnings. ` +
+      `Returns the sessions, the days it couldn't place and why, and warnings for injuries the plan touches (adapt those exercises). ${FORMATS}`,
     {
-      from: dateSchema.optional().describe("First day of the 7-day window; default today."),
-      placements: z.array(placementSchema).max(14).optional().describe("Your own placement, by program day id. Omit to let the planner decide."),
-      reason: z.string().trim().max(300).optional().describe("One line on why this plan, shown with each session."),
+      from: dateSchema.optional().describe("Default today."),
+      placements: z.array(placementSchema).max(14).optional().describe("Your own, by program day id."),
+      reason: z.string().trim().max(300).optional().describe("One line, shown with each session."),
     },
     async (input) => safely(() => planTrainingWeek(input)),
   ),
   tool(
     "update_planned_session",
-    `Moves, re-times or skips one planned training session by id (from get_calendar items 'plan:<id>' or plan_training_week). status 'skipped' drops it for that day; ` +
-      `a new date marks it moved. Add a short reason. ${FORMATS}`,
+    `Move, re-time or skip one planned session by id (get_calendar items 'plan:<id>' or plan_training_week). A new date marks it moved. Add a short reason. ${FORMATS}`,
     {
       id: z.string(),
       date: dateSchema.optional(),
@@ -154,12 +139,10 @@ export const calendarTools = [
   ),
   tool(
     "set_meal_times",
-    `Sets meal times: [{slot, time}] with slot one of desayuno, media_manana, comida, merienda, cena, snack. Without dates they become the default for every day; ` +
-      `with dates they override just those days (e.g. eat earlier on a day training at 19:00, or around a trip). Plan meals around training: ` +
-      `a meal 2–3 h before a session and protein within a few hours after. An empty list on dates clears their override. ${FORMATS}`,
+    `Set meal times: the default for every day, or with dates an override for just those days (an empty list clears it). Fit them around training: a meal 2–3 h before a session, protein within a few hours after. ${FORMATS}`,
     {
       mealTimes: mealTimesSchema,
-      dates: z.array(dateSchema).max(62).optional().describe("Only these days; omit for the default."),
+      dates: z.array(dateSchema).max(62).optional(),
     },
     async ({ mealTimes, dates }) =>
       safely(() => (dates?.length ? { byDate: setMealTimesFor(dates, mealTimes) } : { preferences: setPreferences({ mealTimes }) })),
