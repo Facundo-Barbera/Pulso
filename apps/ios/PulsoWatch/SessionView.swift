@@ -66,9 +66,8 @@ private struct IdlePage: View {
                     Text("Siguiente").font(.footnote).foregroundStyle(.secondary)
                     Text(plan.day.name).font(.headline).multilineTextAlignment(.center)
                 }
-                Button("Empezar", systemImage: "play.fill") { store.start() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.accentColor)
+                ControlButton(title: "Empezar", symbol: "play.fill", tint: .green) { store.start() }
+                    .frame(width: 90)
             } else {
                 Text("Abre Pulso en tu iPhone una vez para traer tu plan.")
                     .font(.footnote)
@@ -561,29 +560,53 @@ private struct Countdown: View {
 
 // MARK: - Controls
 
+/// As the Workout app: compact buttons at the top, each its icon on a tinted
+/// tile and its name below. "Terminar" asks as the phone's X does: save it, or
+/// throw it away.
 private struct ControlsPage: View {
     let store: WatchSessionStore
     let workout: WorkoutManager
-    @State private var confirmDiscard = false
+    @State private var ending = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 8) {
-                Button("Terminar y guardar", systemImage: "flag.checkered") { store.finish(save: true) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.accentColor)
-                Button(workout.paused ? "Seguir grabando" : "Pausar grabación", systemImage: workout.paused ? "play.fill" : "pause.fill") {
-                    workout.paused ? workout.resume() : workout.pause()
-                }
-                .tint(.yellow)
-                Button("Descartar sesión", systemImage: "trash", role: .destructive) { confirmDiscard = true }
+        HStack(alignment: .top, spacing: 10) {
+            ControlButton(title: "Terminar", symbol: "xmark", tint: .red) { ending = true }
+            ControlButton(title: workout.paused ? "Reanudar" : "Pausa", symbol: workout.paused ? "arrow.clockwise" : "pause.fill", tint: .yellow) {
+                workout.paused ? workout.resume() : workout.pause()
             }
         }
-        .confirmationDialog("¿Descartar la sesión?", isPresented: $confirmDiscard) {
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .confirmationDialog("¿Terminar la sesión?", isPresented: $ending) {
+            Button("Terminar y guardar") { store.finish(save: true) }
             Button("Descartar", role: .destructive) { store.finish(save: false) }
             Button("Seguir", role: .cancel) {}
         } message: {
-            Text("Se pierde lo registrado, aquí y en el iPhone.")
+            Text("Descartar borra lo registrado, aquí y en el iPhone.")
+        }
+    }
+}
+
+private struct ControlButton: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Button(action: action) {
+                Image(systemName: symbol)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(tint.opacity(0.22), in: .rect(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.selection, trigger: symbol)
+            Text(title)
+                .font(.footnote)
+                .lineLimit(1)
         }
     }
 }
