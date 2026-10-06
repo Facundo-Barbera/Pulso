@@ -1,19 +1,17 @@
 import Charts
 import SwiftUI
 
-/// One strength exercise: a compact header (thumbnail and name open the guide,
-/// the machine's unit, the target on one line), then the sets. The set up next
-/// is a full row (load and repetitions big, "Hecho" on the right); done and
-/// upcoming sets are compact lines that expand when tapped. Tapping the load or
-/// the repetitions opens −/+ for just that value, in the exercise's unit. Below:
-/// the best mark, the optional effort rating and the exercise's actions.
+/// One strength exercise, top to bottom: its header (photo, name, muscle and
+/// target; tapping opens the guide), every set as a row of the same shape — the
+/// one up next highlighted with "Hecho", the rest quiet — then the exercise's
+/// actions, its best mark and the next exercise. Tapping the load or the
+/// repetitions types it in place, with −/+ (and the machine's unit) over the keyboard.
 struct ExercisePage: View {
     let session: LiveSession
     let index: Int
     /// The sessions to read history from; the store's when nil.
     var history: [TrainingSession]? = nil
     let swap: () -> Void
-    @State private var editing: SetEditing?
     /// "¿Bajaste el peso para terminarla?" under a set just done short of the target.
     @State private var offer: DropOffer?
     @State private var info = false
@@ -23,22 +21,20 @@ struct ExercisePage: View {
         session.state.exercises.indices.contains(index) ? session.state.exercises[index] : nil
     }
 
-    /// The effort advice shows once a session: on the first exercise that has one (and always in the guide).
-    private var showsAdvice: Bool {
-        session.state.exercises.firstIndex { $0.effortAdvice != nil } == index
-    }
-
     var body: some View {
         if let exercise {
             let sessions = history ?? TrainingStore.shared.sessions
             let last = LiveHistory.last(exercise.exerciseId, in: sessions)
             let unit = TrainingStore.shared.unit(for: exercise.exerciseId)
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ExerciseHeader(exercise: exercise, unit: unit, advice: showsAdvice ? exercise.effortAdvice : nil, info: { info = true }) {
-                        withAnimation(.snappy) { session.setSkipped(index, false) }
+                VStack(alignment: .leading, spacing: 14) {
+                    ExerciseHeader(exercise: exercise, target: exercise.headerTarget(withRest: true)) { info = true }
+                    if exercise.skipped {
+                        SkippedBanner {
+                            withAnimation(.snappy) { session.setSkipped(index, false) }
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                     }
-                    .padding(.bottom, 2)
                     sets(exercise, last: last, unit: unit)
                     if exercise.done && exercise.hasDoneWork {
                         EffortCard(value: exercise.effort) { session.setEffort(exercise: index, to: $0) }
@@ -46,26 +42,18 @@ struct ExercisePage: View {
                     }
                     actions(exercise)
                     BestCard(exercise: exercise, sessions: sessions, unit: unit)
-                        .padding(.top, 4)
+                    NextCard(session: session, after: index)
+                        .padding(.top, 8)
                 }
                 .padding(.horizontal, Theme.padding)
-                .padding(.top, 2)
+                .padding(.top, 8)
                 .padding(.bottom, 24)
                 .animation(.snappy, value: exercise.sets)
-                .animation(.snappy, value: editing)
                 .animation(.snappy, value: offer)
                 .animation(.snappy, value: exercise.skipped)
             }
             .scrollDismissesKeyboard(.interactively)
-            .toolbar {
-                if field != nil {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Listo") { field = nil }
-                            .fontWeight(.semibold)
-                    }
-                }
-            }
+            .setKeyboard($field, session: session)
             .sheet(isPresented: $info) {
                 NavigationStack {
                     ExerciseDetailView(exerciseId: exercise.exerciseId, name: exercise.name, today: exercise)
@@ -81,12 +69,11 @@ struct ExercisePage: View {
 
     private func sets(_ exercise: LiveExercise, last: LiveHistory.Last?, unit: WeightUnit) -> some View {
         let current = exercise.skipped ? nil : exercise.sets.firstIndex { !$0.done }
-        return VStack(spacing: 6) {
+        return VStack(spacing: 8) {
             ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { s, set in
                 SetRowView(
-                    number: s + 1, set: set, previous: LiveHistory.set(s, of: last), unit: unit, exerciseId: exercise.exerciseId,
-                    needsLoad: Equipment.needsLoad(exercise.equipment), current: s == current,
-                    expanded: s == current || editing?.id == set.id, editing: editing?.id == set.id ? editing?.value : nil, field: $field
+                    number: s + 1, set: set, range: exercise.repRange(set), previous: LiveHistory.set(s, of: last), unit: unit,
+                    needsLoad: Equipment.needsLoad(exercise.equipment), current: s == current, field: $field
                 ) { action in
                     perform(action, set: s, id: set.id)
                 }
@@ -96,8 +83,6 @@ struct ExercisePage: View {
                         withAnimation(.snappy) {
                             session.addDrop(exercise: index, set: s, offer.drop)
                             self.offer = nil
-                            // Open on the new segment, so a different load is one tap away.
-                            editing = SetEditing(id: set.id, value: .dropWeight(0))
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -119,43 +104,19 @@ struct ExercisePage: View {
             field = nil
             withAnimation(.snappy) {
                 session.toggle(exercise: index, set: s)
-                editing = nil
                 offer = done(s).flatMap { set in
                     SetDrop.offer(for: set, repMin: exercise?.repMin ?? 0, unit: session.unit(index)).map { DropOffer(setId: id, drop: $0) }
                 }
             }
-        case .expand: withAnimation(.snappy) { editing = SetEditing(id: id) }
-        case .edit(let value):
-            field = nil
-            withAnimation(.snappy) { editing = SetEditing(id: id, value: editing == SetEditing(id: id, value: value) ? nil : value) }
-        case .close:
-            field = nil
-            withAnimation(.snappy) { editing = nil }
-        case .step(.weight, let up): withAnimation(.snappy) { session.stepWeight(exercise: index, set: s, up: up) }
-        case .step(.reps, let up): withAnimation(.snappy) { session.adjustReps(exercise: index, set: s, by: up ? 1 : -1) }
-        case .step(.dropWeight(let d), let up): withAnimation(.snappy) { session.stepDropWeight(exercise: index, set: s, drop: d, up: up) }
-        case .step(.dropReps(let d), let up):
-            let reps = exercise?.sets[s].drops[safe: d]?.reps ?? 1
-            withAnimation(.snappy) { session.setDropReps(exercise: index, set: s, drop: d, to: reps + (up ? 1 : -1)) }
-        case .setWeight(let value): session.setWeight(exercise: index, set: s, to: value)
-        case .setReps(let reps): session.setReps(exercise: index, set: s, to: reps)
-        case .setDropWeight(let d, let value): session.setDropWeight(exercise: index, set: s, drop: d, to: value)
-        case .setDropReps(let d, let reps): session.setDropReps(exercise: index, set: s, drop: d, to: reps)
+        case .close: field = nil
         case .addDrop:
             field = nil
             guard let drop = session.nextDrop(exercise: index, set: s) else { return }
-            let d = exercise?.sets[s].drops.count ?? 0
-            withAnimation(.snappy) {
-                session.addDrop(exercise: index, set: s, drop)
-                editing = SetEditing(id: id, value: .dropWeight(d))
-            }
+            withAnimation(.snappy) { session.addDrop(exercise: index, set: s, drop) }
         case .removeDrop(let d):
             field = nil
-            withAnimation(.snappy) {
-                session.removeDrop(exercise: index, set: s, drop: d)
-                editing = SetEditing(id: id)
-            }
-        case .remove: withAnimation(.snappy) { session.removeSet(exercise: index, set: s) }
+            withAnimation(.snappy) { session.removeDrop(exercise: index, set: s, drop: d) }
+        default: session.apply(action, exercise: index, set: s)
         }
     }
 
@@ -164,44 +125,20 @@ struct ExercisePage: View {
         exercise.flatMap { $0.sets.indices.contains(s) && $0.sets[s].done ? $0.sets[s] : nil }
     }
 
+    /// Series −/+, "Registrar las 2 que faltan" when more than one is left, and "Cambiar ejercicio".
     private func actions(_ exercise: LiveExercise) -> some View {
         let left = exercise.sets.count { !$0.done }
-        return VStack(spacing: 10) {
-            AdaptiveStack(spacing: 10) {
-                if left > 1 && !exercise.skipped {
-                    Button {
-                        field = nil
-                        editing = nil
-                        withAnimation(.snappy) { session.completeAll(exercise: index) }
-                    } label: {
-                        Label("Registrar todas", systemImage: "checkmark.circle")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .accessibilityHint("Marca las \(left) series que faltan tal como están")
-                }
-                Button {
-                    withAnimation(.snappy) { session.addSet(exercise: index) }
-                } label: {
-                    Label("Añadir serie", systemImage: "plus")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-            }
-            AdaptiveStack(spacing: 10) {
-                Button(action: swap) {
-                    Label("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                Button {
-                    withAnimation(.snappy) { session.setSkipped(index, !exercise.skipped) }
-                } label: {
-                    Label(exercise.skipped ? "Retomar" : "Saltar", systemImage: exercise.skipped ? "arrow.uturn.backward" : "forward")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-            }
+        return PageActions(
+            noun: "Series", count: exercise.sets.count, canRemove: session.state.removableSets(index) > 0,
+            add: { withAnimation(.snappy) { session.addSet(exercise: index) } },
+            remove: { withAnimation(.snappy) { session.removeLastSet(exercise: index) } },
+            logAll: left > 1 && !exercise.skipped ? left : nil
+        ) {
+            field = nil
+            withAnimation(.snappy) { session.completeAll(exercise: index) }
+        } links: {
+            Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath", action: swap)
         }
-        .font(.subheadline.weight(.semibold))
-        .buttonStyle(.glass)
-        .padding(.top, 4)
     }
 }
 
@@ -210,80 +147,195 @@ extension Equipment {
     static func needsLoad(_ id: String) -> Bool { !["bodyweight", "band"].contains(id) }
 }
 
+extension LiveExercise {
+    /// "3 × 8–10 reps · descanso 1:30"; without the rest in a superset, which rests after the round.
+    func headerTarget(withRest: Bool) -> String {
+        let reps = repMin < repMax ? "\(repMin)–\(repMax)" : "\(repMax)"
+        let target = "\(sets.count) × \(reps) reps"
+        return withRest && restSeconds > 0 ? "\(target) · descanso \(TrainingFormat.rest(restSeconds))" : target
+    }
+}
+
 // MARK: - Header
 
-/// Thumbnail and name (tapping them opens the guide), the muscle as small text,
-/// the machine's unit, and the target on one line. Skipped, a banner says so
-/// with the way back.
-private struct ExerciseHeader: View {
+/// The exercise up top: its photo, name, main muscle as a chip and the target.
+/// Tapping it opens the guide.
+struct ExerciseHeader: View {
     let exercise: LiveExercise
-    let unit: WeightUnit
-    /// The effort advice, when this is the exercise that shows it.
-    let advice: String?
+    let target: String
     let info: () -> Void
-    let resume: () -> Void
 
     private var detail: ExerciseDetail? { ExerciseCatalog.shared.details[exercise.exerciseId] }
 
-    /// "Espalda alta · Superserie"
-    private var meta: String? {
-        let parts = [detail?.primaryMuscles.first?.label, exercise.supersetId != nil ? "Superserie" : nil].compactMap(\.self)
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    var body: some View {
+        Button(action: info) {
+            HStack(alignment: .center, spacing: 14) {
+                ExerciseMediaView(path: detail?.media.thumbnail ?? detail?.media.animation, cornerRadius: 16)
+                    .frame(width: 72, height: 72)
+                    .saturation(exercise.skipped ? 0 : 1)
+                    .opacity(exercise.skipped ? 0.6 : 1)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(exercise.name)
+                        .font(.title3.bold())
+                        .fontDesign(.rounded)
+                        .strikethrough(exercise.skipped, color: .secondary)
+                        .foregroundStyle(exercise.skipped ? .secondary : .primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        if let muscle = detail?.primaryMuscles.first?.label {
+                            ReasonTag(text: muscle)
+                        }
+                        Text(target)
+                            .font(.subheadline)
+                            .fontDesign(.rounded)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "info.circle")
+                    .font(.title3)
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Abre la guía y los objetivos de hoy")
     }
+}
+
+/// Between a superset's headers: "Superserie" with a link, under the photos.
+struct SupersetLink: View {
+    var body: some View {
+        Label("Superserie", systemImage: "link")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.training)
+            .fixedSize()
+            .padding(.leading, 6)
+            .padding(.vertical, -4)
+            .accessibilityLabel("En superserie con el siguiente")
+    }
+}
+
+/// The screen's actions at the end of its list: how many sets (or rounds) with
+/// −/+, "Registrar las N que faltan" when there are several, then quiet links.
+struct PageActions<Links: View>: View {
+    /// "Series" or "Rondas".
+    let noun: String
+    let count: Int
+    /// The last one isn't done (and isn't the only one).
+    let canRemove: Bool
+    let add: () -> Void
+    let remove: () -> Void
+    /// Sets left to log at once; nil hides the button.
+    var logAll: Int? = nil
+    var log: () -> Void = {}
+    @ViewBuilder let links: Links
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 12) {
-                Button(action: info) {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Text(noun)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                RoundStepButton(systemImage: "minus", size: 40, action: remove)
+                    .disabled(!canRemove)
+                    .opacity(canRemove ? 1 : 0.4)
+                    .accessibilityLabel("Quitar una")
+                Text("\(count)")
+                    .font(.title2.bold())
+                    .fontDesign(.rounded)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .frame(minWidth: 28)
+                    .accessibilityLabel("\(count) \(noun.lowercased())")
+                RoundStepButton(systemImage: "plus", size: 40, action: add)
+                    .accessibilityLabel("Añadir una")
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 10)
+            .padding(.vertical, 8)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+            .sensoryFeedback(.selection, trigger: count)
+            if let logAll {
+                Button(action: log) {
+                    Label("Registrar las \(logAll) que faltan", systemImage: "checkmark.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.glass)
+                .accessibilityHint("Las marca tal como están")
+            }
+            HStack(spacing: 24) { links }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Theme.training)
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+    }
+}
+
+/// "Siguiente" at the end of a page: the next screen's photo, names and target.
+/// Nothing when nothing is left.
+struct NextCard: View {
+    let session: LiveSession
+    /// The page's first exercise.
+    let after: Int
+
+    var body: some View {
+        let state = session.state
+        if let next = state.nextPending(after: after) {
+            let exercises = state.block(of: next).map { state.exercises[$0] }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Siguiente")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.training)
+                Button {
+                    withAnimation(.snappy) { session.setFocus(next) }
+                } label: {
                     HStack(spacing: 12) {
-                        ExerciseMediaView(path: detail?.media.thumbnail ?? detail?.media.animation, cornerRadius: 11)
-                            .frame(width: 44, height: 44)
-                            .saturation(exercise.skipped ? 0 : 1)
-                            .opacity(exercise.skipped ? 0.6 : 1)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(exercise.name)
+                        ExerciseMediaView(path: exercises.first.flatMap { ExerciseCatalog.shared.details[$0.exerciseId]?.media.thumbnail }, cornerRadius: 12)
+                            .frame(width: 52, height: 52)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(exercises.map(\.name).joined(separator: " + "))
                                 .font(.headline)
-                                .fontDesign(.rounded)
-                                .strikethrough(exercise.skipped, color: .secondary)
-                                .foregroundStyle(exercise.skipped ? .secondary : .primary)
                                 .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let meta {
-                                Text(meta).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
+                            Text(target(exercises))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.headline)
+                            .foregroundStyle(.tertiary)
                     }
+                    .padding(12)
+                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(exercise.name)
-                .accessibilityHint("Abre la guía y los objetivos de hoy")
-
-                if Equipment.needsLoad(exercise.equipment) {
-                    UnitBadge(exerciseId: exercise.exerciseId, unit: unit)
-                }
-            }
-
-            if exercise.skipped {
-                SkippedBanner(resume: resume)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-            } else {
-                Text(exercise.targetLine)
-                    .font(.subheadline.weight(.semibold))
-                    .fontDesign(.rounded)
-                    .foregroundStyle(Theme.training)
-                    .contentTransition(.numericText())
-                if let advice {
-                    Text(advice).font(.footnote).foregroundStyle(.secondary)
-                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Siguiente: \(exercises.map(\.name).joined(separator: " y "))")
             }
         }
+    }
+
+    private func target(_ exercises: [LiveExercise]) -> String {
+        guard exercises.count > 1 else { return exercises.first.map { $0.target(TrainingStore.shared.unit(for: $0.exerciseId)) } ?? "" }
+        let rounds = exercises.map(\.sets.count).max() ?? 0
+        return "Superserie · \(rounds) \(rounds == 1 ? "ronda" : "rondas")"
     }
 }
 
 /// "Saltado hoy" with "Retomar": a skipped exercise must not look like one waiting.
-private struct SkippedBanner: View {
+struct SkippedBanner: View {
     let resume: () -> Void
 
     var body: some View {
@@ -305,31 +357,6 @@ private struct SkippedBanner: View {
         .padding(.vertical, 8)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .contain)
-    }
-}
-
-/// The machine's unit as a small capsule; a menu switches it (for every session, at once).
-private struct UnitBadge: View {
-    let exerciseId: String
-    let unit: WeightUnit
-
-    var body: some View {
-        Menu {
-            Picker("Unidad de esta máquina", selection: Binding(get: { unit }, set: { TrainingStore.shared.setUnit($0, for: exerciseId) })) {
-                ForEach(WeightUnit.allCases) { Text($0 == .kg ? "Kilos (kg)" : "Libras (lb)").tag($0) }
-            }
-        } label: {
-            Text(unit.rawValue)
-                .font(.subheadline.weight(.bold))
-                .fontDesign(.rounded)
-                .foregroundStyle(Theme.training)
-                .frame(minWidth: 44, minHeight: 32)
-                .contentTransition(.interpolate)
-        }
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .sensoryFeedback(.selection, trigger: unit)
-        .accessibilityLabel("Unidad de esta máquina")
-        .accessibilityValue(unit == .kg ? "kilos" : "libras")
     }
 }
 
@@ -449,11 +476,35 @@ private struct BestCard: View {
 
 // MARK: - Sets
 
+/// The number being typed in a set row, by set id.
 enum SetField: Hashable {
     case weight(String)
     case reps(String)
     case dropWeight(String, Int)
     case dropReps(String, Int)
+
+    var setId: String {
+        switch self {
+        case .weight(let id), .reps(let id), .dropWeight(let id, _), .dropReps(let id, _): id
+        }
+    }
+
+    var value: SetValue {
+        switch self {
+        case .weight: .weight
+        case .reps: .reps
+        case .dropWeight(_, let d): .dropWeight(d)
+        case .dropReps(_, let d): .dropReps(d)
+        }
+    }
+
+    /// A load: the keyboard offers the machine's unit with it.
+    var isLoad: Bool {
+        switch self {
+        case .weight, .dropWeight: true
+        case .reps, .dropReps: false
+        }
+    }
 }
 
 /// The value of a set being changed: the top segment's, or a drop's (by index).
@@ -462,13 +513,6 @@ enum SetValue: Hashable {
     case reps
     case dropWeight(Int)
     case dropReps(Int)
-
-    var drop: Int? {
-        switch self {
-        case .dropWeight(let d), .dropReps(let d): d
-        case .weight, .reps: nil
-        }
-    }
 }
 
 /// The lighter segment offered under a set just done short of the target.
@@ -477,16 +521,8 @@ struct DropOffer: Equatable {
     var drop: SetSegment
 }
 
-/// A row opened for editing (any but the current one, which is always open), and the value whose −/+ shows.
-struct SetEditing: Equatable {
-    var id: String
-    var value: SetValue? = nil
-}
-
 enum SetAction {
     case toggle
-    case expand
-    case edit(SetValue)
     case close
     case step(SetValue, up: Bool)
     /// In the exercise's unit.
@@ -503,6 +539,60 @@ enum SetAction {
 
 extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+extension LiveSession {
+    /// A row's change to a value of set `s`; the actions that also move the
+    /// view's own state (toggle, close, drops) stay with the view.
+    func apply(_ action: SetAction, exercise e: Int, set s: Int) {
+        switch action {
+        case .step(.weight, let up): withAnimation(.snappy) { stepWeight(exercise: e, set: s, up: up) }
+        case .step(.reps, let up): withAnimation(.snappy) { adjustReps(exercise: e, set: s, by: up ? 1 : -1) }
+        case .step(.dropWeight(let d), let up): withAnimation(.snappy) { stepDropWeight(exercise: e, set: s, drop: d, up: up) }
+        case .step(.dropReps(let d), let up):
+            let reps = state.exercises[safe: e]?.sets[safe: s]?.drops[safe: d]?.reps ?? 1
+            withAnimation(.snappy) { setDropReps(exercise: e, set: s, drop: d, to: reps + (up ? 1 : -1)) }
+        case .setWeight(let value): setWeight(exercise: e, set: s, to: value)
+        case .setReps(let reps): setReps(exercise: e, set: s, to: reps)
+        case .setDropWeight(let d, let value): setDropWeight(exercise: e, set: s, drop: d, to: value)
+        case .setDropReps(let d, let reps): setDropReps(exercise: e, set: s, drop: d, to: reps)
+        case .remove: withAnimation(.snappy) { removeSet(exercise: e, set: s) }
+        case .toggle, .close, .addDrop, .removeDrop: break
+        }
+    }
+}
+
+extension View {
+    /// Over the keyboard while a set's number is typed: −/+ one step, the
+    /// machine's unit (kg | lb) on a load, and "Listo".
+    func setKeyboard(_ field: FocusState<SetField?>.Binding, session: LiveSession) -> some View {
+        toolbar {
+            if let focused = field.wrappedValue {
+                ToolbarItemGroup(placement: .keyboard) {
+                    if let at = session.state.locate(set: focused.setId) {
+                        Button("Restar", systemImage: "minus") { session.apply(.step(focused.value, up: false), exercise: at.exercise, set: at.set) }
+                            .buttonRepeatBehavior(.enabled)
+                        Button("Sumar", systemImage: "plus") { session.apply(.step(focused.value, up: true), exercise: at.exercise, set: at.set) }
+                            .buttonRepeatBehavior(.enabled)
+                        if focused.isLoad {
+                            // Plain text in the same glass group: a segmented picker here nests a capsule in a capsule.
+                            let exerciseId = session.state.exercises[at.exercise].exerciseId
+                            let unit = TrainingStore.shared.unit(for: exerciseId)
+                            Button(unit.rawValue) { _ = TrainingStore.shared.setUnit(unit.other, for: exerciseId) }
+                                .fontWeight(.semibold)
+                                .contentTransition(.interpolate)
+                                .accessibilityLabel("Unidad de esta máquina")
+                                .accessibilityValue(unit == .kg ? "kilos" : "libras")
+                                .accessibilityHint("Cambia a \(unit.other == .kg ? "kilos" : "libras")")
+                        }
+                    }
+                    Spacer()
+                    Button("Listo") { field.wrappedValue = nil }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
 }
 
 /// "¿Bajaste el peso para terminarla?" with the lighter load and the reps
@@ -542,33 +632,44 @@ private struct DropPrompt: View {
 /// A set. Open (the current one, or one tapped): one horizontal row with the
 /// load and repetitions big, last time's small under them and a tall square
 /// action on the right ("Hecho", a check to undo, or a quiet one to log it).
-/// Otherwise a compact, muted line: what was done with a small check, or the
-/// suggestion with a small circle.
+/// Tapping a number types it in place. Until the reps are chosen, an open set
+/// shows the target range ("8–10") and "Hecho" logs its top. "Otro peso" and
+/// removing live in the long press.
 struct SetRowView: View {
     let number: Int
     let set: LiveSet
+    /// The target range, while the reps aren't chosen.
+    let range: ClosedRange<Int>?
     let previous: SetLog?
     let unit: WeightUnit
-    let exerciseId: String
     let needsLoad: Bool
     let current: Bool
-    let expanded: Bool
-    /// The value whose −/+ is open in this row.
-    let editing: SetValue?
     let field: FocusState<SetField?>.Binding
+    /// In a superset round: the exercise's name, over the numbers. The row then
+    /// leaves the card and the action to the round.
+    var name: String? = nil
+    /// Opens the exercise's guide from its name.
+    var info: (() -> Void)? = nil
     let act: (SetAction) -> Void
 
     /// The load in kg: what a done set lifted; an open one on the unit's steps, as "Hecho" will log it.
     private var kg: Double { self.set.done ? self.set.weightKg : unit.snapKg(self.set.weightKg) }
     /// `kg` in the unit, as read.
     private var weight: Double { unit.shown(kg) }
-    private var weightText: String { weight > 0 ? "\(WeightUnit.number(weight)) \(unit.rawValue)" : needsLoad ? "Sin peso" : "Peso corporal" }
+
+    /// "8–10" while the range shows, else the reps.
+    private var repsNumber: String { range.map { "\($0.lowerBound)–\($0.upperBound)" } ?? "\(set.reps)" }
+    private var repsWord: String { range == nil && set.reps == 1 ? "repetición" : "repeticiones" }
 
     var body: some View {
-        Group {
-            if expanded { full } else { compact }
-        }
+        full
         .contextMenu {
+            if needsLoad && set.drops.count < Self.maxDrops {
+                Button("Otro peso", systemImage: "arrow.turn.down.right") { act(.addDrop) }
+            }
+            if !set.drops.isEmpty {
+                Button("Quitar el último peso", systemImage: "minus.circle") { act(.removeDrop(set.drops.count - 1)) }
+            }
             if !set.done {
                 Button("Eliminar serie", systemImage: "trash", role: .destructive) { act(.remove) }
             }
@@ -581,154 +682,85 @@ struct SetRowView: View {
     /// A drop's load in kg, as read and logged: on the unit's steps until the set is done.
     private func kg(_ drop: SetSegment) -> Double { self.set.done ? drop.weightKg : unit.snapKg(drop.weightKg) }
 
-    // MARK: Compact
-
-    private var compact: some View {
-        Button { act(.expand) } label: {
-            HStack(spacing: 10) {
-                Text("\(number)")
-                    .font(.footnote.bold())
-                    .frame(width: 18)
-                    .foregroundStyle(.tertiary)
-                if set.drops.isEmpty {
-                    Text(weightText)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(set.done ? .primary : .secondary)
-                    Text(TrainingText.repetitions(set.reps))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    segmentsLine
-                }
-                Spacer(minLength: 4)
-                Image(systemName: set.done ? "checkmark.circle.fill" : "circle")
-                    .font(.body)
-                    .foregroundStyle(set.done ? AnyShapeStyle(Theme.training) : AnyShapeStyle(.tertiary))
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .fontDesign(.rounded)
-            .monospacedDigit()
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .padding(.horizontal, 12)
-            .frame(minHeight: 40)
-            .background(set.done ? Theme.training.opacity(0.07) : Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Serie \(number): \(set.drops.isEmpty ? TrainingText.load(set.weightKg, reps: set.reps, unit: unit) : SetDrop.text(set.segments, unit: unit))")
-        .accessibilityValue(set.done ? "Hecha" : "Pendiente")
-        .accessibilityHint("Abre la serie para cambiarla")
-    }
-
-    /// "80 × 5 → 60 × 3 kg": each segment, a small arrow between them, the unit once.
-    private var segmentsLine: some View {
-        HStack(spacing: 5) {
-            ForEach(Array(set.segments.enumerated()), id: \.offset) { i, segment in
-                if i > 0 {
-                    Image(systemName: "arrow.right")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.tertiary)
-                }
-                Text(SetDrop.short([SetSegment(weightKg: kg(segment), reps: segment.reps)], unit: unit))
-                    .font(.subheadline.weight(i == 0 ? .semibold : .regular))
-                    .foregroundStyle(i == 0 && set.done ? .primary : .secondary)
-            }
-            if set.weightKg > 0 {
-                Text(unit.rawValue).font(.caption).foregroundStyle(.tertiary)
-            }
-        }
-    }
-
     // MARK: Full
 
-    private var full: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 18) {
-                        valueButton(.weight) { weightLabel }
-                        valueButton(.reps) { repsLabel }
+    @ViewBuilder private var full: some View {
+        if name != nil {
+            content
+        } else {
+            content
+                .padding(12)
+                .background(background, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay {
+                    if current && !set.done {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.training.opacity(0.55), lineWidth: 1.5)
                     }
-                    .fontDesign(.rounded)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    ForEach(Array(set.drops.enumerated()), id: \.offset) { d, drop in
-                        dropLine(d, drop)
-                    }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(caption)
-                        if weight > 0 {
-                            Text(unit.formatBoth(kg)).foregroundStyle(.tertiary)
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
-                // A row opened by hand closes with a tap off its numbers.
-                .onTapGesture { if !current { act(.close) } }
-                action
-            }
-            if let editing {
-                editor(editing)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .padding(12)
-        .background(background, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            if current && !set.done {
-                RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.training.opacity(0.4), lineWidth: 1)
-            }
         }
     }
 
-    /// "Serie 2 · anterior: 70 lb · 8"
-    private var caption: String {
-        guard let previous else { return "Serie \(number)" }
-        return "Serie \(number) · anterior: \(TrainingText.previous(previous.weightKg, reps: previous.reps, unit: unit))"
+    private var content: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let name {
+                    Button { info?() } label: {
+                        Text(name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(info == nil)
+                    .accessibilityHint(info == nil ? "" : "Abre la guía")
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 18) {
+                    weightValue
+                    repsValue
+                }
+                .foregroundStyle(current || set.done ? .primary : .secondary)
+                .fontDesign(.rounded)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                ForEach(Array(set.drops.enumerated()), id: \.offset) { d, drop in
+                    dropLine(d, drop)
+                }
+                if let caption {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+            // A row opened by hand closes with a tap off its numbers.
+            .onTapGesture { if !current { act(.close) } }
+            if name == nil { action }
+        }
     }
 
+    /// "Serie 2 · anterior: 70 lb · 8"; in a round just "anterior: 70 lb · 8", or nothing.
+    private var caption: String? {
+        let last = previous.map { "anterior: \(TrainingText.previous($0.weightKg, reps: $0.reps, unit: unit))" }
+        if name != nil { return last }
+        return last.map { "Serie \(number) · \($0)" } ?? "Serie \(number)"
+    }
+
+    /// The set up next stands out; done ones keep a hint of the accent; the rest wait quietly.
     private var background: Color {
-        if set.done { return Theme.training.opacity(0.12) }
-        return current ? Theme.training.opacity(0.08) : Color.secondary.opacity(0.08)
+        if current && !set.done { return Theme.training.opacity(0.14) }
+        return set.done ? Theme.training.opacity(0.07) : Color.secondary.opacity(0.07)
     }
 
-    private func valueButton(_ value: SetValue, @ViewBuilder label: () -> some View) -> some View {
-        Button { act(.edit(value)) } label: {
-            label()
-                .padding(.vertical, 2)
-                .overlay(alignment: .bottom) {
-                    if editing == value {
-                        Capsule().fill(Theme.training).frame(height: 2).offset(y: 3)
-                    }
-                }
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint(editing == value ? "Cierra el ajuste" : "Cambia este valor")
-    }
-
-    @ViewBuilder private var weightLabel: some View {
-        if weight > 0 {
+    @ViewBuilder private var weightValue: some View {
+        if needsLoad || weight > 0 {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(WeightUnit.number(weight))
-                    .font(.title.bold())
-                    .contentTransition(.numericText())
+                InlineNumber(label: "Peso", shown: WeightUnit.number(weight), value: weight, field: .weight(set.id), focus: field,
+                             keyboard: .decimalPad, font: .title.bold()) { act(.setWeight($0)) }
                 Text(unit.rawValue).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Peso: \(unit.format(kg))")
-        } else if needsLoad {
-            Label("Peso", systemImage: "pencil")
-                .font(.headline)
-                .foregroundStyle(Theme.training)
-                .accessibilityLabel("Elige tu peso")
         } else {
             Text("Sin lastre")
                 .font(.headline)
@@ -736,47 +768,36 @@ struct SetRowView: View {
         }
     }
 
-    /// "↳ 60 kg  3 repeticiones": a drop, each number opening its own −/+.
+    private var repsValue: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            InlineNumber(label: "Repeticiones", shown: repsNumber, value: range == nil ? Double(set.reps) : nil, field: .reps(set.id), focus: field,
+                         keyboard: .numberPad, font: .title.bold()) { act(.setReps(Int($0))) }
+            Text(repsWord).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+        }
+    }
+
+    /// "↳ 60 kg  3 repeticiones": a drop, each number typed in place.
     private func dropLine(_ d: Int, _ drop: SetSegment) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Image(systemName: "arrow.turn.down.right")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.training)
                 .accessibilityHidden(true)
-            valueButton(.dropWeight(d)) {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(WeightUnit.number(unit.shown(kg(drop))))
-                        .font(.title3.bold())
-                        .contentTransition(.numericText())
-                    Text(unit.rawValue).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Bajó a \(unit.format(kg(drop)))")
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                InlineNumber(label: "Bajaste a", shown: WeightUnit.number(unit.shown(kg(drop))), value: unit.shown(kg(drop)), field: .dropWeight(set.id, d), focus: field,
+                             keyboard: .decimalPad, font: .title3.bold()) { act(.setDropWeight(d, $0)) }
+                Text(unit.rawValue).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
             }
-            valueButton(.dropReps(d)) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("\(drop.reps)")
-                        .font(.title3.bold())
-                        .contentTransition(.numericText())
-                    Text(drop.reps == 1 ? "repetición" : "repeticiones").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                }
-                .accessibilityElement(children: .combine)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                InlineNumber(label: "Repeticiones después de bajar", shown: "\(drop.reps)", value: Double(drop.reps), field: .dropReps(set.id, d), focus: field,
+                             keyboard: .numberPad, font: .title3.bold()) { act(.setDropReps(d, Int($0))) }
+                Text(drop.reps == 1 ? "repetición" : "repeticiones").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
             }
         }
         .fontDesign(.rounded)
         .monospacedDigit()
         .lineLimit(1)
         .minimumScaleFactor(0.6)
-    }
-
-    private var repsLabel: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text("\(set.reps)")
-                .font(.title.bold())
-                .contentTransition(.numericText())
-            Text(set.reps == 1 ? "repetición" : "repeticiones").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
     }
 
     /// The current set's filled "Hecho"; a done set's check (tap to undo); an upcoming one's quiet button.
@@ -807,120 +828,65 @@ struct SetRowView: View {
         }
     }
 
-    /// −/+ for one value, typed by tapping the number; the load in the exercise's unit, with kg/lb.
-    private func editor(_ value: SetValue) -> some View {
-        VStack(spacing: 8) {
-            switch value {
-            case .weight:
-                ValueStepper(label: "Peso", unit: unit.rawValue, value: weight, text: WeightUnit.number, field: .weight(set.id), focus: field, keyboard: .decimalPad,
-                             stepLabel: "un disco", step: { act(.step(.weight, up: $0 > 0)) }, commit: { act(.setWeight($0)) })
-            case .reps:
-                ValueStepper(label: "Repeticiones", unit: "", value: Double(set.reps), text: { "\(Int($0))" }, field: .reps(set.id), focus: field, keyboard: .numberPad,
-                             stepLabel: "1", step: { act(.step(.reps, up: $0 > 0)) }, commit: { act(.setReps(Int($0))) })
-            case .dropWeight(let d):
-                ValueStepper(label: "Bajaste a", unit: unit.rawValue, value: unit.shown(kg(set.drops[safe: d] ?? set.top)), text: WeightUnit.number, field: .dropWeight(set.id, d), focus: field,
-                             keyboard: .decimalPad, stepLabel: "un disco", step: { act(.step(value, up: $0 > 0)) }, commit: { act(.setDropWeight(d, $0)) })
-            case .dropReps(let d):
-                ValueStepper(label: "Repeticiones después de bajar", unit: "", value: Double(set.drops[safe: d]?.reps ?? 1), text: { "\(Int($0))" }, field: .dropReps(set.id, d), focus: field,
-                             keyboard: .numberPad, stepLabel: "1", step: { act(.step(value, up: $0 > 0)) }, commit: { act(.setDropReps(d, Int($0))) })
-            }
-            HStack {
-                if value == .weight { UnitPicker(exerciseId: exerciseId) }
-                if let d = value.drop {
-                    Button("Quitar", systemImage: "trash", role: .destructive) { act(.removeDrop(d)) }
-                        .font(.subheadline)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .accessibilityHint("Quita este peso de la serie")
-                }
-                Spacer(minLength: 8)
-                Button("Listo") { act(.close) }
-                    .font(.subheadline.weight(.semibold))
-                    .buttonStyle(.glass)
-            }
-            // Bottom and small: a set where the load dropped is the exception, not a field on every row.
-            if value.drop == nil && set.drops.count < Self.maxDrops {
-                Button { act(.addDrop) } label: {
-                    Label("otro peso", systemImage: "plus")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.training)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(minHeight: 32)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Otro peso")
-                .accessibilityHint("Añade un tramo con menos peso, si la bajaste para terminar la serie")
-            }
-        }
-    }
-
     /// Segments after the top one a set can have.
     static let maxDrops = 3
 }
 
-/// −  80 kg  +  with 56 pt buttons. Tapping the number types it in.
-private struct ValueStepper: View {
+/// A number shown big that becomes a field when tapped, in the same place and
+/// size. The field starts empty with the number as its prompt, so typing
+/// replaces it; what's typed applies as it goes, and leaving it empty keeps it.
+private struct InlineNumber: View {
     let label: String
-    let unit: String
-    let value: Double
-    let text: (Double) -> String
+    let shown: String
+    /// The number shown; nil while a range shows.
+    let value: Double?
     let field: SetField
     let focus: FocusState<SetField?>.Binding
     let keyboard: UIKeyboardType
-    let stepLabel: String
-    let step: (Double) -> Void
+    let font: Font
     let commit: (Double) -> Void
     @State private var typed = ""
 
     private var editing: Bool { focus.wrappedValue == field }
 
     var body: some View {
-        HStack(spacing: 8) {
-            RoundStepButton(systemImage: "minus") { step(-1) }
-                .accessibilityLabel("Restar \(stepLabel)")
-            VStack(spacing: 0) {
-                Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                ZStack {
-                    TextField("", text: $typed)
-                        .keyboardType(keyboard)
-                        .multilineTextAlignment(.center)
-                        .focused(focus, equals: field)
-                        .opacity(editing ? 1 : 0)
-                    if !editing {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(text(value))
-                                .contentTransition(.numericText())
-                            if !unit.isEmpty { Text(unit).font(.headline).foregroundStyle(.secondary) }
-                        }
-                        .allowsHitTesting(false)
-                    }
-                }
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
+        ZStack(alignment: .leading) {
+            TextField("", text: $typed, prompt: Text(shown).foregroundStyle(.tertiary))
+                .keyboardType(keyboard)
+                .focused(focus, equals: field)
+                .fixedSize()
+                .opacity(editing ? 1 : 0)
+            if !editing {
+                Text(shown)
+                    .contentTransition(.numericText())
+                    .allowsHitTesting(false)
             }
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .contentShape(Rectangle())
-            .onTapGesture { focus.wrappedValue = field }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(label)
-            .accessibilityValue("\(text(value)) \(unit)")
-            .accessibilityAdjustableAction { direction in
-                step(direction == .increment ? 1 : -1)
-            }
-            RoundStepButton(systemImage: "plus") { step(1) }
-                .accessibilityLabel("Sumar \(stepLabel)")
         }
+        .font(font)
+        .padding(.vertical, 2)
+        .overlay(alignment: .bottom) {
+            Capsule().fill(Theme.training).frame(height: 2).offset(y: 3).opacity(editing ? 1 : 0)
+        }
+        .contentShape(.rect)
+        .onTapGesture { focus.wrappedValue = field }
         .onChange(of: editing) { _, now in
-            if now { typed = text(value) }
+            if now { typed = "" }
         }
-        // Applied as typed, so "Hecho" right after typing keeps the number.
         .onChange(of: typed) { _, new in
             guard editing, let parsed = NumberEntry.parse(new) else { return }
             commit(parsed)
         }
+        // −/+ (or the unit) over the keyboard moved the number away from what was
+        // typed: the field goes back to showing it as the prompt.
+        .onChange(of: value) { _, new in
+            guard editing, let typedValue = NumberEntry.parse(typed), let new, abs(typedValue - new) > 0.5 else { return }
+            typed = ""
+        }
+        .accessibilityElement(children: editing ? .contain : .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(shown)
+        .accessibilityHint("Toca para escribirlo")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -953,14 +919,19 @@ struct RoundStepButton: View {
 // MARK: - Effort
 
 /// "¿Cuánto te ha costado?" with Apple's 1–10 effort bar. Optional.
-private struct EffortCard: View {
+struct EffortCard: View {
+    /// The exercise's name, when the screen has more than one.
+    var name: String? = nil
     let value: Int?
     let set: (Int?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("¿Cuánto te ha costado?").font(.headline)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("¿Cuánto te ha costado?").font(.headline)
+                    if let name { Text(name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
+                }
                 Spacer(minLength: 8)
                 if value != nil {
                     Button("Quitar") { set(nil) }

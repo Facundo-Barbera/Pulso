@@ -2,28 +2,41 @@ import SwiftUI
 
 /// The session in the gym, one exercise per screen. Up top only the name with
 /// the time and sets in the title, and a thin strip of the day's exercises;
-/// the focused exercise (or cardio block) pages sideways; at the bottom a slim
-/// rest bar while resting and "Siguiente" otherwise.
+/// the focused exercise (or cardio block) pages sideways, each page ending with
+/// the next one; at the bottom a slim rest bar while resting.
 struct LiveSessionView: View {
     let session: LiveSession
     let store: TrainingStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmEnd = false
+    @State private var confirmDiscard = false
+    /// How far the session is pulled down by the title or the strip.
+    @State private var pull: CGFloat = 0
     @State private var editing = false
     @State private var coach = false
     @State private var swapping: SwapTarget?
 
     private var state: LiveSessionState { session.state }
 
+    /// The page on screen, tagged by its first exercise: a superset is one page.
     private var focus: Binding<Int> {
-        Binding(get: { session.state.focus }, set: { index in withAnimation(.snappy) { session.setFocus(index) } })
+        Binding(get: { session.state.block(of: session.state.focus).lowerBound }, set: { index in
+            guard session.state.block(of: session.state.focus).lowerBound != index else { return }
+            withAnimation(.snappy) { session.setFocus(index) }
+        })
+    }
+
+    private func swap(_ index: Int) {
+        let exercise = state.exercises[index]
+        swapping = SwapTarget(index: index, exerciseId: exercise.exerciseId, name: exercise.name)
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 SessionStrip(state: state) { index in focus.wrappedValue = index }
+                    .minimizesOnSwipeDown(offset: $pull) { dismiss() }
                     .padding(.horizontal, Theme.padding)
                     .padding(.bottom, 4)
                 if state.exercises.isEmpty {
@@ -33,14 +46,15 @@ struct LiveSessionView: View {
                     }
                 } else {
                     TabView(selection: focus) {
-                        ForEach(Array(state.exercises.enumerated()), id: \.element.id) { index, exercise in
+                        ForEach(state.blocks, id: \.self) { block in
+                            let index = block.lowerBound
                             Group {
-                                if exercise.isCardio {
+                                if block.count > 1 {
+                                    SupersetPage(session: session, group: block, swap: swap)
+                                } else if state.exercises[index].isCardio {
                                     CardioPage(session: session, index: index)
                                 } else {
-                                    ExercisePage(session: session, index: index) {
-                                        swapping = SwapTarget(index: index, exerciseId: exercise.exerciseId, name: exercise.name)
-                                    }
+                                    ExercisePage(session: session, index: index) { swap(index) }
                                 }
                             }
                             .tag(index)
@@ -65,24 +79,30 @@ struct LiveSessionView: View {
             .navigationDestination(for: ExerciseRoute.self) { ExerciseDetailView(exerciseId: $0.exerciseId, name: $0.name) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cerrar", systemImage: "chevron.down") { dismiss() }
+                    // A menu from the corner: hide the session, end it saved, or throw it away.
+                    Menu("Salir", systemImage: "xmark") {
+                        Button("Minimizar y seguir luego", systemImage: "chevron.down") { dismiss() }
+                        if state.hasWork {
+                            Button("Terminar y guardar", systemImage: "flag.checkered") {
+                                store.finishRequested = true
+                                dismiss()
+                            }
+                        }
+                        Button("Descartar sesión", systemImage: "trash", role: .destructive) { confirmDiscard = true }
+                    }
                 }
                 ToolbarItem(placement: .principal) {
                     SessionTitle(state: state)
+                        .minimizesOnSwipeDown(offset: $pull) { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Coach", systemImage: "sparkles") { coach = true }
                         .tint(Theme.training)
                     Menu("Más", systemImage: "ellipsis") { menu }
                 }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Terminar") { confirmEnd = true }
-                        .fontWeight(.semibold)
-                        .tint(Theme.training)
-                }
             }
-            .confirmationDialog("¿Terminar la sesión?", isPresented: $confirmEnd, titleVisibility: .visible) {
+            .confirmationDialog("Salir de la sesión", isPresented: $confirmEnd, titleVisibility: .visible) {
+                Button("Minimizar y seguir luego") { dismiss() }
                 if state.hasWork {
                     Button("Terminar y guardar") {
                         store.finishRequested = true
@@ -96,6 +116,15 @@ struct LiveSessionView: View {
                 Button("Seguir entrenando", role: .cancel) {}
             } message: {
                 Text(endMessage)
+            }
+            .alert("¿Descartar la sesión?", isPresented: $confirmDiscard) {
+                Button("Descartar", role: .destructive) {
+                    dismiss()
+                    Task { await store.discard() }
+                }
+                Button("Seguir entrenando", role: .cancel) {}
+            } message: {
+                Text(state.hasWork ? "Se pierde todo lo registrado en esta sesión." : "No has registrado nada todavía.")
             }
             .sheet(isPresented: $editing) { EditSessionSheet(session: session) }
             .sheet(isPresented: $coach) {
@@ -128,20 +157,44 @@ struct LiveSessionView: View {
                 await ExerciseCatalog.shared.prefetch(ids, animations: ids)
             }
         }
+        .clipShape(.rect(cornerRadius: pull > 0 ? 44 : 0, style: .continuous))
+        .offset(y: pull)
     }
 
-    /// The focused exercise's actions, and the session's list.
+    /// The screen's actions (log the rest, swap, split, skip), the session's list and ending it.
     @ViewBuilder private var menu: some View {
-        Button("Editar sesión", systemImage: "list.bullet") { editing = true }
-        if let focused = state.focused {
-            let index = state.focus
-            Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") {
-                swapping = SwapTarget(index: index, exerciseId: focused.exerciseId, name: focused.name)
+        if state.focused != nil {
+            let block = state.block(of: state.focus)
+            let first = state.exercises[block.lowerBound]
+            if block.count == 1 && !first.isCardio {
+                let left = first.sets.count { !$0.done }
+                if left > 1 && !first.skipped {
+                    Button("Registrar las \(left) que faltan", systemImage: "checkmark.circle") {
+                        withAnimation(.snappy) { session.completeAll(exercise: block.lowerBound) }
+                    }
+                }
             }
-            Button(focused.skipped ? "Retomar ejercicio" : "Saltar ejercicio", systemImage: focused.skipped ? "arrow.uturn.backward" : "forward") {
-                withAnimation(.snappy) { session.setSkipped(index, !focused.skipped) }
+            if block.count > 1 {
+                Menu("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") {
+                    ForEach(Array(block), id: \.self) { e in
+                        Button(state.exercises[e].name) { swap(e) }
+                    }
+                }
+                Button("Separar superserie", systemImage: "link.badge.plus") { withAnimation(.snappy) { session.splitSuperset(block) } }
+            } else {
+                Button("Cambiar ejercicio", systemImage: "arrow.triangle.2.circlepath") { swap(block.lowerBound) }
             }
+            let skipped = block.allSatisfy { state.exercises[$0].skipped }
+            let noun = block.count > 1 ? "superserie" : "ejercicio"
+            Button(skipped ? "Retomar \(noun)" : "Saltar \(noun)", systemImage: skipped ? "arrow.uturn.backward" : "forward") {
+                withAnimation(.snappy) {
+                    for e in block { session.setSkipped(e, !skipped) }
+                }
+            }
+            Divider()
         }
+        Button("Editar sesión", systemImage: "list.bullet") { editing = true }
+        Button("Terminar sesión", systemImage: "flag.checkered") { confirmEnd = true }
     }
 
     private var endMessage: String {
@@ -166,6 +219,27 @@ private struct SwapTarget: Identifiable {
 }
 
 // MARK: - Header
+
+extension View {
+    /// A drag down from here pulls the session down with the finger (`offset`);
+    /// let go far or fast enough and it hides (it keeps running), else it springs
+    /// back. What the minimize arrow used to do, now that the corner ends it.
+    func minimizesOnSwipeDown(offset: Binding<CGFloat>, _ minimize: @escaping () -> Void) -> some View {
+        contentShape(.rect)
+            .gesture(
+                // Global: the view being dragged moves with the finger.
+                DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                    .onChanged { drag in offset.wrappedValue = max(0, drag.translation.height) }
+                    .onEnded { drag in
+                        if drag.translation.height > 140 || drag.predictedEndTranslation.height > 360 {
+                            minimize()
+                        } else {
+                            withAnimation(.snappy) { offset.wrappedValue = 0 }
+                        }
+                    }
+            )
+    }
+}
 
 /// The nav bar's title: the session's name, and its time and sets on one quiet line.
 private struct SessionTitle: View {
@@ -192,24 +266,27 @@ private struct SessionTitle: View {
     }
 }
 
-/// One thin capsule per exercise filling as its sets are done; a skipped one is
-/// hollow and dashed with a forward glyph. Tap a capsule to jump to it.
+/// One thin capsule per screen filling as its sets are done: a superset is one
+/// capsule, thicker and in its own color. A skipped one is hollow and dashed
+/// with a forward glyph. Tap a capsule to jump to it.
 private struct SessionStrip: View {
     let state: LiveSessionState
     let select: (Int) -> Void
 
     var body: some View {
+        let onScreen = state.block(of: state.focus)
         HStack(spacing: 4) {
-            ForEach(Array(state.exercises.enumerated()), id: \.element.id) { index, exercise in
-                Button { select(index) } label: {
-                    StripCapsule(exercise: exercise, current: index == state.focus)
+            ForEach(state.blocks, id: \.self) { block in
+                let exercises = block.map { state.exercises[$0] }
+                Button { select(block.lowerBound) } label: {
+                    StripCapsule(exercises: exercises, current: block == onScreen)
                         .frame(maxWidth: .infinity)
                         .frame(height: 16)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Ejercicio \(index + 1), \(exercise.name)")
-                .accessibilityValue(exercise.skipped ? "Saltado" : exercise.done ? "Hecho" : index == state.focus ? "En pantalla" : "Pendiente")
+                .accessibilityLabel(exercises.map(\.name).joined(separator: " y "))
+                .accessibilityValue(exercises.allSatisfy(\.skipped) ? "Saltado" : exercises.allSatisfy(\.done) ? "Hecho" : block == onScreen ? "En pantalla" : "Pendiente")
             }
         }
         .animation(.snappy, value: state.exercises)
@@ -218,17 +295,22 @@ private struct SessionStrip: View {
 }
 
 private struct StripCapsule: View {
-    let exercise: LiveExercise
+    /// One, or a superset's members.
+    let exercises: [LiveExercise]
     let current: Bool
 
+    private var superset: Bool { exercises.count > 1 }
+    private var tint: Color { superset ? Theme.carbs : Theme.training }
+
     private var fraction: Double {
-        if exercise.isCardio { return exercise.cardioLog == nil ? 0 : 1 }
-        guard !exercise.sets.isEmpty else { return exercise.done ? 1 : 0 }
-        return Double(exercise.sets.filter(\.done).count) / Double(exercise.sets.count)
+        if let only = exercises.first, !superset, only.isCardio { return only.cardioLog == nil ? 0 : 1 }
+        let total = exercises.reduce(0) { $0 + $1.sets.count }
+        guard total > 0 else { return exercises.allSatisfy(\.done) ? 1 : 0 }
+        return Double(exercises.reduce(0) { $0 + $1.sets.count(where: \.done) }) / Double(total)
     }
 
     var body: some View {
-        if exercise.skipped && !exercise.hasDoneWork {
+        if exercises.allSatisfy({ $0.skipped && !$0.hasDoneWork }) {
             Capsule()
                 .strokeBorder(Color.secondary.opacity(current ? 0.9 : 0.55), style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
                 .frame(height: 12)
@@ -239,25 +321,25 @@ private struct StripCapsule: View {
                 }
         } else {
             Capsule()
-                .fill(current ? Theme.training.opacity(0.28) : Color.secondary.opacity(0.2))
+                .fill(current ? tint.opacity(0.28) : Color.secondary.opacity(0.2))
                 .overlay(alignment: .leading) {
                     GeometryReader { proxy in
                         Capsule()
-                            .fill(Theme.training.gradient)
+                            .fill(tint.gradient)
                             .frame(width: proxy.size.width * fraction)
                     }
                 }
                 .clipShape(Capsule())
-                .frame(height: current ? 6 : 4)
-                .opacity(exercise.skipped ? 0.5 : 1)
+                .frame(height: (current ? 6 : 4) + (superset ? 3 : 0))
+                .opacity(exercises.allSatisfy(\.skipped) ? 0.5 : 1)
         }
     }
 }
 
 // MARK: - Bottom bar
 
-/// Resting: a big countdown with a draining ring, +15 s and skip.
-/// Otherwise "Siguiente", or "Terminar sesión" once everything is done.
+/// Resting: a big countdown with a draining ring, +15 s and skip; "Terminar
+/// sesión" once everything is done. "Siguiente" closes each page instead.
 private struct BottomBar: View {
     let session: LiveSession
     let finish: () -> Void
@@ -279,14 +361,6 @@ private struct BottomBar: View {
                         .buttonStyle(.glassProminent)
                         .tint(Theme.training)
                     }
-                } else if let next = nextIndex(state) {
-                    Button {
-                        withAnimation(.snappy) { session.setFocus(next) }
-                    } label: {
-                        NextExerciseLabel(exercise: state.exercises[next])
-                    }
-                    .buttonStyle(.glass)
-                    .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -294,37 +368,6 @@ private struct BottomBar: View {
         }
         .padding(.horizontal, Theme.padding)
         .padding(.bottom, 8)
-    }
-
-    /// The next exercise still to do (never a skipped or finished one), wrapping to one left behind.
-    private func nextIndex(_ state: LiveSessionState) -> Int? {
-        state.nextPending(after: state.focus)
-    }
-}
-
-/// "Siguiente": the next exercise's thumbnail, name and target in words.
-private struct NextExerciseLabel: View {
-    let exercise: LiveExercise
-
-    private var thumbnail: String? { ExerciseCatalog.shared.details[exercise.exerciseId]?.media.thumbnail }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ExerciseMediaView(path: thumbnail, cornerRadius: 10)
-                .frame(width: 40, height: 40)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Siguiente").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(exercise.name).font(.headline).foregroundStyle(.primary)
-                Text(exercise.target(TrainingStore.shared.unit(for: exercise.exerciseId))).font(.caption).foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right")
-                .font(.headline)
-                .foregroundStyle(Theme.training)
-        }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -336,31 +379,40 @@ private struct RestBar: View {
     let end: Date
     let session: LiveSession
     @State private var taps = 0
+    @State private var picking = false
 
     var body: some View {
         let remaining = max(0, end.timeIntervalSince(now))
         let fraction = remaining / max(1, end.timeIntervalSince(start))
         HStack(spacing: 10) {
-            ZStack {
-                Circle().stroke(Theme.training.opacity(0.2), lineWidth: 4)
-                Circle()
-                    .trim(from: 0, to: fraction)
-                    .stroke(Theme.training, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 26, height: 26)
-            .accessibilityHidden(true)
+            // Tapping the countdown sets this exercise's rest for today.
+            Button { picking = true } label: {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle().stroke(Theme.training.opacity(0.2), lineWidth: 4)
+                        Circle()
+                            .trim(from: 0, to: fraction)
+                            .stroke(Theme.training, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 26, height: 26)
+                    .accessibilityHidden(true)
 
-            Text(Duration.seconds(remaining.rounded(.up)).formatted(.time(pattern: .minuteSecond)))
-                .font(.title2.bold())
-                .fontDesign(.rounded)
-                .monospacedDigit()
-                .contentTransition(.numericText(countsDown: true))
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .accessibilityLabel("Descanso")
-                .accessibilityValue(Duration.seconds(remaining.rounded(.up)).formatted(.units(allowed: [.minutes, .seconds], width: .wide)))
+                    Text(Duration.seconds(remaining.rounded(.up)).formatted(.time(pattern: .minuteSecond)))
+                        .font(.title2.bold())
+                        .fontDesign(.rounded)
+                        .monospacedDigit()
+                        .contentTransition(.numericText(countsDown: true))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Descanso")
+            .accessibilityValue(Duration.seconds(remaining.rounded(.up)).formatted(.units(allowed: [.minutes, .seconds], width: .wide)))
+            .accessibilityHint("Cambia el descanso de este ejercicio")
 
             GlassEffectContainer(spacing: 6) {
                 HStack(spacing: 6) {
@@ -388,11 +440,58 @@ private struct RestBar: View {
         .padding(.vertical, 6)
         .glassEffect(.regular, in: .capsule)
         .sensoryFeedback(.impact(weight: .light), trigger: taps)
+        .sheet(isPresented: $picking) {
+            let e = session.state.restingExercise
+            RestPicker(seconds: e.map { session.state.exercises[$0].restSeconds } ?? Int(end.timeIntervalSince(start)),
+                       name: e.map { session.state.exercises[$0].name }) { session.setRest(seconds: $0) }
+                .presentationDetents([.height(340)])
+        }
     }
 
     private func adjust(_ seconds: TimeInterval) {
         taps += 1
         withAnimation(.snappy) { session.extendRest(by: seconds) }
+    }
+}
+
+/// The rest of the exercise resting now, for today: a wheel from 0:15 to 10:00
+/// in 15 s steps. The running rest follows it from when it started.
+private struct RestPicker: View {
+    @State var seconds: Int
+    let name: String?
+    let save: (Int) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private static let options = Array(stride(from: 15, through: 600, by: 15))
+
+    var body: some View {
+        NavigationStack {
+            Picker("Descanso", selection: $seconds) {
+                ForEach(Self.options, id: \.self) { option in
+                    Text(TrainingFormat.rest(option)).tag(option)
+                }
+            }
+            .pickerStyle(.wheel)
+            .fontDesign(.rounded)
+            .navigationTitle("Descanso")
+            .navigationSubtitle(name ?? "")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar", systemImage: "xmark") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Guardar") {
+                        save(seconds)
+                        dismiss()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.training)
+                }
+            }
+            .sensoryFeedback(.selection, trigger: seconds)
+        }
+        .onAppear { seconds = Self.options.min { abs($0 - seconds) < abs($1 - seconds) } ?? 90 }
     }
 }
 

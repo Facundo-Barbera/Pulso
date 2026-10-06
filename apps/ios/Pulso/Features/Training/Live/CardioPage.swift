@@ -50,6 +50,7 @@ struct CardioPage: View {
                     .buttonStyle(.glass)
                     .opacity(exercise.cardioLog == nil ? 1 : 0)
                     .disabled(exercise.cardioLog != nil)
+                    NextCard(session: session, after: index)
                 }
                 .padding(.horizontal, Theme.padding)
                 .padding(.top, 4)
