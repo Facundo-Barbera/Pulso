@@ -101,17 +101,50 @@ final class WorkoutManager: NSObject {
         }
     }
 
+    /// "Terminar" on the Watch: saved, and the phone stops showing it.
+    func endFromWatch() async {
+        await finish(save: true)
+        say(.stopped)
+    }
+
     func pause() { session?.pause() }
     func resume() { session?.resume() }
 
     // MARK: Phone
+
+    /// Commands also arrive by WatchConnectivity, when the mirrored session can't carry them.
+    func listen() {
+        WatchChannel.shared.receive = { [weak self] message in
+            guard case .command(let command) = message else { return }
+            Task { await self?.handle(command) }
+        }
+        WatchChannel.shared.activate()
+    }
 
     private func handle(_ command: WatchCommand) async {
         switch command {
         case .pause: pause()
         case .resume: resume()
         case .stage(let next): if next != stage { await start(next) }
-        case .end(let save): await finish(save: save)
+        case .end(let save):
+            await finish(save: save)
+            say(.stopped)
+        }
+    }
+
+    /// To the phone by the mirrored session, else by WatchConnectivity.
+    private func say(_ message: WatchMessage) {
+        guard let data = try? message.encoded() else { return }
+        guard let session else {
+            WatchChannel.shared.send(message)
+            return
+        }
+        Task {
+            do {
+                try await session.sendToRemoteWorkoutSession(data: data)
+            } catch {
+                WatchChannel.shared.send(message)
+            }
         }
     }
 
@@ -119,11 +152,8 @@ final class WorkoutManager: NSObject {
     private func send(force: Bool = false) {
         guard let session, let stage, force || Date().timeIntervalSince(lastSent) >= 1 else { return }
         lastSent = Date()
-        let metrics = WatchMetrics(stage: stage, heartRate: heartRate, activeKcal: activeKcal, distanceMeters: distanceMeters, paused: paused)
-        guard let data = try? WatchMessage.metrics(metrics).encoded() else { return }
-        Task {
-            do { try await session.sendToRemoteWorkoutSession(data: data) } catch { Self.log.error("send: \(error)") }
-        }
+        _ = session
+        say(.metrics(WatchMetrics(stage: stage, heartRate: heartRate, activeKcal: activeKcal, distanceMeters: distanceMeters, paused: paused)))
     }
 
     private func collect(_ builder: HKLiveWorkoutBuilder, _ types: Set<HKSampleType>) {

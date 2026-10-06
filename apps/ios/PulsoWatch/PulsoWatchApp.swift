@@ -16,6 +16,10 @@ struct PulsoWatchApp: App {
 /// Where the phone's "Iniciar" lands (`startWatchApp`), and where a workout
 /// the system kept going after the app was killed comes back.
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
+    func applicationDidFinishLaunching() {
+        Task { @MainActor in WorkoutManager.shared.listen() }
+    }
+
     func handle(_ workoutConfiguration: HKWorkoutConfiguration) {
         let stage = WorkoutStage(workoutConfiguration)
         Task { @MainActor in await WorkoutManager.shared.start(stage) }

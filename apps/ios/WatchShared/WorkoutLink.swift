@@ -87,6 +87,8 @@ struct WatchMetrics: Codable, Equatable, Sendable {
 enum WatchMessage: Codable, Sendable {
     case command(WatchCommand)
     case metrics(WatchMetrics)
+    /// Watch → phone: nothing is recording anymore.
+    case stopped
 
     func encoded() throws -> Data { try JSONEncoder().encode(self) }
 

@@ -35,7 +35,7 @@ struct WorkoutView: View {
             }
             .animation(.snappy, value: manager.paused)
             .confirmationDialog("¿Terminar este entrenamiento?", isPresented: $confirmEnd) {
-                Button("Terminar y guardar") { Task { await manager.finish(save: true) } }
+                Button("Terminar y guardar") { Task { await manager.endFromWatch() } }
                 Button("Seguir", role: .cancel) {}
             } message: {
                 Text("La sesión sigue en tu iPhone.")

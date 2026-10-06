@@ -27,7 +27,7 @@ final class WatchLink: NSObject {
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Pulso", category: "watch")
 
-    var connected: Bool { mirrored != nil && metrics != nil }
+    var connected: Bool { metrics != nil }
 
     /// What the Watch recorded for a session: kept on disk, so a relaunch before
     /// "Terminar" still knows not to write it to Salud twice.
@@ -51,6 +51,10 @@ final class WatchLink: NSObject {
         HealthSync.store.workoutSessionMirroringStartHandler = { session in
             Task { @MainActor in WatchLink.shared.adopt(session) }
         }
+        // The second road, for when mirroring can't carry the messages (and on simulators).
+        WatchChannel.shared.receive = { message in WatchLink.shared.handle(message) }
+        WatchChannel.shared.reachable = { WatchLink.shared.flush() }
+        WatchChannel.shared.activate()
     }
 
     /// The session `sessionId` began: the Watch starts recording strength.
@@ -68,7 +72,7 @@ final class WatchLink: NSObject {
                 try await HealthSync.store.startWatchApp(toHandle: stage.configuration)
             } catch {
                 // No Watch, Pulso not installed on it, or no permission: the phone carries on alone.
-                Self.log.info("watch not started: \(error)")
+                Self.log.error("watch not started: \(error)")
             }
         }
     }
@@ -104,20 +108,47 @@ final class WatchLink: NSObject {
     private func adopt(_ session: HKWorkoutSession) {
         mirrored = session
         session.delegate = self
+        flush()
+    }
+
+    /// What waited for a road to the Watch.
+    private func flush() {
         let queued = pending
         pending = []
         for command in queued { send(command) }
     }
 
+    /// By the mirrored session, else by WatchConnectivity, else kept until one opens.
     private func send(_ command: WatchCommand) {
         guard let mirrored else {
-            // A new stage replaces one not sent yet; an end replaces everything.
-            if case .end = command { pending = [command] } else { pending.removeAll { if case .stage = $0 { true } else { false } }; pending.append(command) }
+            if !WatchChannel.shared.send(.command(command)) { queue(command) }
             return
         }
         guard let data = try? WatchMessage.command(command).encoded() else { return }
         Task {
-            do { try await mirrored.sendToRemoteWorkoutSession(data: data) } catch { Self.log.error("send: \(error)") }
+            do {
+                try await mirrored.sendToRemoteWorkoutSession(data: data)
+            } catch {
+                if !WatchChannel.shared.send(.command(command)) { queue(command) }
+            }
+        }
+    }
+
+    /// A new stage replaces one not sent yet; an end replaces everything.
+    private func queue(_ command: WatchCommand) {
+        if case .end = command {
+            pending = [command]
+        } else {
+            pending.removeAll { if case .stage = $0 { true } else { false } }
+            pending.append(command)
+        }
+    }
+
+    private func handle(_ message: WatchMessage) {
+        switch message {
+        case .metrics(let metrics): receive(metrics)
+        case .stopped: metrics = nil
+        case .command: break
         }
     }
 
@@ -163,11 +194,7 @@ extension WatchLink: HKWorkoutSessionDelegate {
     }
 
     nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didReceiveDataFromRemoteWorkoutSession data: [Data]) {
-        let metrics = data.compactMap { message -> WatchMetrics? in
-            if case .metrics(let metrics) = WatchMessage.decode(message) { return metrics }
-            return nil
-        }
-        guard let latest = metrics.last else { return }
-        Task { @MainActor in receive(latest) }
+        let messages = data.compactMap(WatchMessage.decode)
+        Task { @MainActor in for message in messages { handle(message) } }
     }
 }
