@@ -112,12 +112,14 @@ struct CustomizeListSheet<Draft: ListDraft>: View {
                     }
                     .listRowBackground(Color.clear)
                 } else if let current = draft.current, items.indices.contains(current) {
-                    if current > 0 {
-                        Section("Anteriores") { rows(0..<current, movable: false) }
+                    // The screen on now: a superset whole.
+                    let block = Superset.group(of: current, in: items.map(\.supersetId)) ?? current..<(current + 1)
+                    if block.lowerBound > 0 {
+                        Section("Anteriores") { rows(0..<block.lowerBound, movable: false) }
                     }
-                    Section("Ejercicio actual") { rows(current..<(current + 1), movable: false) }
-                    if current + 1 < items.count {
-                        Section("Siguientes ejercicios") { rows((current + 1)..<items.count, movable: true) }
+                    Section(block.count > 1 ? "Superserie actual" : "Ejercicio actual") { rows(block, movable: false) }
+                    if block.upperBound < items.count {
+                        Section("Siguientes") { rows(block.upperBound..<items.count, movable: true) }
                     }
                 } else {
                     Section { rows(0..<items.count, movable: true) } header: {
@@ -198,26 +200,55 @@ struct CustomizeListSheet<Draft: ListDraft>: View {
         }
     }
 
+    /// One list row per exercise, or per superset (its members together, moved as one).
+    private struct Block: Identifiable {
+        let range: Range<Int>
+        let id: String
+    }
+
+    private func blocks(_ range: Range<Int>) -> [Block] {
+        let ids = items.map(\.supersetId)
+        var out: [Block] = []
+        var i = range.lowerBound
+        while i < range.upperBound {
+            let group = Superset.group(of: i, in: ids).map { max($0.lowerBound, range.lowerBound)..<min($0.upperBound, range.upperBound) } ?? i..<(i + 1)
+            out.append(Block(range: group, id: items[group.lowerBound].id))
+            i = group.upperBound
+        }
+        return out
+    }
+
     private func rows(_ range: Range<Int>, movable: Bool) -> some View {
+        let blocks = blocks(range)
         let move: ((IndexSet, Int) -> Void)? = movable ? { source, destination in
-            withAnimation(.snappy) {
-                draft.move(fromOffsets: IndexSet(source.map { $0 + range.lowerBound }), toOffset: destination + range.lowerBound)
-            }
+            let from = IndexSet(source.flatMap { Array(blocks[$0].range) })
+            let to = destination < blocks.count ? blocks[destination].range.lowerBound : range.upperBound
+            withAnimation(.snappy) { draft.move(fromOffsets: from, toOffset: to) }
         } : nil
-        return ForEach(items[range]) { item in
-            row(item)
+        return ForEach(blocks) { block in
+            if block.range.count > 1, let first = items[block.range.lowerBound].supersetId {
+                SupersetGroup(number: labels[first]) {
+                    ForEach(Array(block.range), id: \.self) { i in
+                        if i > block.range.lowerBound { Divider() }
+                        row(items[i], grouped: true)
+                    }
+                }
+            } else {
+                row(items[block.range.lowerBound])
+            }
         }
         .onMove(perform: move)
         .deleteDisabled(true)
     }
 
-    private func row(_ item: ListItem) -> some View {
+    /// `grouped`: inside its superset's row, which names it once.
+    private func row(_ item: ListItem, grouped: Bool = false) -> some View {
         Button {
             if pairing != nil { select(item) } else { customizing = Customizing(id: item.id) }
         } label: {
             ItemRow(
                 item: item,
-                superset: item.supersetId.flatMap { labels[$0] },
+                superset: grouped ? nil : item.supersetId.flatMap { labels[$0] },
                 selection: pairing.map { $0.contains(item.id) },
                 remove: item.locked ? nil : { withAnimation(.snappy) { draft.remove(item.id) } },
                 resume: { withAnimation(.snappy) { draft.resume(item.id) } }
@@ -345,6 +376,26 @@ struct CustomizeListSheet<Draft: ListDraft>: View {
             } catch let failure {
                 error = failure.localizedDescription
             }
+        }
+    }
+}
+
+/// A superset's members in one row: "Superserie 1" once, the accent bar down
+/// the side, the exercises stacked.
+private struct SupersetGroup<Members: View>: View {
+    let number: Int?
+    @ViewBuilder let members: Members
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(number.map { "Superserie \($0)" } ?? "Superserie", systemImage: "link")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.training)
+            members
+        }
+        .padding(.vertical, 4)
+        .overlay(alignment: .leading) {
+            Capsule().fill(Theme.training).frame(width: 3).padding(.vertical, 2).offset(x: -10)
         }
     }
 }
