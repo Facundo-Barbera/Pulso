@@ -2,29 +2,49 @@ import SwiftUI
 import WatchKit
 
 /// The Watch's screens. Without a session: the next day and "Empezar". In a
-/// session, three pages side by side as in the Workout app: the session's
-/// controls on the left (end and save, discard, pause the recording), the
-/// numbers in the middle where it opens, the sets on the right ("Hecho", load
-/// and reps, the rest, the cardio block), then the music. Each page is laid out
-/// on its own, from the clock's line down.
+/// session, pages side by side as in the Workout app: the session's controls
+/// on the left (end and save, discard, pause the recording), the workout in
+/// the middle where it opens, the music on the right. The workout is two views
+/// one above the other (the Crown moves between them): the time and numbers,
+/// and below it the sets ("Hecho", load and reps, the rest, the cardio block).
 struct SessionView: View {
     let store: WatchSessionStore
     let workout: WorkoutManager
-    @State private var page = Page.metrics
+    @State private var page = Page.workout
+    @State private var view = WorkoutView.time
+    /// The session the 3, 2, 1 was shown for.
+    @State private var counted: String?
 
-    private enum Page { case controls, metrics, sets, music }
+    private enum Page { case controls, workout, music }
+    private enum WorkoutView { case time, sets }
 
     var body: some View {
         if let state = store.state {
             TabView(selection: $page) {
                 ControlsPage(store: store, workout: workout).tag(Page.controls)
-                MetricsPage(store: store, state: state, workout: workout).tag(Page.metrics)
-                NowPage(store: store, state: state).tag(Page.sets)
+                NavigationStack {
+                    TabView(selection: $view) {
+                        MetricsPage(state: state, workout: workout).tag(WorkoutView.time)
+                        NowPage(store: store, state: state).tag(WorkoutView.sets)
+                    }
+                    .tabViewStyle(.verticalPage)
+                }
+                .tag(Page.workout)
                 NowPlayingView().tag(Page.music)
             }
             .tabViewStyle(.page)
-            // Back to the middle when a session (re)opens.
-            .onChange(of: state.id) { page = .metrics }
+            // On the time whenever a session (re)opens: the page view doesn't take its first selection.
+            .task(id: state.id) {
+                try? await Task.sleep(for: .milliseconds(50))
+                page = .workout
+                view = .time
+            }
+            .overlay {
+                // Just started (here or on the phone): 3, 2, 1 as the Workout app does.
+                if counted != state.id, Date().timeIntervalSince(state.startedAt) < 10 {
+                    Countdown { counted = state.id }
+                }
+            }
         } else {
             IdlePage(store: store)
         }
@@ -93,19 +113,17 @@ private struct NowPage: View {
     }
 
     var body: some View {
-        NavigationStack {
-            page
-                .toolbar {
-                    if let heading {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Text(heading)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.tint)
-                                .lineLimit(1)
-                        }
+        page
+            .toolbar {
+                if let heading {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Text(heading)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.tint)
+                            .lineLimit(1)
                     }
                 }
-        }
+            }
     }
 
     private var page: some View {
@@ -374,116 +392,72 @@ private struct ValueEditor: View {
 
 // MARK: - Metrics
 
-/// As the Workout app: views stacked vertically (the Crown moves between them),
-/// each a few numbers large enough to read mid-set, values in white and one
-/// color per view. The first one is what matters most: time, the rest as a bar
-/// while it runs, heart rate, and energy or distance.
+/// As the Workout app: the time large (hundredths while the screen is up), the
+/// rest as a bar while it runs, heart rate, energy, and the distance on a walk
+/// or run; values in white.
 private struct MetricsPage: View {
-    let store: WatchSessionStore
     let state: LiveSessionState
     let workout: WorkoutManager
+    @Environment(\.isLuminanceReduced) private var dimmed
 
     private var walking: Bool { workout.stage?.countsSteps ?? false }
 
     var body: some View {
-        NavigationStack {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                TabView {
-                    main(context.date)
-                    heartView
-                    energy
-                    if walking { steps }
-                }
-                .tabViewStyle(.verticalPage)
-            }
-            .toolbar {
-                // What the Watch is recording, in the clock's line.
-                ToolbarItem(placement: .topBarLeading) {
-                    Image(systemName: workout.stage?.symbol ?? "dumbbell.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.tint)
-                        .frame(width: 34, height: 34)
-                        .background(Color.accentColor.opacity(0.25), in: .circle)
-                }
-            }
-        }
-    }
-
-    // MARK: Views
-
-    private func main(_ now: Date) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(clock(workout.elapsed(at: now)))
-                .font(.system(size: 50, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(workout.paused ? Color.secondary : Color.yellow)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            if state.resting(at: now), let start = state.restStartedAt, let end = state.restEndsAt {
-                RestBar(start: start, end: end, now: now).padding(.vertical, 4)
+            // Hundredths while the screen is up; whole seconds when the wrist is down.
+            TimelineView(.periodic(from: .now, by: dimmed || workout.paused ? 1 : 1.0 / 30)) { context in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(clock(workout.elapsed(at: context.date), hundredths: !dimmed))
+                        .font(.system(size: 46, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(workout.paused ? Color.secondary : Color.yellow)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if state.resting(at: context.date), let start = state.restStartedAt, let end = state.restEndsAt {
+                        RestBar(start: start, end: end, now: context.date).padding(.vertical, 4)
+                    }
+                }
             }
             heartLine
             if walking, let meters = workout.distanceMeters {
                 MetricText((meters / 1000).formatted(.number.precision(.fractionLength(2))), "KM")
-            } else {
-                MetricText("\(Int(workout.activeKcal.rounded()))", "CAL\nACTIVAS")
             }
-            MetricText("\(state.setsDone)/\(state.setsTotal)", "SERIES")
+            MetricText("\(Int(workout.activeKcal.rounded()))", "KCAL\nACTIVAS")
+            MetricText(workout.totalKcal.map { "\(Int($0.rounded()))" } ?? "--", "KCAL\nTOTALES")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var heartView: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let zones = store.hrZones, !zones.isEmpty {
-                ZoneBar(heartRate: workout.heartRate, zones: zones).padding(.bottom, 4)
-            }
-            heartLine
-            MetricText(workout.averageHeartRate.map { "\(Int($0.rounded()))" } ?? "--", "PPM\nPROMEDIO", tint: .red)
-            if let zone = HrZoneRange.zone(of: workout.heartRate, in: store.hrZones) {
-                MetricText("\(zone)", "ZONA", tint: ZoneBar.color(zone))
+        .toolbar {
+            // What the Watch is recording, in the clock's line.
+            ToolbarItem(placement: .topBarLeading) {
+                Image(systemName: workout.stage?.symbol ?? "dumbbell.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor.opacity(0.25), in: .circle)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var energy: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            MetricText("\(Int(workout.activeKcal.rounded()))", "CAL\nACTIVAS", tint: .pink, size: 48)
-            MetricText(workout.totalKcal.map { "\(Int($0.rounded()))" } ?? "--", "CAL\nTOTALES")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var steps: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            MetricText(workout.paceSecondsPerKm.map(Self.pace) ?? "--", "RITMO\nPROM. /KM", tint: .cyan)
-            MetricText((workout.distanceMeters.map { $0 / 1000 } ?? 0).formatted(.number.precision(.fractionLength(2))), "KM")
-            MetricText(workout.steps.map { "\(Int($0))" } ?? "--", "PASOS")
-            MetricText(workout.cadence.map { "\(Int($0.rounded()))" } ?? "--", "PASOS\n/MIN")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var heartLine: some View {
         HStack(alignment: .lastTextBaseline, spacing: 4) {
-            MetricText(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--", "PPM")
+            Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                .font(.system(size: 36, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(.snappy, value: workout.heartRate)
             Image(systemName: "heart.fill")
-                .font(.system(size: 18))
+                .font(.system(size: 22))
                 .foregroundStyle(.red)
                 .symbolEffect(.pulse, isActive: workout.heartRate != nil && !workout.paused)
         }
     }
 
-    private func clock(_ seconds: TimeInterval) -> String {
+    /// 08:23.47 (01:08:23.47 past an hour); without the hundredths when dimmed.
+    private func clock(_ seconds: TimeInterval, hundredths: Bool) -> String {
         let d = Duration.seconds(seconds.rounded(.down))
-        return seconds >= 3600 ? d.formatted(.time(pattern: .hourMinuteSecond)) : d.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 2)))
-    }
-
-    /// 8'37"
-    static func pace(_ seconds: Double) -> String {
-        let s = Int(seconds.rounded())
-        return "\(s / 60)'\(String(format: "%02d", s % 60))\""
+        let whole = seconds >= 3600 ? d.formatted(.time(pattern: .hourMinuteSecond)) : d.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 2)))
+        guard hundredths else { return whole }
+        return whole + String(format: ".%02d", Int(seconds * 100) % 100)
     }
 }
 
@@ -549,30 +523,39 @@ private struct RestBar: View {
     }
 }
 
-/// The five heart-rate zones as one bar, the current one lit with its number.
-private struct ZoneBar: View {
-    let heartRate: Double?
-    let zones: [HrZoneRange]
+// MARK: - Countdown
 
-    static func color(_ zone: Int) -> Color { [.blue, .green, .yellow, .orange, .red][min(max(zone, 1), 5) - 1] }
+/// 3, 2, 1 in a ring that empties each second, then out of the way.
+private struct Countdown: View {
+    let done: () -> Void
+    @State private var count = 3
+    @State private var progress = 1.0
 
     var body: some View {
-        let current = HrZoneRange.zone(of: heartRate, in: zones)
-        HStack(spacing: 3) {
-            ForEach(1...5, id: \.self) { zone in
-                if zone == current {
-                    Text("Z\(zone)")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity, minHeight: 24)
-                        .background(Self.color(zone), in: .capsule)
-                } else {
-                    Capsule().fill(Self.color(zone).opacity(0.35)).frame(height: 10)
-                }
-            }
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Circle()
+                .stroke(Color.accentColor.opacity(0.25), lineWidth: 10)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text("\(count)")
+                .font(.system(size: 80, weight: .bold, design: .rounded))
+                .contentTransition(.numericText(countsDown: true))
         }
-        .frame(height: 24)
-        .animation(.snappy, value: current)
+        .padding(18)
+        .task {
+            for n in stride(from: 3, through: 1, by: -1) {
+                withAnimation(.snappy) { count = n }
+                progress = 1
+                withAnimation(.linear(duration: 1)) { progress = 0 }
+                WKInterfaceDevice.current().play(.click)
+                try? await Task.sleep(for: .seconds(1))
+            }
+            WKInterfaceDevice.current().play(.start)
+            done()
+        }
     }
 }
 
