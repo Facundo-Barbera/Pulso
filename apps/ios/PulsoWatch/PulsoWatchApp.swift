@@ -8,7 +8,7 @@ struct PulsoWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            WorkoutView(manager: .shared)
+            SessionView(store: .shared, workout: .shared)
         }
     }
 }
@@ -17,12 +17,13 @@ struct PulsoWatchApp: App {
 /// the system kept going after the app was killed comes back.
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     func applicationDidFinishLaunching() {
-        Task { @MainActor in WorkoutManager.shared.listen() }
+        Task { @MainActor in WatchSessionStore.shared.listen() }
     }
 
+    /// The phone started a session: record at once; its copy follows by WatchConnectivity.
     func handle(_ workoutConfiguration: HKWorkoutConfiguration) {
         let stage = WorkoutStage(workoutConfiguration)
-        Task { @MainActor in await WorkoutManager.shared.start(stage) }
+        Task { @MainActor in await WorkoutManager.shared.follow(stage) }
     }
 
     func handleActiveWorkoutRecovery() {
