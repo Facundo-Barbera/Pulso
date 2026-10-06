@@ -109,6 +109,14 @@ targets:
     sources:
       - path: PulsoWatch
       - path: WatchShared
+      # The session's logic, shared with the phone so both behave the same offline.
+      - path: Pulso/Features/Training/TrainingModels.swift
+      - path: Pulso/Features/Training/LiveSessionState.swift
+      - path: Pulso/Features/Training/WeightUnit.swift
+      - path: Pulso/Features/Training/Superset.swift
+      - path: Pulso/Features/Training/TrainingText.swift
+      - path: Pulso/Features/Training/SetDrop.swift
+      - path: Pulso/Features/Training/Live/CardioClock.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(PULSO_APP_BUNDLE_ID).watchkitapp

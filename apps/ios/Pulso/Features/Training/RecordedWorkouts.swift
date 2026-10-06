@@ -1,75 +1,13 @@
 import Charts
 import SwiftUI
 
-// MARK: - Models (`@pulso/contract` workouts.ts)
+// The models (`@pulso/contract` workouts.ts) live in TrainingModels.swift, shared with the Watch.
 
-/// One heart-rate reading. `at` epoch ms.
-struct HeartRatePoint: Codable, Hashable {
-    var at: Double
-    var bpm: Double
-
-    var date: Date { Date(timeIntervalSince1970: at / 1000) }
-}
-
-/// A Health workout recorded during a Pulso session (the Watch's "Fuerza", the treadmill walk).
-struct RecordedPart: Codable, Hashable, Identifiable {
-    var workoutId: String
-    var activity: String
-    /// Spanish, from the engine: "Fuerza", "Caminata".
-    var title: String
-    var startedAt: Double
-    var endedAt: Double
-    var energy: Double?
-    /// meters
-    var distance: Double?
-    var avgHeartRate: Double?
-    var maxHeartRate: Double?
-    var sourceName: String?
-    var cardio: Bool
-    /// "overlap" or "manual".
-    var link: String?
-    /// Only on join candidates: the session it is part of now.
-    var joinedTo: String?
-
-    var id: String { workoutId }
-    var minutes: Int { max(1, Int(((endedAt - startedAt) / 60_000).rounded())) }
-
-    /// "19 min · 134 kcal · FC media 118 · 0,49 km"
-    var facts: String {
-        var parts = ["\(minutes) min"]
-        if let energy { parts.append("\(Int(energy.rounded())) kcal") }
-        if let avgHeartRate { parts.append("FC media \(Int(avgHeartRate.rounded()))") }
-        if let distance, distance > 0 { parts.append((distance / 1000).formatted(.number.precision(.fractionLength(0...2))) + " km") }
-        return parts.joined(separator: " · ")
-    }
-
+extension RecordedPart {
     var symbol: String {
         Workout(id: workoutId, source: "healthkit", activity: activity, startedAt: startedAt, endedAt: endedAt).symbol
     }
 }
-
-/// What Health recorded during a session, merged in by the engine.
-struct SessionRecording: Codable, Hashable {
-    var parts: [RecordedPart]
-    /// Union of the session and its parts.
-    var startedAt: Double
-    var endedAt: Double
-    /// kcal, the parts summed once.
-    var energy: Double?
-    var distance: Double?
-    var avgHeartRate: Double?
-    var maxHeartRate: Double?
-    var heartRate: [HeartRatePoint]
-
-    var byWatch: Bool { !parts.isEmpty && parts.allSatisfy { $0.sourceName?.localizedCaseInsensitiveContains("watch") == true } }
-}
-
-extension TrainingSession {
-    /// The row's span: the session and what the Watch recorded around it.
-    var spanDuration: TimeInterval { ((recorded?.endedAt ?? endedAt) - (recorded?.startedAt ?? startedAt)) / 1000 }
-}
-
-// MARK: - API
 
 extension PulsoAPI {
     private struct LinkBody: Encodable {

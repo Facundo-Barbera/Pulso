@@ -130,6 +130,9 @@ enum Equipment {
     }
 
     static func weightStep(_ id: String) -> Double { ["dumbbell", "bodyweight", "band"].contains(id) ? 1 : 2.5 }
+
+    /// Whether a set asks for a load: bodyweight and bands go by repetitions.
+    static func needsLoad(_ id: String) -> Bool { !["bodyweight", "band"].contains(id) }
 }
 
 /// A library row (`GET /api/mobile/training/exercises`).
@@ -540,91 +543,72 @@ struct TrainingSessionSaved: Codable {
     var prs: [TrainingRecord]
 }
 
-extension PulsoAPI {
-    private struct SessionsResponse: Decodable { var sessions: [TrainingSession] }
+// MARK: - Health recordings merged into a session
 
-    func trainingProgram() async throws -> ActiveProgramResponse {
-        try await call("api/mobile/training/program", method: "GET")
+/// One heart-rate reading. `at` epoch ms.
+struct HeartRatePoint: Codable, Hashable {
+    var at: Double
+    var bpm: Double
+
+    var date: Date { Date(timeIntervalSince1970: at / 1000) }
+}
+
+/// A Health workout recorded during a Pulso session (the Watch's "Fuerza", the treadmill walk).
+struct RecordedPart: Codable, Hashable, Identifiable {
+    var workoutId: String
+    var activity: String
+    /// Spanish, from the engine: "Fuerza", "Caminata".
+    var title: String
+    var startedAt: Double
+    var endedAt: Double
+    var energy: Double?
+    /// meters
+    var distance: Double?
+    var avgHeartRate: Double?
+    var maxHeartRate: Double?
+    var sourceName: String?
+    var cardio: Bool
+    /// "overlap" or "manual".
+    var link: String?
+    /// Only on join candidates: the session it is part of now.
+    var joinedTo: String?
+
+    var id: String { workoutId }
+    var minutes: Int { max(1, Int(((endedAt - startedAt) / 60_000).rounded())) }
+
+    /// "19 min · 134 kcal · FC media 118 · 0,49 km"
+    var facts: String {
+        var parts = ["\(minutes) min"]
+        if let energy { parts.append("\(Int(energy.rounded())) kcal") }
+        if let avgHeartRate { parts.append("FC media \(Int(avgHeartRate.rounded()))") }
+        if let distance, distance > 0 { parts.append((distance / 1000).formatted(.number.precision(.fractionLength(0...2))) + " km") }
+        return parts.joined(separator: " · ")
     }
+}
 
-    func trainingSessions() async throws -> [TrainingSession] {
-        let response: SessionsResponse = try await call("api/mobile/training/sessions", method: "GET")
-        return response.sessions
-    }
+/// What Health recorded during a session, merged in by the engine.
+struct SessionRecording: Codable, Hashable {
+    var parts: [RecordedPart]
+    /// Union of the session and its parts.
+    var startedAt: Double
+    var endedAt: Double
+    /// kcal, the parts summed once.
+    var energy: Double?
+    var distance: Double?
+    var avgHeartRate: Double?
+    var maxHeartRate: Double?
+    var heartRate: [HeartRatePoint]
 
-    /// Upserts by the session's client-made id, so retrying after a failure is safe.
-    func saveTrainingSession(_ session: TrainingSession) async throws -> TrainingSessionSaved {
-        try await call("api/mobile/training/sessions", method: "POST", body: session.sanitized)
-    }
+    var byWatch: Bool { !parts.isEmpty && parts.allSatisfy { $0.sourceName?.localizedCaseInsensitiveContains("watch") == true } }
+}
 
-    // MARK: Editing and alternatives
+extension TrainingSession {
+    /// The row's span: the session and what the Watch recorded around it.
+    var spanDuration: TimeInterval { ((recorded?.endedAt ?? endedAt) - (recorded?.startedAt ?? startedAt)) / 1000 }
+}
 
-    private struct ExercisesResponse<Item: Decodable>: Decodable { var exercises: [Item] }
+// MARK: - API
 
-    /// Rewrites a day's exercise list, today only or in the program. Returns the program as the tab shows it.
-    func saveProgramDay(_ dayId: String, edit: DayEdit) async throws -> ActiveProgramResponse {
-        try await call("api/mobile/training/program/days/\(dayId)", method: "PUT", body: edit)
-    }
-
-    /// Drops today's one-off changes to a day.
-    func resetProgramDay(_ dayId: String) async throws -> ActiveProgramResponse {
-        try await call("api/mobile/training/program/days/\(dayId)", method: "DELETE")
-    }
-
-    func libraryExercises() async throws -> [LibraryExercise] {
-        let response: ExercisesResponse<LibraryExercise> = try await call("api/mobile/training/exercises", method: "GET")
-        return response.exercises
-    }
-
-    /// Alternatives ranked by similarity and the person's equipment preference; `equipment` filters.
-    func similarExercises(_ id: String, equipment: [String] = [], limit: Int = 20) async throws -> [SimilarExercise] {
-        var request = makeRequest("api/mobile/training/exercises/\(id)/similar", method: "GET")
-        var query = [URLQueryItem(name: "limit", value: String(limit))]
-        if !equipment.isEmpty { query.append(URLQueryItem(name: "equipment", value: equipment.joined(separator: ","))) }
-        request.url = request.url?.appending(queryItems: query)
-        let response: ExercisesResponse<SimilarExercise> = try await perform(request)
-        return response.exercises
-    }
-
-    func trainingSettings() async throws -> TrainingSettings {
-        try await call("api/mobile/training/settings", method: "GET")
-    }
-
-    func saveTrainingSettings(_ update: TrainingSettingsUpdate) async throws -> TrainingSettings {
-        try await call("api/mobile/training/settings", method: "PUT", body: update)
-    }
-
-    /// One logged session, for a week's done day.
-    func trainingSession(_ id: String) async throws -> TrainingSession {
-        try await call("api/mobile/training/sessions/\(id)", method: "GET")
-    }
-
-    /// "Empezar la semana ya", once this one is complete.
-    func startNextWeek() async throws -> ActiveProgramResponse {
-        try await call("api/mobile/training/program/weeks/next", method: "POST")
-    }
-
-    /// "Retomar": a new block with an earlier block's days.
-    func resumeBlock(_ programId: String) async throws -> ActiveProgramResponse {
-        try await call("api/mobile/training/program/blocks/\(programId)/resume", method: "POST")
-    }
-
-    private struct DismissBody: Encodable { var dismissed: Bool }
-    private struct ThreadResponse: Decodable { var threadId: String }
-
-    /// "Entrenar normal" (true) or back to the Coach's plan (false).
-    func setAdjustmentDismissed(_ id: String, _ dismissed: Bool) async throws -> ActiveProgramResponse {
-        try await call("api/mobile/training/program/adjustment/\(id)", method: "PUT", body: DismissBody(dismissed: dismissed))
-    }
-
-    /// "Ver por qué": the Coach thread about the adjustment.
-    func adjustmentThread(_ id: String) async throws -> String {
-        let response: ThreadResponse = try await call("api/mobile/training/program/adjustment/\(id)/thread", method: "POST")
-        return response.threadId
-    }
-
-    /// Pins an exercise (library id) to kg or lb; nil follows the default unit again.
-    func setExerciseUnit(_ exerciseId: String, unit: WeightUnit?) async throws -> TrainingSettings {
-        try await call("api/mobile/training/exercises/\(exerciseId)/unit", method: "PUT", body: ExerciseUnitBody(unit: unit))
-    }
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }

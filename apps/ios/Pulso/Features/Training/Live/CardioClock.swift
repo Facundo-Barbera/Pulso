@@ -118,6 +118,7 @@ enum CardioCue {
         }
     }
 
+    #if os(iOS)
     /// What the lock screen shows for a cardio block.
     static func status(_ exercise: LiveExercise, clock: CardioClock?, zones: [HrZoneRange]?, now: Date = .now) -> TrainingActivityAttributes.ContentState.Cardio {
         let clock = clock?.exerciseId == exercise.id ? clock : nil
@@ -146,6 +147,7 @@ enum CardioCue {
             work: true
         )
     }
+    #endif
 
     /// One cue per phase change still ahead, plus one when the planned time is up.
     /// `after` is seconds from now; scheduled as local notifications so they reach a locked phone.

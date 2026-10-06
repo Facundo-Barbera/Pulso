@@ -142,11 +142,6 @@ struct ExercisePage: View {
     }
 }
 
-extension Equipment {
-    /// Whether a set asks for a load: bodyweight and bands go by repetitions.
-    static func needsLoad(_ id: String) -> Bool { !["bodyweight", "band"].contains(id) }
-}
-
 extension LiveExercise {
     /// "3 × 8–10 reps · descanso 1:30"; without the rest in a superset, which rests after the round.
     func headerTarget(withRest: Bool) -> String {
@@ -535,10 +530,6 @@ enum SetAction {
     case addDrop
     case removeDrop(Int)
     case remove
-}
-
-extension Array {
-    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 extension LiveSession {
