@@ -98,6 +98,8 @@ test("update, add (strength and cardio), move, skip and remove", () => {
     [55, 6, false],
     [55, 6, false],
   ]);
+  // The Coach's reps are a choice: the phone logs them, not the top of the range.
+  expect(s.exercises[0]!.sets.map((x) => x.repsChosen ?? false)).toEqual([false, true, true, true]);
   // Fewer sets never drops one already done.
   s = editLive([{ op: "update", exercise: 1, sets: 1 }], T0 + 2).session;
   expect(s.exercises[0]!.sets.length).toBe(1);

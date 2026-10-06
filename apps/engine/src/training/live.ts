@@ -297,12 +297,16 @@ function apply(session: LiveSession, op: LiveOp, requested: Requested, now: numb
       const open = ex.sets.filter((s) => s.doneAt == null);
       // The Coach thinks in kg; the sets land on the steps of the exercise's machine.
       if (op.weightKg != null) for (const s of open) s.weightKg = snapKg(op.weightKg, unitOf(ex.exerciseId));
-      if (op.reps != null) for (const s of open) s.reps = op.reps;
+      if (op.reps != null) for (const s of open) Object.assign(s, { reps: op.reps, repsChosen: true });
       if (op.sets != null) {
         const doneCount = ex.sets.length - open.length;
         const want = Math.max(op.sets, doneCount);
         const template = open.at(-1) ?? ex.sets.at(-1) ?? { weightKg: op.weightKg ?? 0, reps: op.reps ?? ex.repMin };
-        if (want > ex.sets.length) ex.sets.push(...freshSets(want - ex.sets.length, template.weightKg, template.reps));
+        if (want > ex.sets.length) {
+          const added = freshSets(want - ex.sets.length, template.weightKg, template.reps);
+          if (op.reps != null) for (const s of added) s.repsChosen = true;
+          ex.sets.push(...added);
+        }
         else {
           // Only sets not done yet go, from the end.
           let drop = ex.sets.length - want;

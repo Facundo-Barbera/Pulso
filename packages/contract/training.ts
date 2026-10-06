@@ -492,6 +492,11 @@ export type LiveSet = {
   id: string;
   weightKg: number;
   reps: number;
+  /**
+   * True once the person (or the Coach) set the reps. An open set without it
+   * shows the target range and logs `repMax` when checked off as it stands.
+   */
+  repsChosen?: boolean;
   rpe: number | null;
   /** Epoch ms; null until checked off. */
   doneAt: number | null;
