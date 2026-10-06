@@ -70,7 +70,7 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(exercises[0]["skipped"] as? Bool, false)
 
         let sets = try XCTUnwrap(exercises[0]["sets"] as? [[String: Any]])
-        XCTAssertEqual(Set(sets[0].keys), ["id", "weightKg", "reps", "rpe", "doneAt", "segments"])
+        XCTAssertEqual(Set(sets[0].keys), ["id", "weightKg", "reps", "repsChosen", "rpe", "doneAt", "segments"])
         XCTAssertEqual((sets[0]["segments"] as? [[String: Any]])?.count, 1, "A plain set is one segment, the top")
         XCTAssertEqual(sets[0]["doneAt"] as? Double, 1_060_000)
         XCTAssertEqual(sets[0]["rpe"] as? Double, 8)
@@ -317,6 +317,50 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertTrue(s.exercises[2].sets.isEmpty, "Cardio has no sets")
     }
 
+    func testAnOpenSetShowsTheRangeAndHechoLogsItsTop() {
+        var s = state()
+        XCTAssertEqual(s.exercises[0].repRange(s.exercises[0].sets[0]), 6...8)
+        s.toggle(exercise: 0, set: 0, now: t0)
+        XCTAssertEqual(s.exercises[0].sets[0].reps, 8, "Checked off as it stands: the top of the range")
+        XCTAssertNil(s.exercises[0].repRange(s.exercises[0].sets[0]), "A done set shows what it logged")
+
+        s.toggle(exercise: 0, set: 0, now: t0)
+        XCTAssertEqual(s.exercises[0].repRange(s.exercises[0].sets[0]), 6...8, "Un-checked, the range is back")
+
+        s.setReps(exercise: 0, set: 1, to: 7)
+        XCTAssertNil(s.exercises[0].repRange(s.exercises[0].sets[1]))
+        s.toggle(exercise: 0, set: 1, now: t0)
+        XCTAssertEqual(s.exercises[0].sets[1].reps, 7, "Typed reps are logged as typed")
+
+        s.adjustReps(exercise: 0, set: 2, by: -1)
+        XCTAssertEqual(s.exercises[0].sets[2].reps, 7, "−/+ start from the top shown")
+        XCTAssertTrue(s.exercises[0].sets[2].repsChosen)
+    }
+
+    func testRoundsAndCompleteAllLogTheTopToo() {
+        var s = state()
+        s.completeAll(exercise: 1, now: t0)
+        XCTAssertEqual(s.exercises[1].sets.map(\.reps), [12, 12])
+
+        s.exercises[0].supersetId = "a"
+        s.exercises[1].supersetId = "a"
+        s.exercises[1].sets.append(LiveSet(weightKg: 14, reps: 10))
+        s.completeRound(0..<2, round: 2, now: t0)
+        XCTAssertEqual(s.exercises[0].sets[2].reps, 8)
+        XCTAssertEqual(s.exercises[1].sets[2].reps, 12)
+    }
+
+    func testRepsChosenTravelsAndDefaultsToFalse() throws {
+        var s = state()
+        s.setReps(exercise: 0, set: 0, to: 6)
+        let back = try JSONDecoder().decode(LiveSessionState.self, from: JSONEncoder().encode(s))
+        XCTAssertTrue(back.exercises[0].sets[0].repsChosen)
+        XCTAssertFalse(back.exercises[0].sets[1].repsChosen)
+
+        let old = #"{"id":"s1","weightKg":80,"reps":6,"rpe":null,"doneAt":null}"#
+        XCTAssertFalse(try JSONDecoder().decode(LiveSet.self, from: Data(old.utf8)).repsChosen, "A copy from before the field shows the range")
+    }
+
     // MARK: Resuming after the app was killed
 
     func testARestThatRanOutWhileAwayMovesOnWhenResumed() {
@@ -549,6 +593,51 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertTrue(s.current! == (0, 2))
         s.toggle(exercise: 0, set: 2, now: t0.addingTimeInterval(400))
         XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(400 + 120))
+    }
+
+    func testSupersetIsOneScreen() {
+        let s = paired()
+        XCTAssertEqual(s.blocks, [0..<2, 2..<3])
+        XCTAssertEqual(s.block(of: 1), 0..<2)
+        XCTAssertEqual(s.rounds(0..<2), 3, "The press has 3 sets, the curl 2")
+        XCTAssertEqual(s.nextPending(after: 0), 2, "'Siguiente' goes past the partner")
+        XCTAssertEqual(s.nextPending(after: 1), 2)
+    }
+
+    func testRoundLogsEachMemberThenOneRest() {
+        var s = paired()
+        s.setWeight(exercise: 1, set: 0, to: 12)
+        s.completeRound(0..<2, round: 0, now: t0)
+        XCTAssertEqual(s.exercises[0].sets[0].doneAt, t0)
+        XCTAssertEqual(s.exercises[1].sets[0].doneAt, t0.addingTimeInterval(0.001), "In order, so the saved order is A then B")
+        XCTAssertEqual(s.exercises[1].sets[1].weightKg, 12, "The load carries to the next round")
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(60), "The last member's rest")
+        XCTAssertEqual(s.currentRound(0..<2), 1)
+
+        s.undoRound(0..<2, round: 0)
+        XCTAssertEqual(s.setsDone, 0)
+        XCTAssertNil(s.restEndsAt)
+
+        s.completeRound(0..<2, round: 0, now: t0)
+        s.completeRound(0..<2, round: 1, now: t0.addingTimeInterval(200))
+        s.completeRound(0..<2, round: 2, now: t0.addingTimeInterval(400))
+        XCTAssertTrue(s.exercises[0].done && s.exercises[1].done)
+        XCTAssertNil(s.currentRound(0..<2))
+        XCTAssertEqual(s.restEndsAt, t0.addingTimeInterval(400 + 120), "The press finishes alone, with its rest")
+        s.skipRest()
+        XCTAssertTrue(s.advanceIfDone())
+        XCTAssertEqual(s.focus, 2)
+    }
+
+    func testRoundLeavesASkippedMemberAlone() {
+        var s = paired()
+        s.setSkipped(1, true)
+        s.completeRound(0..<2, round: 0, now: t0)
+        XCTAssertTrue(s.exercises[0].sets[0].done)
+        XCTAssertFalse(s.exercises[1].sets[0].done)
+        XCTAssertFalse(s.advanceIfDone(), "The press still has sets")
+        s.addRound(0..<2)
+        XCTAssertEqual(s.exercises.map(\.sets.count), [4, 2, 0])
     }
 
     func testSupersetIdsNormalizeAndSurviveTheJSON() throws {

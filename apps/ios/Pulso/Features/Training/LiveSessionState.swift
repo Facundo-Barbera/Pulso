@@ -10,6 +10,9 @@ struct LiveSet: Identifiable, Hashable {
     var id: String = LiveSessionState.newId()
     var weightKg: Double
     var reps: Int
+    /// The reps were set by hand (or by the Coach). Until then an open set shows
+    /// the target range and logs its top when checked off.
+    var repsChosen = false
     var rpe: Double? = nil
     var doneAt: Date? = nil
     var drops: [SetSegment] = []
@@ -64,6 +67,11 @@ struct LiveExercise: Identifiable, Hashable {
     var hasDoneWork: Bool { cardioLog != nil || sets.contains(where: \.done) }
     /// Neither done nor skipped: where focus moves next.
     var pending: Bool { !skipped && !done }
+
+    /// What an open set with its reps not chosen shows ("8–10"); nil once they are, or without a range.
+    func repRange(_ set: LiveSet) -> ClosedRange<Int>? {
+        set.done || set.repsChosen || repMin >= repMax ? nil : repMin...repMax
+    }
 
     /// "3 series de 6 a 8 repeticiones", or the cardio target.
     var prescription: String {
@@ -243,9 +251,36 @@ struct LiveSessionState: Hashable {
         for e in exercises.indices { exercises[e].supersetId = ids[e] }
     }
 
-    /// The next exercise to do after `index`, wrapping to earlier ones left behind.
+    /// What one screen shows: a superset's members together, else the exercise alone.
+    func block(of e: Int) -> Range<Int> { superset(of: e) ?? e..<(e + 1) }
+
+    /// The screens in order.
+    var blocks: [Range<Int>] {
+        var out: [Range<Int>] = []
+        var e = 0
+        while e < exercises.count {
+            let block = block(of: e)
+            out.append(block)
+            e = block.upperBound
+        }
+        return out
+    }
+
+    /// Rounds of a superset: as many as its longest member's sets.
+    func rounds(_ group: Range<Int>) -> Int { group.map { exercises[$0].sets.count }.max() ?? 0 }
+
+    /// The first round with a set still open among the members not skipped.
+    func currentRound(_ group: Range<Int>) -> Int? {
+        (0..<rounds(group)).first { r in
+            group.contains { !exercises[$0].skipped && exercises[$0].sets[safe: r].map { !$0.done } == true }
+        }
+    }
+
+    /// The next exercise to do after `index`'s screen, wrapping to earlier ones left behind.
     func nextPending(after index: Int) -> Int? {
-        let order = Array(exercises.indices.dropFirst(index + 1)) + Array(exercises.indices.prefix(max(0, index)))
+        guard exercises.indices.contains(index) else { return exercises.indices.first { exercises[$0].pending } }
+        let block = block(of: index)
+        let order = Array(exercises.indices.dropFirst(block.upperBound)) + Array(exercises.indices.prefix(block.lowerBound))
         return order.first { exercises[$0].pending }
     }
 
@@ -260,26 +295,26 @@ struct LiveSessionState: Hashable {
 
     // MARK: Sets
 
-    /// Checks a set off (starting its rest) or un-checks it. Checking carries
-    /// the set's weight to the later sets not done yet, so a changed load
-    /// sticks for the rest of the exercise.
+    /// Checks a set off (starting its rest) or un-checks it. Checking also logs
+    /// the earlier sets left open (one forgotten), in order; un-checking also
+    /// un-checks the later ones (a slip of the finger), so neither takes taps
+    /// one by one. Checking carries the set's weight to the later sets not done
+    /// yet, so a changed load sticks for the rest of the exercise.
     /// The load logged is the one shown: on the exercise's `unit` steps (70 lb, not 31.75 kg read as 31,8).
     mutating func toggle(exercise e: Int, set s: Int, now: Date = .now, unit: WeightUnit = .kg) {
         guard exercises.indices.contains(e), exercises[e].sets.indices.contains(s) else { return }
         if exercises[e].sets[s].done {
-            exercises[e].sets[s].doneAt = nil
+            for later in s..<exercises[e].sets.count { exercises[e].sets[later].doneAt = nil }
             restStartedAt = nil
             restEndsAt = nil
             return
         }
-        exercises[e].sets[s].doneAt = now
-        exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
-        exercises[e].sets[s].drops = exercises[e].sets[s].drops.map { SetSegment(weightKg: unit.snapKg($0.weightKg), reps: $0.reps) }
-        exercises[e].skipped = false
-        let weight = exercises[e].sets[s].weightKg
-        for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
-            exercises[e].sets[later].weightKg = weight
+        // A millisecond apart, so the saved order is the list's order; each keeps its own load.
+        let earlier = (0..<s).filter { !exercises[e].sets[$0].done }
+        for (i, open) in earlier.enumerated() {
+            check(exercise: e, set: open, now: now.addingTimeInterval(Double(i - earlier.count) / 1000), unit: unit, carry: false)
         }
+        check(exercise: e, set: s, now: now, unit: unit)
         // A superset goes straight to the partner still behind; the rest comes after the round.
         if let group = superset(of: e), let next = nextInSuperset(group) {
             focus = next.exercise
@@ -292,6 +327,108 @@ struct LiveSessionState: Hashable {
         startRest(after: e, now: now)
     }
 
+    /// Logs set `s` as it stands and (with `carry`) its load to the later sets not done.
+    private mutating func check(exercise e: Int, set s: Int, now: Date, unit: WeightUnit, carry: Bool = true) {
+        exercises[e].sets[s].doneAt = now
+        settleReps(exercise: e, set: s)
+        exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
+        exercises[e].sets[s].drops = exercises[e].sets[s].drops.map { SetSegment(weightKg: unit.snapKg($0.weightKg), reps: $0.reps) }
+        exercises[e].skipped = false
+        guard carry else { return }
+        let weight = exercises[e].sets[s].weightKg
+        for later in exercises[e].sets.indices where later > s && !exercises[e].sets[later].done {
+            exercises[e].sets[later].weightKg = weight
+        }
+    }
+
+    /// "Hecho" on a superset round: the earlier rounds left open first, then
+    /// round `r`; within each, the set of each member still open, in order (a
+    /// millisecond apart). Then one rest, the last member's.
+    mutating func completeRound(_ group: Range<Int>, round r: Int, now: Date = .now, unit: (Int) -> WeightUnit = { _ in .kg }) {
+        let open = (0...r).flatMap { round in
+            group.filter {
+                exercises.indices.contains($0) && !exercises[$0].skipped && exercises[$0].sets[safe: round].map { !$0.done } == true
+            }.map { (round: round, exercise: $0) }
+        }
+        guard let last = open.last(where: { $0.round == r })?.exercise else { return }
+        for (i, set) in open.enumerated() {
+            check(exercise: set.exercise, set: set.round, now: now.addingTimeInterval(Double(i - open.count + 1) / 1000), unit: unit(set.exercise), carry: set.round == r)
+        }
+        if let next = nextInSuperset(group) { focus = next.exercise }
+        startRest(after: last, now: now)
+    }
+
+    /// Un-checks round `r` and every later one, of every member; the rest goes too.
+    mutating func undoRound(_ group: Range<Int>, round r: Int) {
+        for e in group where exercises.indices.contains(e) {
+            for s in exercises[e].sets.indices where s >= r { exercises[e].sets[s].doneAt = nil }
+        }
+        restStartedAt = nil
+        restEndsAt = nil
+    }
+
+    /// One more round: a set more for each member not skipped.
+    mutating func addRound(_ group: Range<Int>) {
+        for e in group where exercises.indices.contains(e) && !exercises[e].skipped { addSet(exercise: e) }
+    }
+
+    /// One round less: the last set of each member that reaches the last round,
+    /// when it isn't done and isn't the only one.
+    mutating func removeRound(_ group: Range<Int>) {
+        let last = rounds(group)
+        for e in group where exercises.indices.contains(e) && exercises[e].sets.count == last { removeLastSet(exercise: e) }
+    }
+
+    /// Whether the last round can go: none of its sets done, and not the only round.
+    func canRemoveRound(_ group: Range<Int>) -> Bool {
+        let last = rounds(group)
+        let members = group.filter { exercises.indices.contains($0) && exercises[$0].sets.count == last }
+        return !members.isEmpty && members.allSatisfy { removableSets($0) > 0 }
+    }
+
+    /// The last set, unless it is done or the exercise's only one.
+    mutating func removeLastSet(exercise e: Int) {
+        guard exercises.indices.contains(e), exercises[e].sets.count > 1, exercises[e].sets.last?.done == false else { return }
+        exercises[e].sets.removeLast()
+    }
+
+    /// Sets that can go from the end: those not done after the last done one, keeping at least one.
+    func removableSets(_ e: Int) -> Int {
+        guard exercises.indices.contains(e) else { return 0 }
+        let sets = exercises[e].sets
+        let open = sets.count - ((sets.lastIndex(where: \.done) ?? -1) + 1)
+        return min(open, sets.count - 1)
+    }
+
+    /// The superset goes back to separate exercises, each keeping every set logged
+    /// (a machine got taken midway). Focus stays on the member with sets left.
+    mutating func splitSuperset(_ group: Range<Int>) {
+        for e in group where exercises.indices.contains(e) { exercises[e].supersetId = nil }
+        if group.contains(focus), exercises[focus].done, let open = group.first(where: { exercises[$0].pending }) { focus = open }
+    }
+
+    /// The exercise whose set (or round) started the rest running now: the last one checked off.
+    var restingExercise: Int? {
+        guard restEndsAt != nil else { return nil }
+        let latest = exercises.indices.compactMap { e in exercises[e].sets.compactMap(\.doneAt).max().map { (e, $0) } }.max { $0.1 < $1.1 }
+        guard let e = latest?.0 else { return nil }
+        // A superset rests after its round, on its last member's rest.
+        return superset(of: e).map { $0.upperBound - 1 } ?? e
+    }
+
+    /// Sets the rest of the exercise resting now (today), and the running rest to it from its start.
+    mutating func setRest(seconds: Int, now: Date = .now) {
+        guard let e = restingExercise, let start = restStartedAt else { return }
+        exercises[e].restSeconds = max(0, seconds)
+        let end = start.addingTimeInterval(TimeInterval(exercises[e].restSeconds))
+        if end > now {
+            restEndsAt = end
+        } else {
+            restStartedAt = nil
+            restEndsAt = nil
+        }
+    }
+
     /// "Registrar todas": checks off every set left as it stands, in order, with
     /// one rest after the last.
     mutating func completeAll(exercise e: Int, now: Date = .now, unit: WeightUnit = .kg) {
@@ -302,6 +439,7 @@ struct LiveSessionState: Hashable {
         for (i, s) in open.enumerated() {
             exercises[e].sets[s].doneAt = now.addingTimeInterval(Double(i) / 1000)
             exercises[e].sets[s].weightKg = unit.snapKg(exercises[e].sets[s].weightKg)
+            settleReps(exercise: e, set: s)
         }
         exercises[e].skipped = false
         startRest(after: e, now: now)
@@ -325,9 +463,18 @@ struct LiveSessionState: Hashable {
         exercises[e].sets[s].weightKg = unit.fromUnit(up ? unit.stepUp(value) : unit.stepDown(value))
     }
 
+    /// Checked off with the reps not chosen: the top of the range, what the set showed it could reach.
+    private mutating func settleReps(exercise e: Int, set s: Int) {
+        guard !exercises[e].sets[s].repsChosen, exercises[e].repMax > 0 else { return }
+        exercises[e].sets[s].reps = exercises[e].repMax
+    }
+
+    /// −/+ one from the reps shown: the top of the range while it shows.
     mutating func adjustReps(exercise e: Int, set s: Int, by delta: Int) {
         guard has(e, s) else { return }
-        exercises[e].sets[s].reps = max(0, exercises[e].sets[s].reps + delta)
+        let base = exercises[e].repRange(exercises[e].sets[s])?.upperBound ?? exercises[e].sets[s].reps
+        exercises[e].sets[s].reps = max(0, base + delta)
+        exercises[e].sets[s].repsChosen = true
     }
 
     /// Typed in `unit`: any load to the quarter (plates aren't always on the step),
@@ -348,6 +495,7 @@ struct LiveSessionState: Hashable {
     mutating func setReps(exercise e: Int, set s: Int, to reps: Int) {
         guard has(e, s) else { return }
         exercises[e].sets[s].reps = max(0, reps)
+        exercises[e].sets[s].repsChosen = true
     }
 
     /// The effort felt on the whole exercise, 1–10 (nil clears), kept on each done set.
@@ -370,6 +518,14 @@ struct LiveSessionState: Hashable {
     mutating func removeSet(exercise e: Int, set s: Int) {
         guard has(e, s), !exercises[e].sets[s].done else { return }
         exercises[e].sets.remove(at: s)
+    }
+
+    /// Where the set with `id` is.
+    func locate(set id: String) -> (exercise: Int, set: Int)? {
+        for e in exercises.indices {
+            if let s = exercises[e].sets.firstIndex(where: { $0.id == id }) { return (e, s) }
+        }
+        return nil
     }
 
     private func has(_ e: Int, _ s: Int) -> Bool {
@@ -443,11 +599,11 @@ struct LiveSessionState: Hashable {
         focus = min(max(index, 0), exercises.count - 1)
     }
 
-    /// After the focused exercise is finished (or skipped), moves on to the next
-    /// one still to do. Returns whether focus moved.
+    /// After the focused exercise (all of its superset) is finished or skipped,
+    /// moves on to the next one still to do. Returns whether focus moved.
     @discardableResult
     mutating func advanceIfDone() -> Bool {
-        guard let ex = focused, !ex.pending, let next = nextPending(after: focus) else { return false }
+        guard focused != nil, !block(of: focus).contains(where: { exercises[$0].pending }), let next = nextPending(after: focus) else { return false }
         focus = next
         return true
     }
@@ -738,13 +894,14 @@ struct LiveSessionState: Hashable {
 // MARK: - Contract JSON
 
 extension LiveSet: Codable {
-    private enum CodingKeys: String, CodingKey { case id, weightKg, reps, rpe, doneAt, segments }
+    private enum CodingKeys: String, CodingKey { case id, weightKg, reps, repsChosen, rpe, doneAt, segments }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         weightKg = try c.decode(Double.self, forKey: .weightKg)
         reps = try c.decode(Int.self, forKey: .reps)
+        repsChosen = try c.decodeIfPresent(Bool.self, forKey: .repsChosen) ?? false
         rpe = try c.decodeIfPresent(Double.self, forKey: .rpe)
         doneAt = try c.decodeIfPresent(Double.self, forKey: .doneAt).map(LiveSessionState.date)
         // `segments[0]` is the top, which weightKg/reps already are (and win over).
@@ -757,6 +914,7 @@ extension LiveSet: Codable {
         try c.encode(id, forKey: .id)
         try c.encode(weightKg.isFinite ? weightKg : 0, forKey: .weightKg)
         try c.encode(reps, forKey: .reps)
+        try c.encode(repsChosen, forKey: .repsChosen)
         try c.encode(rpe.flatMap { $0.isFinite ? $0 : nil }, forKey: .rpe)
         try c.encode(doneAt.map(LiveSessionState.ms), forKey: .doneAt)
         try c.encode(segments.map(\.sanitized), forKey: .segments)

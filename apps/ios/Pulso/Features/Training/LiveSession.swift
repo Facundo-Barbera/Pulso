@@ -77,7 +77,9 @@ final class LiveSession {
         if session.state.restEndedWhileAway() { session.mutate { $0.advanceIfDone() } }
         session.armRest()
         session.armCardio()
-        session.attachActivity()
+        // Next turn: this runs inside `TrainingStore.shared`'s first init, and a new
+        // Live Activity reads the store (units, zones), which would re-enter it and trap.
+        Task { @MainActor in session.attachActivity() }
         if unsent {
             session.dirty = true
             session.schedulePush(after: .seconds(2))
@@ -144,6 +146,30 @@ final class LiveSession {
         mutate { $0.completeAll(exercise: e, unit: unit(e)) }
         armRest()
         if !state.resting() { mutate { $0.advanceIfDone() } }
+    }
+
+    /// A superset round's "Hecho", or its check to undo it.
+    func toggleRound(_ group: Range<Int>, round r: Int) {
+        let done = group.allSatisfy { state.exercises[$0].skipped || state.exercises[$0].sets[safe: r]?.done != false }
+        if done {
+            mutate { $0.undoRound(group, round: r) }
+        } else {
+            mutate { $0.completeRound(group, round: r, unit: unit) }
+        }
+        armRest()
+        if !state.resting() { mutate { $0.advanceIfDone() } }
+    }
+
+    func addRound(_ group: Range<Int>) { mutate { $0.addRound(group) } }
+    func removeRound(_ group: Range<Int>) { mutate { $0.removeRound(group) } }
+    func removeLastSet(exercise e: Int) { mutate { $0.removeLastSet(exercise: e) } }
+    func splitSuperset(_ group: Range<Int>) { mutate { $0.splitSuperset(group) } }
+
+    /// The rest running now, and its exercise's for today, set to `seconds`.
+    func setRest(seconds: Int) {
+        mutate { $0.setRest(seconds: seconds) }
+        armRest()
+        if !state.resting() { withAnimation(.snappy) { mutate { $0.advanceIfDone() } } }
     }
 
     func setEffort(exercise e: Int, to value: Int?) { mutate { $0.setEffort(exercise: e, to: value) } }
