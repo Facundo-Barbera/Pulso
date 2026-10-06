@@ -311,6 +311,8 @@ final class LiveSessionTests: XCTestCase {
         s.toggle(exercise: 0, set: 3, now: t0)
         s.removeSet(exercise: 0, set: 3)
         XCTAssertEqual(s.exercises[0].sets.count, 4, "A done set isn't removed")
+        s.toggle(exercise: 0, set: 0, now: t0)
+        XCTAssertEqual(s.setsDone, 0, "Un-checking the first un-checks the ones after it")
         s.removeSet(exercise: 0, set: 2)
         XCTAssertEqual(s.exercises[0].sets.count, 3)
         s.addSet(exercise: 2)
@@ -492,7 +494,7 @@ final class LiveSessionTests: XCTestCase {
         XCTAssertEqual(ex.sets.map(\.weightKg), [80, 80])
         s.updateTarget(0, sets: 4, repMin: 8, repMax: 10, weightKg: 85, restSeconds: 90)
         XCTAssertEqual(s.exercises[0].sets.map(\.weightKg), [80, 80, 85, 85])
-        XCTAssertEqual(s.exercises[0].sets.map(\.reps), [7, 7, 8, 8])
+        XCTAssertEqual(s.exercises[0].sets.map(\.reps), [8, 8, 8, 8], "Checked off as they stood, the done ones logged the range's top")
         XCTAssertEqual(s.exercises[0].restSeconds, 90)
         XCTAssertEqual([s.exercises[0].repMin, s.exercises[0].repMax], [8, 10])
     }

@@ -203,7 +203,9 @@ final class TrainingTests: XCTestCase {
         XCTAssertEqual(draft.exercises[0].repMin, 7)
         XCTAssertEqual(draft.exercises[0].repMax, 9)
         XCTAssertEqual(draft.exercises[0].restSeconds, 200)
-        XCTAssertEqual(draft.items[0].detail, "3 series de 7 a 9 · 80 kg")
+        // In the machine's unit, which is the device's setting (the app may have it in lb).
+        let unit = TrainingStore.shared.unit(for: "press-banca")
+        XCTAssertEqual(draft.items[0].detail, "3 series de 7 a 9 · \(unit.format(unit.snapKg(80)))")
 
         draft.move(fromOffsets: [0], toOffset: 2)
         XCTAssertNotNil(draft.exercises[0].supersetId, "Still next to each other")
