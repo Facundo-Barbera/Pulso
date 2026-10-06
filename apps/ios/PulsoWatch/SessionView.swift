@@ -560,7 +560,7 @@ private struct Countdown: View {
 
 // MARK: - Controls
 
-/// As the Workout app: compact buttons at the top, each its icon on a tinted
+/// As the Workout app: compact round buttons in the middle, each its icon on a tinted
 /// tile and its name below. "Terminar" asks as the phone's X does: save it, or
 /// throw it away.
 private struct ControlsPage: View {
@@ -575,7 +575,7 @@ private struct ControlsPage: View {
                 workout.paused ? workout.resume() : workout.pause()
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .confirmationDialog("¿Terminar la sesión?", isPresented: $ending) {
             Button("Terminar y guardar") { store.finish(save: true) }
             Button("Descartar", role: .destructive) { store.finish(save: false) }
@@ -599,8 +599,8 @@ private struct ControlButton: View {
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(tint)
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(tint.opacity(0.22), in: .rect(cornerRadius: 16))
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(tint.opacity(0.22), in: .capsule)
             }
             .buttonStyle(.plain)
             .sensoryFeedback(.selection, trigger: symbol)
