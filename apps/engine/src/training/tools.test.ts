@@ -4,6 +4,7 @@ import { clearLive, putLive } from "./live";
 import { proposeMedia } from "./media";
 import { activeProgramToday, getActiveProgram } from "./store";
 import { trainingTools } from "./tools";
+import { mondayOf } from "./weeks";
 
 const call = async (name: string, args: Record<string, unknown>) => {
   const found = trainingTools.find((t) => t.name === name);
@@ -65,9 +66,11 @@ test("create_program → get_active_program → log_session → suggest_next_loa
   expect(detail.data.isNext).toBe(true);
   expect((await call("get_active_program", { dayId: "nope" })).isError).toBe(true);
 
+  // In this calendar week: a new week starts the rotation over at day A.
+  const startedAt = Math.max(mondayOf(Date.now()), Date.now() - 2 * 3_600_000);
   const logged = await call("log_session", {
     name: "Día A",
-    startedAt: "2026-09-29T18:00:00+02:00",
+    startedAt: new Date(startedAt).toISOString(),
     durationMinutes: 50,
     dayId: dayA.id,
     sets: [
@@ -75,7 +78,7 @@ test("create_program → get_active_program → log_session → suggest_next_loa
       { exerciseId: "press-arnold", weightKg: 16, reps: 10, rpe: 9 },
     ],
   });
-  expect(logged.data.session).toMatchObject({ dayId: dayA.id, startedAt: Date.parse("2026-09-29T16:00:00Z"), minutes: 50 });
+  expect(logged.data.session).toMatchObject({ dayId: dayA.id, startedAt, minutes: 50 });
   expect(logged.data.session.sets).toEqual(["press-arnold: 16×10, 16×10 @9"]);
 
   // The rotation moved on to day B; asking for day A explicitly gets the progression.

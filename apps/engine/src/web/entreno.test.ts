@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createProgram, saveSession } from "../training/store";
+import { mondayOf } from "../training/weeks";
 import { upsertHealthKitWorkouts } from "../workouts";
 import { dayKcal, dayMinutes, entrenoOverview, exerciseView, isDeload, prescription, recentRecords, sessionRecords, target, trainingHistory } from "./entreno";
 
@@ -61,11 +62,15 @@ test("the overview carries the active program's days with media, muscles and sug
   upsertHealthKitWorkouts([{ externalId: "web-entreno-run", activity: "running", startedAt: runAt, endedAt: runAt + 1_800_000, energy: 320, distance: 5200, sourceName: "Apple Watch" }]);
 
   const view = entrenoOverview(now);
-  expect(view.program).toMatchObject({ id: program.id, name: "Torso / Pierna", week: 1, weeks: 8, deload: false });
+  // Week 1 is the calendar week of the first session. Three days ago is last
+  // week early in the week: then this is week 2, and it opens on day 1 again.
+  const sameWeek = mondayOf(t - 3 * DAY) === mondayOf(t);
+  expect(view.program).toMatchObject({ id: program.id, name: "Torso / Pierna", week: sameWeek ? 1 : 2, weeks: 8, deload: false });
   expect(view.days.map((d) => `${d.number} ${d.name}`)).toEqual(["1 Torso A", "2 Pierna A"]);
-  // The last session was day 1, so day 2 is next (no weekday pins).
-  expect(view.nextDayId).toBe(program.days[1]!.id);
-  expect(view.days[1]!.tagline).toBe("Siguiente");
+  // In the same week day 1 is done, so day 2 is next (no weekday pins).
+  const next = sameWeek ? 1 : 0;
+  expect(view.nextDayId).toBe(program.days[next]!.id);
+  expect(view.days[next]!.tagline).toBe("Siguiente");
   const bench = view.days[0]!.exercises[0]!;
   expect(bench.primaryMuscles).toContain("chest");
   expect(bench.suggestion?.weightKg).toBeGreaterThan(0);

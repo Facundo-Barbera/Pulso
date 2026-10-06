@@ -16,7 +16,10 @@ import {
   updateProgramDay,
 } from "./store";
 
-const NOW = new Date(2026, 9, 1, 10).getTime();
+// Ahead of the clock: other test files share the database and log sessions at
+// the real time, which must stay before the edits here (a fixed date in the
+// past made those sessions count as "logged again" and broke the test).
+const NOW = Date.now() + 2 * 3_600_000;
 
 const fresh = () =>
   createProgram(
