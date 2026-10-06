@@ -350,9 +350,10 @@ struct LiveSessionState: Hashable {
                 exercises.indices.contains($0) && !exercises[$0].skipped && exercises[$0].sets[safe: round].map { !$0.done } == true
             }.map { (round: round, exercise: $0) }
         }
-        guard let last = open.last(where: { $0.round == r })?.exercise else { return }
+        guard let last = open.last(where: { $0.round == r })?.exercise, let first = open.firstIndex(where: { $0.round == r }) else { return }
+        // Round `r` starts at `now`; the forgotten ones just before it.
         for (i, set) in open.enumerated() {
-            check(exercise: set.exercise, set: set.round, now: now.addingTimeInterval(Double(i - open.count + 1) / 1000), unit: unit(set.exercise), carry: set.round == r)
+            check(exercise: set.exercise, set: set.round, now: now.addingTimeInterval(Double(i - first) / 1000), unit: unit(set.exercise), carry: set.round == r)
         }
         if let next = nextInSuperset(group) { focus = next.exercise }
         startRest(after: last, now: now)
