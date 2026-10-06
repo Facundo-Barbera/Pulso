@@ -7,8 +7,12 @@ type Candidate = { id: string; activity: string; started_at: number; ended_at: n
  * recordings: merged here, the Watch's workout of the same session could be
  * the one dropped. workouts-merge folds them into their session instead.
  */
-/** `com.facundo.pulso` and the Debug build's `com.facundo.pulso.dev`. */
-export const PULSO_BUNDLE = /^com\.facundo\.pulso(\.|$)/;
+/**
+ * The phone app: `com.facundo.pulso` and the Debug build's `com.facundo.pulso.dev`.
+ * Not Pulso's Watch app (`….watchkitapp`): it records the session live, with
+ * heart rate, like the Workout app, so its workouts are real recordings.
+ */
+export const PULSO_BUNDLE = /^com\.facundo\.pulso(\.dev)?$/;
 
 /** Fraction of the shorter workout covered by the other. */
 export function overlap(a: Pick<Candidate, "started_at" | "ended_at">, b: Pick<Candidate, "started_at" | "ended_at">): number {

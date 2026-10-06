@@ -84,6 +84,9 @@ describe("Pulso's own copies in Salud", () => {
     expect(isPulsoWritten({ sourceBundle: null, externalRef: "4C1F-000000000012-1" }, ids)).toBe(true);
     expect(isPulsoWritten({ sourceBundle: null, externalRef: "someone-else" }, ids)).toBe(false);
     expect(isPulsoWritten({ sourceBundle: "com.facundo.pulsometer", externalRef: null }, ids)).toBe(false);
+    // Pulso's Watch app records the session live: a recording, not a copy.
+    expect(isPulsoWritten({ sourceBundle: "com.facundo.pulso.dev.watchkitapp", externalRef: null }, ids)).toBe(false);
+    expect(isPulsoWritten({ sourceBundle: "com.facundo.pulso.watchkitapp", externalRef: null }, ids)).toBe(false);
   });
 
   test("hidden even when its session is outside what was read", () => {
