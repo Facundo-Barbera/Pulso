@@ -112,6 +112,7 @@ final class LiveSession {
     /// Starts the Live Activity and gives the engine the new session (base version 0).
     func begin() {
         startActivity()
+        WatchLink.shared.start(sessionId: state.id)
         dirty = true
         schedulePush(after: .zero)
         Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
@@ -335,6 +336,8 @@ final class LiveSession {
             $0.cardioClock = next
             $0.skipRest()
         }
+        let block = state.exercises[index]
+        WatchLink.shared.enterCardio(block.id, stage: .cardio(block.modality, speedKmh: block.cardio?.speedKmh))
         armRest()
         armCardio()
     }
@@ -352,6 +355,8 @@ final class LiveSession {
             $0.advanceIfDone()
         }
         armCardio()
+        // Sets still to do: the Watch goes back to strength.
+        if state.current != nil { WatchLink.shared.enterStrength() }
     }
 
     func reopenCardio(_ index: Int) { mutate { $0.clearCardioLog(index) } }

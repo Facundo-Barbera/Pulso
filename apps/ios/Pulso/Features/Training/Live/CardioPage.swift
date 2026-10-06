@@ -29,6 +29,10 @@ struct CardioPage: View {
                                 zones: TrainingStore.shared.hrZones
                             )
                         }
+                        if let metrics = WatchLink.shared.metrics, metrics.stage != .strength {
+                            WatchMetricsRow(metrics: metrics, target: exercise.cardio?.zone, zones: TrainingStore.shared.hrZones)
+                                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        }
                         controls(exercise)
                     }
                     if let target = exercise.cardio {
@@ -199,6 +203,54 @@ private struct CardioHero: View {
         .animation(.snappy, value: phase?.index)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+/// The Watch's numbers for the block, live: heart rate with its zone (green
+/// when it's the target's), energy, and distance when the Watch measures it.
+private struct WatchMetricsRow: View {
+    let metrics: WatchMetrics
+    let target: Int?
+    let zones: [HrZoneRange]?
+
+    private var zone: Int? {
+        guard let bpm = metrics.heartRate.map({ Int($0.rounded()) }) else { return nil }
+        return zones?.first { (bpm >= $0.minBpm) && (bpm <= $0.maxBpm) }?.zone
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            cell(metrics.heartRate.map { "\(Int($0.rounded()))" } ?? "--", zone.map { "ppm · zona \($0)" } ?? "ppm", symbol: "heart.fill",
+                 tint: zone != nil && zone == target ? Theme.body : .red)
+            cell("\(Int(metrics.activeKcal.rounded()))", "kcal", symbol: "flame.fill", tint: Theme.energy)
+            if let meters = metrics.distanceMeters, meters > 0 {
+                cell((meters / 1000).formatted(.number.precision(.fractionLength(2))), "km", symbol: "point.topleft.down.to.point.bottomright.curvepath", tint: Theme.water)
+            }
+        }
+        .padding(.vertical, 12)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            Image(systemName: "applewatch")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(8)
+                .accessibilityLabel("Del Apple Watch")
+        }
+        .animation(.snappy, value: metrics)
+    }
+
+    private func cell(_ value: String, _ unit: String, symbol: String, tint: Color) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: symbol).font(.subheadline).foregroundStyle(tint)
+            Text(value)
+                .font(.title2.bold())
+                .fontDesign(.rounded)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            Text(unit).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 

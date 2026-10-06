@@ -55,9 +55,10 @@ enum HealthSync {
         return inputs
     }
 
-    /// Written by this app (Debug or Release) when a session ended.
+    /// Written by this app (Debug or Release) when a session ended. Not the
+    /// Watch app's: it records the session live, heart rate included.
     static func isPulso(_ workout: HKWorkout) -> Bool {
-        workout.sourceRevision.source.bundleIdentifier.hasPrefix("com.facundo.pulso")
+        ["com.facundo.pulso", "com.facundo.pulso.dev"].contains(workout.sourceRevision.source.bundleIdentifier)
     }
 
     private static let bpm = HKUnit.count().unitDivided(by: .minute())

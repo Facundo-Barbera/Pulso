@@ -24,10 +24,10 @@ enum StrengthWorkout {
     /// One cardio block, ending when it was logged. Distance and kcal go in as
     /// samples when the person entered them. `index` is the block's place in the
     /// session, so its id is "<sessionId>-<index>".
-    static func saveCardio(_ log: CardioLog, modality: String?, sessionId: String, index: Int) async throws {
+    static func saveCardio(_ log: CardioLog, modality: String?, speedKmh: Double? = nil, sessionId: String, index: Int) async throws {
         guard HKHealthStore.isHealthDataAvailable(), log.durationSeconds > 0 else { return }
         let store = HealthSync.store
-        let (activity, location) = workoutType(modality)
+        let (activity, location) = workoutType(modality, speedKmh: speedKmh)
         let distanceType = distanceType(activity)
         var share: Set<HKSampleType> = [HKObjectType.workoutType(), HKQuantityType(.activeEnergyBurned)]
         if let distanceType { share.insert(distanceType) }
@@ -56,10 +56,11 @@ enum StrengthWorkout {
         _ = try await builder.finishWorkout()
     }
 
-    /// The contract's `CardioModality` as a Salud workout type.
-    static func workoutType(_ modality: String?) -> (HKWorkoutActivityType, HKWorkoutSessionLocationType) {
+    /// The contract's `CardioModality` as a Salud workout type. On the
+    /// treadmill ("caminadora"), a walk unless the target is a running pace.
+    static func workoutType(_ modality: String?, speedKmh: Double? = nil) -> (HKWorkoutActivityType, HKWorkoutSessionLocationType) {
         switch modality {
-        case "treadmill": (.running, .indoor)
+        case "treadmill": ((speedKmh ?? 0) >= runningKmh ? .running : .walking, .indoor)
         case "elliptical": (.elliptical, .indoor)
         case "bike": (.cycling, .indoor)
         case "rower": (.rowing, .indoor)
@@ -72,6 +73,9 @@ enum StrengthWorkout {
         }
     }
 
+    /// From here up a treadmill target is a run.
+    static let runningKmh = 7.5
+
     private static func distanceType(_ activity: HKWorkoutActivityType) -> HKQuantityType? {
         switch activity {
         case .running, .walking: HKQuantityType(.distanceWalkingRunning)
@@ -79,5 +83,13 @@ enum StrengthWorkout {
         case .rowing: HKQuantityType(.distanceRowing)
         default: nil
         }
+    }
+}
+
+extension WorkoutStage {
+    /// What the Watch records for a cardio block.
+    static func cardio(_ modality: String?, speedKmh: Double?) -> WorkoutStage {
+        let (activity, location) = StrengthWorkout.workoutType(modality, speedKmh: speedKmh)
+        return WorkoutStage(activity: activity.rawValue, indoor: location != .outdoor)
     }
 }

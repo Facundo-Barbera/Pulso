@@ -11,6 +11,11 @@
 	     already encrypts the path. A 100.x address cannot be listed under
 	     NSExceptionDomains, so the blanket exception is the only shape that
 	     works. Same as Delta and Telar. -->
+	<!-- The Watch's workout mirrored to the phone wakes and feeds the app in the background. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>workout-processing</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

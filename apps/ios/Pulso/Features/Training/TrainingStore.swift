@@ -240,6 +240,7 @@ final class TrainingStore {
 
     /// Drops the session here and on the engine, saving nothing.
     func discard() async {
+        if let live, WatchLink.Recorded.load()?.sessionId == live.state.id { WatchLink.shared.end(save: false) }
         await live?.close()
         live = nil
         if let api = PulsoModel.shared.api { Task { try? await api.deleteLiveSession(discard: true) } }
@@ -256,7 +257,11 @@ final class TrainingStore {
         defer { finishing = false }
         let state = live.state
         let session = state.session(endedAt: .now)
-        let cardio = state.exercises.compactMap { ex in ex.cardioLog.map { (log: $0, modality: ex.modality) } }
+        // What the Watch recorded live is already in Salud; the phone writes only the rest.
+        let watch = WatchLink.Recorded.load()?.sessionId == state.id ? WatchLink.shared.end(save: true) : nil
+        let cardio = state.exercises.compactMap { ex in
+            ex.cardioLog.flatMap { log in watch?.cardio.contains(ex.id) == true ? nil : (log: log, modality: ex.modality, speedKmh: ex.cardio?.speedKmh) }
+        }
         if state.hasWork { queue.add(session) }
         await live.close()
         self.live = nil
@@ -265,7 +270,7 @@ final class TrainingStore {
             if let api = PulsoModel.shared.api { Task { try? await api.deleteLiveSession(discard: true) } }
             return
         }
-        Task { await saveToHealth(session, cardio: cardio) }
+        Task { await saveToHealth(session, cardio: cardio, strength: watch?.strength != true) }
         guard await upload(session) else { return }
         // A session started meanwhile is the engine's live copy now: leave that one.
         if self.live == nil, let api = PulsoModel.shared.api { try? await api.deleteLiveSession() }
@@ -280,13 +285,13 @@ final class TrainingStore {
     }
 
     /// Salud refusing, unavailable or waiting on its permission sheet doesn't touch the Mac's copy.
-    private func saveToHealth(_ session: TrainingSession, cardio: [(log: CardioLog, modality: String?)]) async {
-        var saved = false
-        if !session.sets.isEmpty, (try? await StrengthWorkout.save(start: session.start, end: session.start.addingTimeInterval(session.duration), sessionId: session.id)) != nil {
+    private func saveToHealth(_ session: TrainingSession, cardio: [(log: CardioLog, modality: String?, speedKmh: Double?)], strength: Bool) async {
+        var saved = !strength
+        if strength, !session.sets.isEmpty, (try? await StrengthWorkout.save(start: session.start, end: session.start.addingTimeInterval(session.duration), sessionId: session.id)) != nil {
             saved = true
         }
         for (index, block) in cardio.enumerated() {
-            if (try? await StrengthWorkout.saveCardio(block.log, modality: block.modality, sessionId: session.id, index: index)) != nil { saved = true }
+            if (try? await StrengthWorkout.saveCardio(block.log, modality: block.modality, speedKmh: block.speedKmh, sessionId: session.id, index: index)) != nil { saved = true }
         }
         if saved, summary?.id == session.id { summary?.savedToHealth = true }
     }

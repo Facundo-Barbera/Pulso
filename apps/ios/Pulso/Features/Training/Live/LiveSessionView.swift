@@ -251,13 +251,26 @@ private struct SessionTitle: View {
                 .font(.headline)
             TimelineView(.periodic(from: state.startedAt, by: 1)) { context in
                 let elapsed = max(0, context.date.timeIntervalSince(state.startedAt))
-                Text("\(Duration.seconds(elapsed).formatted(.time(pattern: elapsed >= 3600 ? .hourMinuteSecond : .minuteSecond))) · \(state.setsDone) de \(state.setsTotal) series")
-                    .font(.caption)
-                    .fontDesign(.rounded)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .animation(.snappy, value: state.setsDone)
+                HStack(spacing: 4) {
+                    Text("\(Duration.seconds(elapsed).formatted(.time(pattern: elapsed >= 3600 ? .hourMinuteSecond : .minuteSecond))) · \(state.setsDone) de \(state.setsTotal) series")
+                        .foregroundStyle(.secondary)
+                    // The Watch recording: its heart rate, live.
+                    if let metrics = WatchLink.shared.metrics {
+                        Text("·").foregroundStyle(.secondary)
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(.red)
+                            .symbolEffect(.pulse, isActive: metrics.heartRate != nil && !metrics.paused)
+                        Text(metrics.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                            .foregroundStyle(.primary)
+                            .contentTransition(.numericText())
+                    }
+                }
+                .font(.caption)
+                .fontDesign(.rounded)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(.snappy, value: state.setsDone)
+                .animation(.snappy, value: WatchLink.shared.metrics)
             }
         }
         .lineLimit(1)
