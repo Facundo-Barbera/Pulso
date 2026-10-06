@@ -376,8 +376,8 @@ private struct ValueEditor: View {
 
 /// As the Workout app: views stacked vertically (the Crown moves between them),
 /// each a few numbers large enough to read mid-set, values in white and one
-/// color per view. The first one is what matters most: time, what's up (the
-/// rest or the heart-rate zone as a bar), heart rate, and energy or distance.
+/// color per view. The first one is what matters most: time, the rest as a bar
+/// while it runs, heart rate, and energy or distance.
 private struct MetricsPage: View {
     let store: WatchSessionStore
     let state: LiveSessionState
@@ -421,8 +421,6 @@ private struct MetricsPage: View {
                 .minimumScaleFactor(0.6)
             if state.resting(at: now), let start = state.restStartedAt, let end = state.restEndsAt {
                 RestBar(start: start, end: end, now: now).padding(.vertical, 4)
-            } else if let zones = store.hrZones, !zones.isEmpty {
-                ZoneBar(heartRate: workout.heartRate, zones: zones).padding(.vertical, 4)
             }
             heartLine
             if walking, let meters = workout.distanceMeters {
