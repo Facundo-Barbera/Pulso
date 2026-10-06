@@ -1,6 +1,7 @@
 import CoreGraphics
 
-// Body outlines for the muscle map, in a 100 × 200 box per figure.
+// Body outlines for the muscle map, in a 100 × 220 box per figure (the back
+// one reaches its heels at 220; the front ends higher).
 //
 // Ported from react-body-highlighter (https://github.com/giavinh79/react-body-highlighter,
 // src/assets/index.ts). Changes: the deltoids are split into front/rear and side heads,
@@ -42,7 +43,7 @@ struct BodyPolygon {
 }
 
 enum BodyMapData {
-    static let size = CGSize(width: 100, height: 200)
+    static let size = CGSize(width: 100, height: 220)
 
     static let front: [BodyPolygon] = [
         BodyPolygon(.chest, [51.8, 41.6, 51.0, 55.1, 58.0, 58.0, 67.8, 55.5, 70.6, 47.3, 62.0, 41.6]),

@@ -59,7 +59,7 @@ final class ExerciseTests: XCTestCase {
             XCTAssertEqual(polygon.points.count % 2, 0)
             XCTAssertGreaterThanOrEqual(polygon.points.count, 6)
             for (i, value) in polygon.points.enumerated() {
-                XCTAssertTrue((0...(i % 2 == 0 ? 100 : 200)).contains(value), "\(String(describing: polygon.muscle)) point out of the box")
+                XCTAssertTrue((0...(i % 2 == 0 ? BodyMapData.size.width : BodyMapData.size.height)).contains(value), "\(String(describing: polygon.muscle)) point out of the box")
             }
         }
     }
