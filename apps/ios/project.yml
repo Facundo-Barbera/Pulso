@@ -134,6 +134,23 @@ targets:
       configs:
         Debug:
           INFOPLIST_KEY_CFBundleDisplayName: Pulso Dev
+    dependencies:
+      - target: PulsoWatchWidgets
+  # Pulso's complication: the app's mark on the watch face, a tap from the app.
+  PulsoWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: PulsoWatchWidgets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PULSO_APP_BUNDLE_ID).watchkitapp.widgets
+        INFOPLIST_FILE: Config/PulsoWatchWidgets.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Pulso
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: YES
   PulsoTests:
     type: bundle.unit-test
     platform: iOS
