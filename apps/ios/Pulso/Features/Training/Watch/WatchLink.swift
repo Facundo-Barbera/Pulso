@@ -2,29 +2,30 @@ import HealthKit
 import Observation
 import os
 
-/// The Apple Watch's side of the live session. Starting a session opens Pulso
-/// on the Watch (`startWatchApp`), which records a workout with its sensors and
-/// mirrors it here: heart rate, energy and distance arrive live. A cardio block
-/// switches the Watch to that kind of workout and back to strength after, so
-/// each lands in Fitness as its own workout and fills the rings. What the Watch
-/// recorded, the phone doesn't write to Salud again on finish.
-///
-/// Without a Watch (or with Pulso not on it) nothing happens and the phone
-/// saves to Salud as before.
+/// The phone's side of the Watch. The session is one: the phone owns it and
+/// the Watch keeps a copy it can change on its own, with or without a
+/// connection (see WatchShared/SessionSync.swift). Here:
+/// - every change of the session (and the next day's plan) is published to the Watch;
+/// - the Watch's edits are applied (the latest wins), and acknowledged;
+/// - starting a session opens Pulso on the Watch, which records the workout and
+///   sends its heart rate, energy and distance live.
+/// What the Watch recorded, the phone doesn't write to Salud again on finish.
 @MainActor
 @Observable
 final class WatchLink: NSObject {
     static let shared = WatchLink()
 
-    /// The Watch's latest numbers; nil while nothing is mirrored.
+    /// The Watch's latest numbers; nil while it isn't recording (or not heard from).
     private(set) var metrics: WatchMetrics?
     private var mirrored: HKWorkoutSession?
-    /// Commands said before the Watch's workout reached the phone.
-    private var pending: [WatchCommand] = []
-    /// The cardio block (live exercise id) the Watch is switched to, if any.
-    private var cardioBlock: String?
     private var recorded = Recorded.load()
+    /// The last session that ended, told to the Watch so it ends its recording too.
+    private var closed: WatchSync.Closed?
+    /// Ids of the Watch's edits applied here, sent back so it stops replaying them.
+    private var applied: [String] = UserDefaults.standard.stringArray(forKey: WatchLink.appliedKey) ?? []
+    private var publishing: Task<Void, Never>?
 
+    private static let appliedKey = "pulso.training.watchApplied"
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Pulso", category: "watch")
 
     var connected: Bool { metrics != nil }
@@ -44,32 +45,35 @@ final class WatchLink: NSObject {
         }
 
         func save() { UserDefaults.standard.set(try? JSONEncoder().encode(self), forKey: Self.key) }
+
+        static func clear() { UserDefaults.standard.removeObject(forKey: key) }
     }
 
-    /// At launch: the Watch's workout comes back mirrored only to an app listening from the start.
+    /// At launch: the Watch's workout is mirrored back only to an app listening from the start.
     func activate() {
         HealthSync.store.workoutSessionMirroringStartHandler = { session in
             Task { @MainActor in WatchLink.shared.adopt(session) }
         }
-        // The second road, for when mirroring can't carry the messages (and on simulators).
         WatchChannel.shared.receive = { message in WatchLink.shared.handle(message) }
-        WatchChannel.shared.reachable = { WatchLink.shared.flush() }
+        WatchChannel.shared.reachable = { WatchLink.shared.publish() }
         WatchChannel.shared.activate()
     }
 
-    /// The session `sessionId` began: the Watch starts recording strength.
-    func start(sessionId: String) {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
+    // MARK: Session lifecycle
+
+    /// The session `sessionId` began. Started here, it opens Pulso on the Watch;
+    /// started on the Watch (`launch` false), the Watch is already recording.
+    func began(sessionId: String, launch: Bool) {
         recorded = Recorded(sessionId: sessionId)
         recorded?.save()
-        cardioBlock = nil
+        closed = nil
         metrics = nil
-        pending = []
-        let stage = WorkoutStage.strength
+        publish()
+        guard launch, HKHealthStore.isHealthDataAvailable() else { return }
         Task {
             do {
                 try await HealthSync.store.requestAuthorization(toShare: [HKObjectType.workoutType()], read: [HKQuantityType(.heartRate)])
-                try await HealthSync.store.startWatchApp(toHandle: stage.configuration)
+                try await HealthSync.store.startWatchApp(toHandle: WorkoutStage.strength.configuration)
             } catch {
                 // No Watch, Pulso not installed on it, or no permission: the phone carries on alone.
                 Self.log.error("watch not started: \(error)")
@@ -77,89 +81,77 @@ final class WatchLink: NSObject {
         }
     }
 
-    /// A cardio block's clock started: the Watch records that kind of workout.
-    func enterCardio(_ blockId: String, stage: WorkoutStage) {
-        guard recorded != nil, cardioBlock != blockId else { return }
-        cardioBlock = blockId
-        send(.stage(stage))
-    }
-
-    /// Back to the sets after a cardio block.
-    func enterStrength() {
-        guard recorded != nil, cardioBlock != nil else { return }
-        cardioBlock = nil
-        send(.stage(.strength))
-    }
-
-    /// The session finished (`save`) or was thrown away: the Watch ends its workout.
-    /// Returns what it recorded, so the phone writes only the rest to Salud.
+    /// The session ended (saved or thrown away): the Watch ends its recording.
+    /// Returns what the Watch recorded, so the phone writes only the rest to Salud.
     @discardableResult
-    func end(save: Bool) -> Recorded? {
-        let done = recorded
-        send(.end(save: save))
+    func ended(sessionId: String, saved: Bool) -> Recorded? {
+        let done = recorded?.sessionId == sessionId ? recorded : nil
+        closed = WatchSync.Closed(id: sessionId, saved: saved)
         recorded = nil
         Recorded.clear()
-        cardioBlock = nil
+        publish()
         return done
     }
 
-    // MARK: Mirroring
+    // MARK: To the Watch
 
-    private func adopt(_ session: HKWorkoutSession) {
-        mirrored = session
-        session.delegate = self
-        flush()
-    }
-
-    /// What waited for a road to the Watch.
-    private func flush() {
-        let queued = pending
-        pending = []
-        for command in queued { send(command) }
-    }
-
-    /// By the mirrored session, else by WatchConnectivity, else kept until one opens.
-    private func send(_ command: WatchCommand) {
-        guard let mirrored else {
-            if !WatchChannel.shared.send(.command(command)) { queue(command) }
-            return
-        }
-        guard let data = try? WatchMessage.command(command).encoded() else { return }
-        Task {
-            do {
-                try await mirrored.sendToRemoteWorkoutSession(data: data)
-            } catch {
-                if !WatchChannel.shared.send(.command(command)) { queue(command) }
-            }
+    /// The session (or the plan, without one), soon: changes in a burst go as one.
+    func publish() {
+        publishing?.cancel()
+        publishing = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            let store = TrainingStore.shared
+            let state = store.live?.state
+            let plan = state == nil ? store.watchPlan : nil
+            let ids = state?.exercises.map(\.exerciseId) ?? plan?.day.exercises.map(\.exerciseId) ?? []
+            let units = Dictionary(ids.map { ($0, store.unit(for: $0)) }, uniquingKeysWith: { first, _ in first })
+            let sync = WatchSync(state: state, closed: closed, applied: Array(applied.suffix(200)), units: units, plan: plan, hrZones: store.hrZones)
+            WatchChannel.shared.send(.sync(sync))
+            WatchChannel.shared.publish(.sync(sync))
         }
     }
 
-    /// A new stage replaces one not sent yet; an end replaces everything.
-    private func queue(_ command: WatchCommand) {
-        if case .end = command {
-            pending = [command]
-        } else {
-            pending.removeAll { if case .stage = $0 { true } else { false } }
-            pending.append(command)
-        }
-    }
+    // MARK: From the Watch
 
     private func handle(_ message: WatchMessage) {
         switch message {
         case .metrics(let metrics): receive(metrics)
         case .stopped: metrics = nil
-        case .command: break
+        case .edits(let edits): Task { await apply(edits) }
+        case .sync: break
         }
+    }
+
+    private func apply(_ edits: [WatchEdit]) async {
+        let fresh = edits.filter { !applied.contains($0.id) }
+        guard !fresh.isEmpty else { return publish() }
+        applied.append(contentsOf: fresh.map(\.id))
+        applied = Array(applied.suffix(300))
+        UserDefaults.standard.set(applied, forKey: Self.appliedKey)
+        let store = TrainingStore.shared
+        for edit in fresh {
+            switch edit.change {
+            case .start(let state): store.adoptFromWatch(state)
+            case .unit(let id, let unit): _ = store.setUnit(unit, for: id)
+            case .finish(let save):
+                guard store.live?.state.id == edit.sessionId else { continue }
+                if save { await store.finish() } else { await store.discard() }
+            default:
+                store.live?.applyWatch(edit)
+            }
+        }
+        publish()
     }
 
     private func receive(_ metrics: WatchMetrics) {
         self.metrics = metrics
-        guard var recorded else { return }
+        guard var recorded, let live = TrainingStore.shared.live, live.state.id == recorded.sessionId else { return }
         // Only what the Watch actually records counts: then the phone won't save it again.
         if metrics.stage == .strength {
             recorded.strength = true
-        } else if let cardioBlock {
-            recorded.cardio.insert(cardioBlock)
+        } else if let block = live.state.runningCardio {
+            recorded.cardio.insert(block.id)
         }
         if recorded != self.recorded {
             self.recorded = recorded
@@ -167,16 +159,17 @@ final class WatchLink: NSObject {
         }
     }
 
+    // MARK: Mirroring (the numbers, on devices)
+
+    private func adopt(_ session: HKWorkoutSession) {
+        mirrored = session
+        session.delegate = self
+    }
+
     private func ended(_ session: HKWorkoutSession) {
-        // A stage change ends one mirrored workout and the next arrives on its own.
         guard session === mirrored else { return }
         mirrored = nil
-        metrics = nil
     }
-}
-
-extension WatchLink.Recorded {
-    static func clear() { UserDefaults.standard.removeObject(forKey: "pulso.training.watchRecorded") }
 }
 
 extension WatchLink: HKWorkoutSessionDelegate {

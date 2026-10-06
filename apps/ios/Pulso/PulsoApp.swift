@@ -15,7 +15,7 @@ struct PulsoApp: App {
             Task { @MainActor in
                 let store = TrainingStore.shared
                 if let live = store.live {
-                    WatchLink.shared.start(sessionId: live.state.id)
+                    WatchLink.shared.began(sessionId: live.state.id, launch: true)
                 } else {
                     await store.load()
                     if let day = store.nextDay { store.start(day) }

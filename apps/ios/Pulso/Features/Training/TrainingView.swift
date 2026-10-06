@@ -87,6 +87,8 @@ struct TrainingView: View {
         .task { await load() }
         .onAppear(perform: openRequestedLive)
         .onChange(of: store.liveRequested) { openRequestedLive() }
+        // Ended elsewhere (the Watch): the live screen goes with it.
+        .onChange(of: store.live == nil) { _, gone in if gone { showLive = false } }
         .fullScreenCover(isPresented: $showLive, onDismiss: finishIfRequested) {
             if let live = store.live {
                 LiveSessionView(session: live, store: store)

@@ -95,6 +95,8 @@ final class TrainingStore {
     func apply(_ response: ActiveProgramResponse) {
         program = response.program
         nextDayId = response.nextDayId
+        // The Watch gets the plan it would start.
+        WatchLink.shared.publish()
         suggestions = response.suggestions
         blocks = response.blocks ?? []
         adjustment = response.adjustment
@@ -227,6 +229,22 @@ final class TrainingStore {
         live = session
     }
 
+    /// A session started on the Watch: the phone takes it over (the Watch is already recording).
+    func adoptFromWatch(_ state: LiveSessionState) {
+        guard live == nil, !LiveSession.closedIds.contains(state.id) else { return }
+        let session = LiveSession(state: state)
+        session.begin(launchWatch: false)
+        live = session
+        liveRequested = true
+    }
+
+    /// What "Empezar" on the Watch starts: the next day, as `start` would.
+    var watchPlan: WatchPlan? {
+        guard live == nil, let day = nextDay else { return nil }
+        let (adjusted, suggestions) = dayToStart(day)
+        return WatchPlan(day: adjusted, programId: program?.id, suggestions: suggestions)
+    }
+
     /// A session in progress on the engine that this phone has no file for (the app
     /// was reinstalled): resumed from the engine's copy. Not one finished or discarded
     /// here whose DELETE didn't land, nor one abandoned long ago.
@@ -240,7 +258,7 @@ final class TrainingStore {
 
     /// Drops the session here and on the engine, saving nothing.
     func discard() async {
-        if let live, WatchLink.Recorded.load()?.sessionId == live.state.id { WatchLink.shared.end(save: false) }
+        if let live { WatchLink.shared.ended(sessionId: live.state.id, saved: false) }
         await live?.close()
         live = nil
         if let api = PulsoModel.shared.api { Task { try? await api.deleteLiveSession(discard: true) } }
@@ -258,7 +276,7 @@ final class TrainingStore {
         let state = live.state
         let session = state.session(endedAt: .now)
         // What the Watch recorded live is already in Salud; the phone writes only the rest.
-        let watch = WatchLink.Recorded.load()?.sessionId == state.id ? WatchLink.shared.end(save: true) : nil
+        let watch = WatchLink.shared.ended(sessionId: state.id, saved: true)
         let cardio = state.exercises.compactMap { ex in
             ex.cardioLog.flatMap { log in watch?.cardio.contains(ex.id) == true ? nil : (log: log, modality: ex.modality, speedKmh: ex.cardio?.speedKmh) }
         }

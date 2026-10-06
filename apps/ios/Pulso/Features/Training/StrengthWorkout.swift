@@ -56,25 +56,11 @@ enum StrengthWorkout {
         _ = try await builder.finishWorkout()
     }
 
-    /// The contract's `CardioModality` as a Salud workout type. On the
-    /// treadmill ("caminadora"), a walk unless the target is a running pace.
+    /// The contract's `CardioModality` as a Salud workout type (shared with the Watch).
     static func workoutType(_ modality: String?, speedKmh: Double? = nil) -> (HKWorkoutActivityType, HKWorkoutSessionLocationType) {
-        switch modality {
-        case "treadmill": ((speedKmh ?? 0) >= runningKmh ? .running : .walking, .indoor)
-        case "elliptical": (.elliptical, .indoor)
-        case "bike": (.cycling, .indoor)
-        case "rower": (.rowing, .indoor)
-        case "stairs": (.stairClimbing, .indoor)
-        case "run": (.running, .outdoor)
-        case "walk": (.walking, .outdoor)
-        case "jump_rope": (.jumpRope, .indoor)
-        case "hiit": (.highIntensityIntervalTraining, .indoor)
-        default: (.mixedCardio, .indoor)
-        }
+        let stage = WorkoutStage.cardio(modality, speedKmh: speedKmh)
+        return (stage.activityType, stage.indoor ? .indoor : .outdoor)
     }
-
-    /// From here up a treadmill target is a run.
-    static let runningKmh = 7.5
 
     private static func distanceType(_ activity: HKWorkoutActivityType) -> HKQuantityType? {
         switch activity {
@@ -86,10 +72,3 @@ enum StrengthWorkout {
     }
 }
 
-extension WorkoutStage {
-    /// What the Watch records for a cardio block.
-    static func cardio(_ modality: String?, speedKmh: Double?) -> WorkoutStage {
-        let (activity, location) = StrengthWorkout.workoutType(modality, speedKmh: speedKmh)
-        return WorkoutStage(activity: activity.rawValue, indoor: location != .outdoor)
-    }
-}

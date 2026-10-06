@@ -18,8 +18,17 @@ final class LiveSession {
             TrainingFiles.save(state, to: TrainingFiles.live)
             if state.cardioClock != oldValue.cardioClock { Self.saveClock(state.cardioClock) }
             updateActivity()
+            // When each set, rest and cardio block last changed here: a Watch edit older than that loses.
+            let at = stampOverride ?? .now
+            for change in oldValue.changes(to: state) { stamps[change.key] = at }
+            WatchLink.shared.publish()
         }
     }
+
+    /// Set, rest and cardio keys (`WatchEdit.Change.key`) → when they last changed here.
+    @ObservationIgnored private var stamps: [String: Date] = [:]
+    /// While a Watch edit is applied: its time, not now.
+    @ObservationIgnored private var stampOverride: Date?
 
     /// The stopwatch of the cardio block being done, if any. Part of the session,
     /// so it reaches the engine with every save; still kept in its own file too.
@@ -110,9 +119,10 @@ final class LiveSession {
     }
 
     /// Starts the Live Activity and gives the engine the new session (base version 0).
-    func begin() {
+    /// `launchWatch` false: the session came from the Watch, which is already recording.
+    func begin(launchWatch: Bool = true) {
         startActivity()
-        WatchLink.shared.start(sessionId: state.id)
+        WatchLink.shared.began(sessionId: state.id, launch: launchWatch)
         dirty = true
         schedulePush(after: .zero)
         Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
@@ -336,8 +346,6 @@ final class LiveSession {
             $0.cardioClock = next
             $0.skipRest()
         }
-        let block = state.exercises[index]
-        WatchLink.shared.enterCardio(block.id, stage: .cardio(block.modality, speedKmh: block.cardio?.speedKmh))
         armRest()
         armCardio()
     }
@@ -355,11 +363,24 @@ final class LiveSession {
             $0.advanceIfDone()
         }
         armCardio()
-        // Sets still to do: the Watch goes back to strength.
-        if state.current != nil { WatchLink.shared.enterStrength() }
     }
 
     func reopenCardio(_ index: Int) { mutate { $0.clearCardioLog(index) } }
+
+    // MARK: Watch
+
+    /// One of the Watch's edits, unless this phone changed the same thing later
+    /// (equal values never clash: applying them changes nothing).
+    func applyWatch(_ edit: WatchEdit) {
+        guard edit.sessionId == state.id, !closed else { return }
+        guard edit.wins(over: stamps[edit.change.key]) else { return }
+        stampOverride = edit.at
+        mutate { $0.apply(edit.change) }
+        stampOverride = nil
+        armRest()
+        armCardio()
+        if !state.resting() { mutate { $0.advanceIfDone() } }
+    }
 
     // MARK: Rest
 
